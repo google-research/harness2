@@ -1,0 +1,23 @@
+# oc-harness 1.14.18 -- mirrors opencode/1.14.18 exactly (same CLI version, same
+# deny preset, same env). Only the agent class differs. See CONFIG.md for the
+# version-to-preset mapping and the deny-parity table.
+#
+# Tools present in 1.14.x: bash, read, write, edit, multiedit, apply_patch, glob,
+# grep, list, task, todowrite, skill, lsp, webfetch, websearch, codesearch,
+# question, plan/plan_exit, external_directory. v1_14.json denies the four that
+# have no counterpart in the claude-code / codebuddy-code deny lists or that grant
+# outside-world search (websearch, codesearch, question, plan_exit) — see CONFIG.md
+# for what each maps to.
+harness:
+  params:
+    OPENCODE_VERSION: "1.14.18"
+  settings_file: configs/harnesses/opencode/presets/settings/v1_14.json
+  env:
+    # Telemetry / auto-update off (auditable in the manifest; the preset also sets
+    # autoupdate:false — belt-and-suspenders, matching the cbc version blocks).
+    OPENCODE_DISABLE_AUTOUPDATE: "1"
+    OPENCODE_TELEMETRY_DISABLED: "1"
+    # Never let a task's own repo contribute config or instructions: a repo under
+    # test could otherwise redefine the provider block or re-enable a denied tool.
+    # oc_agent additionally pins OPENCODE_CONFIG to an explicit path.
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1"

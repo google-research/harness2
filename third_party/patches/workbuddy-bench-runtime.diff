@@ -1,0 +1,908 @@
+diff --git a/src/workbuddy_bench/proxy/config.py b/src/workbuddy_bench/proxy/config.py
+index 3e99432..2ce3d5c 100644
+--- a/src/workbuddy_bench/proxy/config.py
++++ b/src/workbuddy_bench/proxy/config.py
+@@ -2,7 +2,12 @@
+ 
+ from __future__ import annotations
+ 
++import logging
+ import os
++import shlex
++import subprocess
++import threading
++import time
+ from dataclasses import dataclass, field
+ from enum import Enum
+ from pathlib import Path
+@@ -10,6 +15,8 @@ from typing import Any
+ 
+ import yaml
+ 
++log = logging.getLogger("proxy.config")
++
+ 
+ class ProxyMode(str, Enum):
+     """How the proxy handles protocol between client and backend."""
+@@ -54,6 +61,75 @@ _DEFAULT_BACKEND_RETRIES = _env_int("WBBENCH_PROXY_MAX_RETRIES", 6)
+ _DEFAULT_RETRY_DELAY = _env_float_ms_to_s("WBBENCH_PROXY_RETRY_DELAY_MS", 5.0)
+ 
+ 
++# ── Dynamic (short-lived) backend keys ───────────────────────────────────────
++# Some backends authenticate with an OAuth access token rather than a static API
++# key — Vertex AI is the motivating case: `gcloud auth print-access-token` mints a
++# token that expires in ~60 min, while a bench run lasts hours (80 tasks x 3
++# attempts). A key resolved once at proxy startup therefore dies mid-run, and 401
++# is not a transport error the sender can retry its way out of.
++#
++# A route may instead declare ``backend.key_command``: a shell command whose
++# stdout is the current key. The proxy caches its output for ``key_ttl`` seconds
++# (default 30 min, half a Vertex token's life) and re-runs it on expiry or when
++# the sender reports a 401. Same shape as the validated pattern in
++# job-bench-eval's eval/tts/judge_opus.py::token().
++DEFAULT_KEY_TTL = 1800.0
++
++# command -> (key, minted_at). Guarded by _KEY_LOCK: concurrent first requests
++# must not each shell out (double-checked inside the lock), and the token must be
++# swapped atomically for in-flight readers.
++_KEY_CACHE: dict[str, tuple[str, float]] = {}
++_KEY_LOCK = threading.Lock()
++
++
++def resolve_key_command(command: str, ttl: float = DEFAULT_KEY_TTL) -> str:
++    """Return the cached output of ``command``, re-running it when stale.
++
++    Blocking on purpose: it runs at most once per ``ttl`` per command (plus once
++    per 401), so the sub-second event-loop stall is far cheaper than threading an
++    async credential provider through the sender. A failing command logs and
++    returns "" — the request then goes out unauthenticated and the backend's own
++    401/403 surfaces the misconfiguration, rather than the proxy dying at an
++    arbitrary point mid-run.
++    """
++    if not command:
++        return ""
++    now = time.time()
++    cached = _KEY_CACHE.get(command)
++    if cached and now - cached[1] <= ttl:
++        return cached[0]
++    with _KEY_LOCK:
++        # Re-check: another thread may have refreshed while we waited.
++        cached = _KEY_CACHE.get(command)
++        if cached and time.time() - cached[1] <= ttl:
++            return cached[0]
++        try:
++            proc = subprocess.run(
++                shlex.split(command), capture_output=True, text=True, timeout=60,
++            )
++        except (OSError, ValueError, subprocess.SubprocessError) as exc:
++            log.error("backend key_command failed to execute (%s): %s", command, exc)
++            return cached[0] if cached else ""
++        key = proc.stdout.strip()
++        if not key:
++            log.error(
++                "backend key_command produced no key (%s): rc=%d stderr=%s",
++                command, proc.returncode, proc.stderr.strip()[:200],
++            )
++            return cached[0] if cached else ""
++        _KEY_CACHE[command] = (key, time.time())
++        log.info("backend key refreshed via key_command (ttl=%.0fs)", ttl)
++        return key
++
++
++def invalidate_key_command(command: str) -> None:
++    """Drop ``command``'s cached key so the next resolve re-runs it (401 recovery)."""
++    if not command:
++        return
++    with _KEY_LOCK:
++        _KEY_CACHE.pop(command, None)
++
++
+ @dataclass(frozen=True)
+ class BackendConfig:
+     """Upstream backend connection info."""
+@@ -71,6 +147,35 @@ class BackendConfig:
+     # (host/content-length/authorization/x-api-key) are ignored by the sender so
+     # a misconfigured header can't break auth or transport framing.
+     headers: dict[str, str] = field(default_factory=dict)
++    # Optional command that mints a short-lived key (see resolve_key_command).
++    # When set it WINS over the static ``key``: the sender calls resolve_key() per
++    # request, so a token that expires mid-run is renewed transparently. Set via
++    # model.backend_key_command in configs/models.
++    key_command: str = ""
++    key_ttl: float = DEFAULT_KEY_TTL
++
++    @property
++    def key_identity(self) -> str:
++        """Stable identity for this backend's credential, safe to key caches on.
++
++        The sender pools httpx clients and per-model semaphores per backend. Those
++        must NOT be keyed on the live key: a rotating token would mint a fresh
++        connection pool (and reset the concurrency semaphore) on every refresh.
++        The command string is stable across refreshes, so prefer it when present.
++        """
++        if self.key_command:
++            return f"cmd:{self.key_command}"
++        return self.key
++
++    def resolve_key(self) -> str:
++        """The key to send on this request — live when ``key_command`` is set."""
++        if self.key_command:
++            return resolve_key_command(self.key_command, self.key_ttl)
++        return self.key
++
++    def invalidate_key(self) -> None:
++        """Force the next resolve_key() to re-mint (the sender calls this on 401)."""
++        invalidate_key_command(self.key_command)
+ 
+ 
+ @dataclass(frozen=True)
+@@ -102,6 +207,23 @@ class RouteConfig:
+     # cbc flattens away to `reasoning`).
+     dedup_reasoning: bool = False       # response side: drop the duplicated key
+     reasoning_passback: bool = False    # request side: synthesize reasoning_content
++    # Gemini 3 thought signatures: capture tool_calls[].extra_content.google.
++    # thought_signature from responses and replay it on the next request's
++    # assistant tool_calls. REQUIRED for multi-turn tool use on Vertex — without
++    # it the second turn of any tool-using conversation fails with 400
++    # INVALID_ARGUMENT, because extra_content is not part of the OpenAI schema and
++    # every OpenAI-shaped harness drops it. Applies to a2o and passthrough alike.
++    thought_signature_passback: bool = False
++    # Vertex AI serves Anthropic models on its OWN endpoint shape, not Anthropic's:
++    #   POST {base}/publishers/anthropic/models/{model}:rawPredict   (or
++    #   :streamRawPredict), with `anthropic_version` in the body and NO `model`
++    #   field — the model lives in the URL path.
++    # Vertex's OpenAI-compatible endpoint rejects Claude models outright ("Malformed
++    # publisher model"), so this is the only way to reach Opus/Sonnet on Vertex.
++    # When set, the proxy rewrites the URL and body accordingly on the Anthropic
++    # passthrough path. base_url must be
++    #   https://{host}/v1/projects/{proj}/locations/{loc}
++    vertex_anthropic: bool = False
+ 
+     @property
+     def effective_model(self) -> str:
+@@ -185,6 +307,10 @@ def load_config_from_yaml(config_path: Path) -> ProxyConfig:
+                 str(k): str(v)
+                 for k, v in (backend_raw.get("headers") or {}).items()
+             },
++            # Dynamic key: the command itself is config, not a secret, so unlike
++            # ``key`` it is written into the generated proxy.yaml verbatim.
++            key_command=str(backend_raw.get("key_command", "") or ""),
++            key_ttl=float(backend_raw.get("key_ttl", DEFAULT_KEY_TTL)),
+         )
+ 
+         # ``openai_passthrough`` was a distinct OpenAI-only mode; internally it is
+@@ -229,6 +355,10 @@ def load_config_from_yaml(config_path: Path) -> ProxyConfig:
+             instance_id=str(route_raw.get("instance_id", "") or ""),
+             dedup_reasoning=bool(route_raw.get("dedup_reasoning", False)),
+             reasoning_passback=bool(route_raw.get("reasoning_passback", False)),
++            thought_signature_passback=bool(
++                route_raw.get("thought_signature_passback", False)
++            ),
++            vertex_anthropic=bool(route_raw.get("vertex_anthropic", False)),
+         )
+         config.routes[slug] = route
+ 
+diff --git a/src/workbuddy_bench/proxy/main.py b/src/workbuddy_bench/proxy/main.py
+index 465190e..c49de67 100644
+--- a/src/workbuddy_bench/proxy/main.py
++++ b/src/workbuddy_bench/proxy/main.py
+@@ -19,6 +19,7 @@ Usage:
+ from __future__ import annotations
+ 
+ import argparse
++import dataclasses
+ import json
+ import logging
+ import time
+@@ -289,18 +290,19 @@ async def _process_request(
+         return JSONResponse(status_code=400, content=error_body)
+ 
+     # Use a route override with the effective mode/protocol metadata.
+-    effective_route = RouteConfig(
+-        slug=route.slug,
++    #
++    # dataclasses.replace, NOT a field-by-field rebuild: this copy is what the
++    # pipeline actually reads, so any RouteConfig field omitted here silently
++    # reverts to its default for every request while the loaded route still shows
++    # the configured value — a failure that looks like "the feature does nothing"
++    # with no error anywhere. (That is exactly how thought_signature_passback was
++    # lost: configured true in proxy.yaml, false in the pipeline.) replace() copies
++    # every field by construction, so new fields are carried automatically.
++    effective_route = dataclasses.replace(
++        route,
+         mode=effective_mode,
+-        backend=route.backend,
+-        backend_model=route.backend_model,
+         client_protocol=client_protocol,
+         backend_protocol=backend_protocol,
+-        injected_params=route.injected_params,
+-        interceptors=route.interceptors,
+-        instance_id=route.instance_id,
+-        dedup_reasoning=route.dedup_reasoning,
+-        reasoning_passback=route.reasoning_passback,
+     )
+ 
+     # Extract bench context
+diff --git a/src/workbuddy_bench/proxy/pipeline.py b/src/workbuddy_bench/proxy/pipeline.py
+index bdac827..ccba5eb 100644
+--- a/src/workbuddy_bench/proxy/pipeline.py
++++ b/src/workbuddy_bench/proxy/pipeline.py
+@@ -6,6 +6,7 @@ import json
+ import logging
+ import re
+ import time
++from collections import OrderedDict
+ from typing import Any, AsyncIterator
+ 
+ from .config import ProxyMode, RouteConfig, ProxyConfig
+@@ -28,6 +29,12 @@ _API_VERSION_RE = re.compile(r"/v\d+\w*$")
+ # Anthropic-only request headers that are meaningless — and occasionally
+ # rejected — by OpenAI-compatible backends. Dropped when forwarding an
+ # Anthropic client request to a non-Anthropic backend (A2O / OpenAI passthrough).
++# Upper bound on remembered tool_call -> thought_signature pairs. A trial makes at
++# most a few hundred tool calls and only the most recent turn's signatures are ever
++# replayed, so this is generous; it exists to bound memory on a shared/long-lived
++# proxy, where routes accumulate across jobs.
++_THOUGHT_SIGNATURE_CACHE_MAX = 4096
++
+ _ANTHROPIC_ONLY_HEADERS = frozenset({
+     "anthropic-version",
+     "anthropic-beta",
+@@ -237,6 +244,119 @@ def _rewrite_reasoning_sse(chunk: bytes) -> bytes:
+     return "\n".join(out).encode("utf-8")
+ 
+ 
++def _tool_call_signature(tool_call: Any) -> str:
++    """Return the Gemini thought signature carried on an OpenAI tool_call, if any.
++
++    Vertex puts it at ``tool_calls[i].extra_content.google.thought_signature`` in
++    both streaming deltas and non-streaming messages.
++    """
++    if not isinstance(tool_call, dict):
++        return ""
++    extra = tool_call.get("extra_content")
++    if not isinstance(extra, dict):
++        return ""
++    google = extra.get("google")
++    if not isinstance(google, dict):
++        return ""
++    sig = google.get("thought_signature")
++    return sig if isinstance(sig, str) and sig else ""
++
++
++def _capture_thought_signatures(payload: Any, store: "OrderedDict[str, str]") -> None:
++    """Record ``tool_call.id -> thought_signature`` from an OpenAI response payload.
++
++    Handles both shapes: non-streaming (``choices[].message.tool_calls``) and
++    streaming (``choices[].delta.tool_calls``). Best-effort and total: anything
++    unexpected is skipped rather than raised, since this runs on the response hot
++    path and must never break a working stream.
++    """
++    if not isinstance(payload, dict):
++        return
++    for choice in payload.get("choices") or []:
++        if not isinstance(choice, dict):
++            continue
++        target = choice.get("delta")
++        if not isinstance(target, dict):
++            target = choice.get("message")
++        if not isinstance(target, dict):
++            continue
++        for tc in target.get("tool_calls") or []:
++            sig = _tool_call_signature(tc)
++            call_id = tc.get("id") if isinstance(tc, dict) else None
++            if sig and isinstance(call_id, str) and call_id:
++                store[call_id] = sig
++                store.move_to_end(call_id)
++    while len(store) > _THOUGHT_SIGNATURE_CACHE_MAX:
++        store.popitem(last=False)
++
++
++def _inject_thought_signatures(body: dict[str, Any], store: "OrderedDict[str, str]") -> int:
++    """Re-attach captured thought signatures to assistant tool_calls in a request.
++
++    Gemini 3 returns an opaque ``thought_signature`` on every function call and
++    REQUIRES it echoed back on the following turn; without it Vertex rejects the
++    whole request with 400 INVALID_ARGUMENT ("Function call is missing a
++    thought_signature in functionCall parts"). ``extra_content`` is not part of the
++    OpenAI schema, so every OpenAI-shaped harness (cbc, OpenCode, and Claude Code
++    via a2o) drops it when it rebuilds the assistant message — which makes the
++    SECOND turn of any tool-using conversation fail, every time.
++
++    The proxy is the only component that sees both directions, so it is the right
++    place to carry the signature across. Returns how many were re-attached.
++    """
++    messages = body.get("messages")
++    if not isinstance(messages, list) or not store:
++        return 0
++    injected = 0
++    for msg in messages:
++        if not isinstance(msg, dict) or msg.get("role") != "assistant":
++            continue
++        for tc in msg.get("tool_calls") or []:
++            if not isinstance(tc, dict):
++                continue
++            # Never overwrite a signature the client managed to preserve.
++            if _tool_call_signature(tc):
++                continue
++            sig = store.get(tc.get("id") or "")
++            if not sig:
++                continue
++            extra = tc.get("extra_content")
++            if not isinstance(extra, dict):
++                extra = {}
++                tc["extra_content"] = extra
++            google = extra.get("google")
++            if not isinstance(google, dict):
++                google = {}
++                extra["google"] = google
++            google["thought_signature"] = sig
++            injected += 1
++    return injected
++
++
++def _capture_sse_signatures(buf: bytes, store: "OrderedDict[str, str]") -> bytes:
++    """Capture signatures from complete SSE events in ``buf``; return the tail.
++
++    Read-only: the caller yields the ORIGINAL bytes to the client untouched, so
++    the passthrough stream stays byte-exact. Transport chunk boundaries do not
++    align with SSE event boundaries, so we only parse up to the last ``\\n\\n``
++    and carry the remainder forward.
++    """
++    head, sep, tail = buf.rpartition(b"\n\n")
++    if not sep:
++        return buf
++    for line in (head + sep).decode("utf-8", errors="replace").split("\n"):
++        if not line.startswith("data:"):
++            continue
++        data = line[len("data:"):].strip()
++        if not data or data == "[DONE]":
++            continue
++        try:
++            _capture_thought_signatures(json.loads(data), store)
++        except json.JSONDecodeError:
++            continue
++    return tail
++
++
+ def _inject_reasoning_passback(body: dict[str, Any]) -> None:
+     """Synthesize ``reasoning_content`` from ``reasoning`` on outgoing messages.
+ 
+@@ -292,6 +412,11 @@ class Pipeline:
+         self._extra_body_interceptor = ExtraBodyInterceptor()
+         self._interceptors["inject_extra_body"] = self._extra_body_interceptor
+ 
++        # tool_call.id -> Gemini thought_signature, captured from responses and
++        # replayed onto the next request's assistant tool_calls. Keyed by call id
++        # (globally unique per call), so one store is safe across routes/trials.
++        self._thought_signatures: OrderedDict[str, str] = OrderedDict()
++
+     def resolve_route(self, model: str, path: str = "") -> RouteConfig | None:
+         """Find the matching route for a request.
+ 
+@@ -372,6 +497,12 @@ class Pipeline:
+                 body=_upstream_error_payload(e, anthropic=is_anthropic_client),
+             )
+ 
++        # Capture signatures from the RAW upstream body, before any conversion —
++        # the a2o converter turns tool_calls into Anthropic tool_use blocks and
++        # drops extra_content, so this must happen first.
++        if route.thought_signature_passback:
++            _capture_thought_signatures(raw_resp, self._thought_signatures)
++
+         # Convert response if needed
+         if route.mode == ProxyMode.A2O:
+             # Convert OpenAI response back to Anthropic
+@@ -445,6 +576,10 @@ class Pipeline:
+             async for chunk in self.sender.send_stream(
+                 route.backend, upstream_url, upstream_body, headers=ctx.headers
+             ):
++                # Chunks are already-parsed OpenAI payloads here, so capture is a
++                # dict walk — no SSE re-parsing needed on the a2o path.
++                if route.thought_signature_passback:
++                    _capture_thought_signatures(chunk, self._thought_signatures)
+                 events = converter.feed(chunk)
+                 for event in events:
+                     yield event
+@@ -503,7 +638,12 @@ class Pipeline:
+         # two blocks fails to parse and its duplicate leaks through. The buffer is
+         # only allocated when the flag is on; the passthrough fast path is unchanged.
+         rewrite = route.dedup_reasoning
++        # Signature capture is read-only, so it must NOT delay or alter the bytes
++        # the client sees: it keeps its own parse buffer alongside the fast path.
++        capture = route.thought_signature_passback
++        sigs = self._thought_signatures
+         buf = b""
++        cap_buf = b""
+         try:
+             async for chunk in self.sender.send_stream_raw(
+                 route.backend, upstream_url, upstream_body, headers=ctx.headers
+@@ -511,18 +651,27 @@ class Pipeline:
+                 if not rewrite:
+                     yield chunk
+                     await self._broadcast_chunk(ctx, names, StreamChunk(raw_bytes=chunk))
++                    if capture:
++                        cap_buf = _capture_sse_signatures(cap_buf + chunk, sigs)
+                     continue
+                 buf += chunk
+                 # Emit every complete event (terminated by \n\n); keep the tail.
+                 head, sep, buf = buf.rpartition(b"\n\n")
+                 if sep:
++                    if capture:
++                        _capture_sse_signatures(head + sep, sigs)
+                     out = _rewrite_reasoning_sse(head + sep)
+                     yield out
+                     await self._broadcast_chunk(ctx, names, StreamChunk(raw_bytes=out))
+             if rewrite and buf:
++                if capture:
++                    _capture_sse_signatures(buf + b"\n\n", sigs)
+                 out = _rewrite_reasoning_sse(buf)
+                 yield out
+                 await self._broadcast_chunk(ctx, names, StreamChunk(raw_bytes=out))
++            elif capture and cap_buf:
++                # Trailing event with no final blank line.
++                _capture_sse_signatures(cap_buf + b"\n\n", sigs)
+         except UpstreamError as e:
+             # The error event goes to the *client*, so its wire format must follow
+             # client_protocol (not backend_protocol).
+@@ -634,6 +783,12 @@ class Pipeline:
+             ctx.tool_name_map = build_tool_name_mapping(body.get("tools"))
+             upstream_body = convert_request_a2o(body)
+             upstream_body["model"] = route.effective_model
++            # a2o rebuilds tool_calls from the Anthropic tool_use blocks, so any
++            # signature is lost here too — re-attach before the body goes upstream.
++            if route.thought_signature_passback:
++                n = _inject_thought_signatures(upstream_body, self._thought_signatures)
++                if n:
++                    log.info("re-attached %d thought signature(s) [a2o]", n)
+             # Drop client-side cache_control on the a2o→OpenAI link: the gateway
+             # injects its own breakpoints (already at Anthropic's 4-block cap), so
+             # any the client still carries overflow to a 400. See _strip_cache_control.
+@@ -656,6 +811,22 @@ class Pipeline:
+             is_inference = _is_inference_path(ctx.path, route.backend_protocol)
+ 
+             if route.backend_protocol == "anthropic":
++                if is_inference and route.vertex_anthropic:
++                    # Vertex serves Anthropic models on its own endpoint shape:
++                    # the model goes in the URL PATH, the body carries
++                    # anthropic_version instead of `model`, and the verb differs
++                    # for streaming. Vertex 400s if `model` is present in the body.
++                    body.pop("model", None)
++                    body.setdefault("anthropic_version", "vertex-2023-10-16")
++                    if route.extra_body:
++                        body.update(route.extra_body)
++                        body.pop("model", None)   # extra_body must not reintroduce it
++                    verb = "streamRawPredict" if ctx.is_stream else "rawPredict"
++                    url = (
++                        f"{base_url.rstrip('/')}/publishers/anthropic/models/"
++                        f"{route.effective_model}:{verb}"
++                    )
++                    return url, body
+                 if is_inference:
+                     body["model"] = route.effective_model
+                     # Inject the model's flattened params, identical to the a2o and
+@@ -674,6 +845,10 @@ class Pipeline:
+                     body.update(route.extra_body)
+                 if route.reasoning_passback:
+                     _inject_reasoning_passback(body)
++                if route.thought_signature_passback:
++                    n = _inject_thought_signatures(body, self._thought_signatures)
++                    if n:
++                        log.debug("re-attached %d thought signature(s)", n)
+             # OpenAI backend: drop any Anthropic-only headers the client sent.
+             ctx.headers = _scrub_anthropic_headers(ctx.headers)
+             return _same_protocol_url(base_url, ctx.path), body
+diff --git a/src/workbuddy_bench/proxy/sender.py b/src/workbuddy_bench/proxy/sender.py
+index 945b5c2..3471fb7 100644
+--- a/src/workbuddy_bench/proxy/sender.py
++++ b/src/workbuddy_bench/proxy/sender.py
+@@ -24,6 +24,11 @@ MAX_UPSTREAM_ERROR_BODY = 4000
+ # (incl. RemoteProtocolError). All subclass httpx.TransportError.
+ _RETRYABLE_EXC = httpx.TransportError
+ 
++# Upstream statuses worth retrying: rate limit + gateway/overload. 401 is handled
++# separately (see _auth_refresh) because it is only recoverable when the backend
++# can mint a fresh key.
++_RETRYABLE_STATUS = (429, 502, 503, 504)
++
+ # httpx connect/write timeouts (read/pool follow the backend's own timeout).
+ _CONNECT_TIMEOUT_S = 30.0
+ _WRITE_TIMEOUT_S = 30.0
+@@ -82,9 +87,13 @@ class UpstreamSender:
+ 
+     @staticmethod
+     def _backend_key(backend: BackendConfig) -> str:
+-        # Key on URL + a digest of the full key so backends that share a URL but
+-        # differ only past the first few key chars don't collide.
+-        key_digest = hashlib.sha256(backend.key.encode()).hexdigest()[:12] if backend.key else ""
++        # Key on URL + a digest of the credential *identity* so backends that share
++        # a URL but differ only past the first few key chars don't collide. Uses
++        # key_identity, not the live key: with a rotating token (key_command) the
++        # key changes every refresh, and keying on it would strand the old httpx
++        # pool and reset this backend's concurrency semaphore each time.
++        identity = backend.key_identity
++        key_digest = hashlib.sha256(identity.encode()).hexdigest()[:12] if identity else ""
+         return f"{backend.url}|{key_digest}"
+ 
+     def _get_semaphore(self, backend: BackendConfig) -> asyncio.Semaphore | None:
+@@ -123,6 +132,22 @@ class UpstreamSender:
+             )
+         return self._clients[key]
+ 
++    @staticmethod
++    def _auth_refresh(backend: BackendConfig, status: int) -> bool:
++        """Whether a 401 is recoverable; invalidates the cached key if so.
++
++        Only for ``key_command`` backends, where a 401 most likely means the
++        short-lived OAuth token (e.g. a Vertex access token, ~60 min) expired
++        mid-run: drop it so the retry's _build_headers mints a fresh one. With a
++        static key a 401 is a real credential error and retrying would just burn
++        the whole retry window on every single request.
++        """
++        if status != 401 or not backend.key_command:
++            return False
++        backend.invalidate_key()
++        log.warning("Backend 401 with a dynamic key; re-minting and retrying")
++        return True
++
+     def _build_headers(
+         self,
+         backend: BackendConfig,
+@@ -160,8 +185,12 @@ class UpstreamSender:
+                 continue
+             headers[k] = v
+         headers["Content-Type"] = "application/json"
+-        if backend.key:
+-            headers["Authorization"] = f"Bearer {backend.key}"
++        # resolve_key() is live: with a ``key_command`` backend this returns the
++        # cached-but-unexpired token, re-minting it when stale. Called per attempt
++        # (see the retry loops) so a 401-triggered refresh takes effect on the retry.
++        key = backend.resolve_key()
++        if key:
++            headers["Authorization"] = f"Bearer {key}"
+         return headers
+ 
+     async def send(
+@@ -174,11 +203,13 @@ class UpstreamSender:
+         """Send a non-streaming request to the backend. Returns parsed JSON."""
+         client = self._get_client(backend)
+         limiter = self._get_semaphore(backend)  # None = unlimited for this model
+-        headers = self._build_headers(backend, headers)
++        client_headers = headers
+         max_retries = backend.max_retries
+         base_delay = backend.retry_delay
+ 
+         for attempt in range(max_retries + 1):
++            # Rebuilt per attempt so a 401-triggered key refresh reaches the retry.
++            headers = self._build_headers(backend, client_headers)
+             log.info("-> POST %s attempt=%d/%d (active=%d)",
+                      url, attempt + 1, max_retries + 1, self._active)
+             try:
+@@ -199,7 +230,10 @@ class UpstreamSender:
+                             body=resp.text[:MAX_UPSTREAM_ERROR_BODY],
+                         )
+ 
+-                if resp.status_code in (429, 502, 503, 504) and attempt < max_retries:
++                if attempt < max_retries and (
++                    resp.status_code in _RETRYABLE_STATUS
++                    or self._auth_refresh(backend, resp.status_code)
++                ):
+                     delay = _retry_delay(base_delay)
+                     log.warning("Backend %d, retrying in %.1fs (fixed, attempt %d/%d)...",
+                                 resp.status_code, delay, attempt + 1, max_retries)
+@@ -259,11 +293,13 @@ class UpstreamSender:
+     ) -> AsyncIterator[Any]:
+         client = self._get_client(backend)
+         limiter = self._get_semaphore(backend)  # None = unlimited for this model
+-        headers = self._build_headers(backend, headers)
++        client_headers = headers
+         max_retries = backend.max_retries
+         base_delay = backend.retry_delay
+ 
+         for attempt in range(max_retries + 1):
++            # Rebuilt per attempt so a 401-triggered key refresh reaches the retry.
++            headers = self._build_headers(backend, client_headers)
+             log.info("-> STREAM %s attempt=%d/%d (active=%d)",
+                      url, attempt + 1, max_retries + 1, self._active)
+             retry_delay = None
+@@ -301,7 +337,10 @@ class UpstreamSender:
+                                     )
+                                 return
+ 
+-                            if resp.status_code in (429, 502, 503, 504) and attempt < max_retries:
++                            if attempt < max_retries and (
++                                resp.status_code in _RETRYABLE_STATUS
++                                or self._auth_refresh(backend, resp.status_code)
++                            ):
+                                 # Defer the delay until AFTER releasing the
+                                 # concurrency slot (matches send()); sleeping
+                                 # inside the semaphore would hold a slot idle.
+diff --git a/src/workbuddy_bench/runner/config_loaders.py b/src/workbuddy_bench/runner/config_loaders.py
+index 2641490..a2add8a 100644
+--- a/src/workbuddy_bench/runner/config_loaders.py
++++ b/src/workbuddy_bench/runner/config_loaders.py
+@@ -49,8 +49,38 @@ class DatasetRuntimeContract:
+     def delivery_for_harness(self, harness_name: str) -> str:
+         return self.harness_delivery_by_harness.get(harness_name, self.harness_delivery)
+ 
+-    def requires_split_mount_for(self, harness_name: str) -> bool:
+-        return self.requires_harness_mount or self.delivery_for_harness(harness_name) == "split-mount"
++    def requires_split_mount_for(
++        self, harness_name: str, *, harness_declares_mount: bool = False
++    ) -> bool:
++        """Whether ``harness_name`` must receive its split-mount for this dataset.
++
++        The dataset's ``harness_delivery_by_harness`` map is authoritative when it
++        names the harness. But that map is written per-dataset and only lists the
++        harnesses that existed when the dataset was published — a harness added
++        later is simply absent, and then ``delivery_for_harness`` falls back to the
++        dataset-wide ``harness_delivery`` ("harness-free"), yielding False.
++
++        That default is unsafe. A harness whose own config declares a ``mount:``
++        block is delivered by mount; resolving it to "no mount required" does not
++        disable the harness, it silently drops the mount and lets the agent's
++        install() fall through to its npm fallback. The CLI still runs, so nothing
++        errors — but it is a *different build* than the pinned mount image, missing
++        whatever that image bakes in (for OpenCode: ripgrep, which glob/grep need
++        and which cannot be downloaded from an egress-controlled container). The
++        result is a completed run with quietly degraded tooling, i.e. benchmark
++        numbers that look valid and are not.
++
++        So: when the dataset expresses no opinion about this harness, defer to the
++        harness's own declaration. An explicit entry in the dataset map still wins,
++        and datasets stay read-only.
++        """
++        if self.requires_harness_mount:
++            return True
++        if harness_name in self.harness_delivery_by_harness:
++            return self.harness_delivery_by_harness[harness_name] == "split-mount"
++        if harness_declares_mount:
++            return True
++        return self.harness_delivery == "split-mount"
+ 
+     def to_manifest(self, repo_root: Path | None = None) -> dict[str, Any]:
+         data: dict[str, Any] = {
+diff --git a/src/workbuddy_bench/runner/harness_adapters.py b/src/workbuddy_bench/runner/harness_adapters.py
+index 6c0f040..fe56cab 100644
+--- a/src/workbuddy_bench/runner/harness_adapters.py
++++ b/src/workbuddy_bench/runner/harness_adapters.py
+@@ -71,6 +71,33 @@ HARNESS_ADAPTERS: dict[str, HarnessRuntimeAdapter] = {
+         proxy_url_env="",  # sets ANTHROPIC_BASE_URL directly
+         uses_anthropic_env=True,
+     ),
++    "opencode": HarnessRuntimeAdapter(
++        harness_name="opencode",
++        canonical_display_name="OpenCode",
++        harness_protocol="openai",
++        # OpenCode has no dedicated backend env pair: endpoint + key live in the
++        # generated opencode.json ``provider`` block (an @ai-sdk/openai-compatible
++        # provider), which oc_agent writes per run. These names are what run.sh
++        # exports in DIRECT mode and what oc_agent reads back via _get_env.
++        backend_base_env="OPENCODE_BASE_URL",
++        backend_key_env="OPENCODE_API_KEY",
++        proxy_url_env="OPENCODE_PROXY_URL",
++        uses_anthropic_env=False,
++    ),
++    # Same runtime contract as "opencode" -- same CLI, same protocol, same env
++    # names. It differs only in the agent class, which additionally materializes a
++    # harness workspace into the container (eval/wb_adapt). Registered separately
++    # because run.sh resolves the adapter by harness.name and aborts on an unknown
++    # one; keeping oc_agent.py untouched is the point of the split.
++    "oc-harness": HarnessRuntimeAdapter(
++        harness_name="oc-harness",
++        canonical_display_name="OpenCode (harness-adaptive)",
++        harness_protocol="openai",
++        backend_base_env="OPENCODE_BASE_URL",
++        backend_key_env="OPENCODE_API_KEY",
++        proxy_url_env="OPENCODE_PROXY_URL",
++        uses_anthropic_env=False,
++    ),
+     "cbc-agent": HarnessRuntimeAdapter(
+         harness_name="cbc-agent",
+         canonical_display_name="CodeBuddy Code CLI",
+@@ -80,6 +107,24 @@ HARNESS_ADAPTERS: dict[str, HarnessRuntimeAdapter] = {
+         proxy_url_env="CBC_PROXY_URL",
+         uses_anthropic_env=False,
+     ),
++    # Codex CLI + harness workspace (eval/wb_codex_adapter, adapt_core_cx).
++    # ADDITIVE REGISTRATION ONLY — no existing entry is touched. Codex speaks the
++    # Responses API, which the bench proxy does not serve, so the agent addresses
++    # the model natively via CODEX_BRIDGE_URL (harness version yaml) + the
++    # VERTEX_PROXY_KEY bearer (job env_override) and ignores the proxy URL; these
++    # env names are declared so DIRECT-mode exports and log display stay coherent,
++    # and proxy_url_env is empty because no codex env ever carries the bench
++    # proxy address (the run still uses model_connection: local_proxy for the
++    # office judge's in-container routing).
++    "codex-harness": HarnessRuntimeAdapter(
++        harness_name="codex-harness",
++        canonical_display_name="Codex CLI (harness-adaptive)",
++        harness_protocol="openai",
++        backend_base_env="CODEX_BRIDGE_URL",
++        backend_key_env="VERTEX_PROXY_KEY",
++        proxy_url_env="",
++        uses_anthropic_env=False,
++    ),
+ }
+ 
+ 
+diff --git a/src/workbuddy_bench/runner/prepare_job.py b/src/workbuddy_bench/runner/prepare_job.py
+index af1dfac..e38c515 100644
+--- a/src/workbuddy_bench/runner/prepare_job.py
++++ b/src/workbuddy_bench/runner/prepare_job.py
+@@ -400,8 +400,13 @@ def compose_job_config(
+     if dataset_for_runtime:
+         dataset_runtime = load_dataset_runtime_contract(dataset_for_runtime, repo_root=_repo_root())
+     harness_name = harness.get("name", "")
+-    dataset_requires_mount = dataset_runtime.requires_split_mount_for(str(harness_name))
+     harness_mount = harness.get("mount")
++    # Kept in lockstep with resolve_manifest's call: a harness absent from the
++    # dataset's delivery map defers to its own `mount:` declaration, so the volume
++    # is attached instead of silently skipped.
++    dataset_requires_mount = dataset_runtime.requires_split_mount_for(
++        str(harness_name), harness_declares_mount=bool(harness_mount)
++    )
+     if dataset_requires_mount:
+         validate_harness_mount_available(
+             harness,
+diff --git a/src/workbuddy_bench/runner/proxy_config.py b/src/workbuddy_bench/runner/proxy_config.py
+index 7b53ace..1a48f4a 100644
+--- a/src/workbuddy_bench/runner/proxy_config.py
++++ b/src/workbuddy_bench/runner/proxy_config.py
+@@ -157,6 +157,11 @@ def build_proxy_config(
+         "url_env": str(backend_url_env),
+         "key_env": str(backend_key_env),
+     }
++    # Dynamic credential: model.backend_key_command mints a short-lived key per
++    # request instead of reading a static one from .env (Vertex OAuth tokens
++    # expire in ~60 min, well inside a run). The command is config, not a secret,
++    # so it is written into proxy.yaml literally; the proxy caches its output.
++    _key_command(model, backend_block)
+     model_max_concurrent = model.get("max_concurrent")
+     if model_max_concurrent is not None:
+         backend_block["max_concurrent"] = int(model_max_concurrent)
+@@ -195,6 +200,10 @@ def build_proxy_config(
+             # backends that duplicate thinking across reasoning keys.
+             "dedup_reasoning": bool(model.get("dedup_reasoning", False)),
+             "reasoning_passback": bool(model.get("reasoning_passback", False)),
++            "thought_signature_passback": bool(
++                model.get("thought_signature_passback", False)
++            ),
++            "vertex_anthropic": bool(model.get("vertex_anthropic", False)),
+         }
+     ]
+ 
+@@ -229,8 +238,24 @@ def build_proxy_config(
+     }
+ 
+ 
++def _key_command(model: dict[str, Any], backend_block: dict[str, Any]) -> None:
++    """Copy ``model.backend_key_command`` (+ ttl) onto a route's backend block.
++
++    In-place so both the eval route and the post-hoc judge route stay in lockstep.
++    No-op when the model declares no command (the static ``key_env`` path).
++    """
++    command = str(model.get("backend_key_command") or "").strip()
++    if not command:
++        return
++    backend_block["key_command"] = command
++    ttl = model.get("backend_key_ttl")
++    if ttl is not None:
++        backend_block["key_ttl"] = float(ttl)
++
++
+ def _openai_judge_route(
+-    *, slug: str, url_env: str, key_env: str, backend_model: str, params: dict[str, Any]
++    *, slug: str, url_env: str, key_env: str, backend_model: str, params: dict[str, Any],
++    key_command: str = "", key_ttl: float | None = None,
+ ) -> dict[str, Any]:
+     """Assemble an OpenAI-passthrough judge route from resolved parts.
+ 
+@@ -244,10 +269,15 @@ def _openai_judge_route(
+     interceptors = ["log"]
+     if injected:
+         interceptors.append("inject_extra_body")
++    backend_block: dict[str, Any] = {"url_env": url_env, "key_env": key_env}
++    if key_command:
++        backend_block["key_command"] = key_command
++        if key_ttl is not None:
++            backend_block["key_ttl"] = float(key_ttl)
+     return {
+         "slug": slug,
+         "mode": "passthrough",
+-        "backend": {"url_env": url_env, "key_env": key_env},
++        "backend": backend_block,
+         "backend_model": backend_model,
+         "client_protocol": "openai",
+         "backend_protocol": "openai",
+@@ -277,6 +307,8 @@ def _judge_route(manifest: dict[str, Any]) -> dict[str, Any] | None:
+     return _openai_judge_route(
+         slug=slug, url_env=url_env, key_env=key_env,
+         backend_model=backend_model, params=params,
++        key_command=str(judge.get("api_key_command") or ""),
++        key_ttl=judge.get("api_key_ttl"),
+     )
+ 
+ 
+@@ -356,6 +388,8 @@ def _judge_route_from_model_config(
+     return _openai_judge_route(
+         slug=slug, url_env=url_env, key_env=key_env,
+         backend_model=backend_model, params=params,
++        key_command=str(model.get("backend_key_command") or ""),
++        key_ttl=model.get("backend_key_ttl"),
+     )
+ 
+ 
+diff --git a/src/workbuddy_bench/runner/resolve_manifest.py b/src/workbuddy_bench/runner/resolve_manifest.py
+index afb7019..6a43390 100644
+--- a/src/workbuddy_bench/runner/resolve_manifest.py
++++ b/src/workbuddy_bench/runner/resolve_manifest.py
+@@ -229,6 +229,15 @@ def resolve_llm_judge(
+     resolved["api_base"] = api_base.strip()
+     resolved["api_base_env"] = backend_url_env
+     resolved["api_key_env"] = backend_key_env
++    # Dynamic credential (see BackendConfig.key_command): carried through so the
++    # judge's proxy route can mint a short-lived key per request, the same way the
++    # eval route does. Only meaningful when the judge routes via local_proxy.
++    judge_key_command = str(judge_model.get("backend_key_command") or "").strip()
++    if judge_key_command:
++        resolved["api_key_command"] = judge_key_command
++        judge_key_ttl = judge_model.get("backend_key_ttl")
++        if judge_key_ttl is not None:
++            resolved["api_key_ttl"] = float(judge_key_ttl)
+     resolved["params"] = copy.deepcopy(judge_params)
+     return resolved
+ 
+@@ -910,7 +919,14 @@ def resolve_manifest(
+     )
+ 
+     dataset_runtime = load_dataset_runtime_contract(dataset, repo_root=_repo_root())
+-    dataset_requires_mount = dataset_runtime.requires_split_mount_for(harness_name)
++    # A harness the dataset's delivery map does not name still needs its mount when
++    # its own config declares one — otherwise the mount is silently dropped and the
++    # agent falls back to installing a different build at run time. See
++    # DatasetRuntimeContract.requires_split_mount_for.
++    dataset_requires_mount = dataset_runtime.requires_split_mount_for(
++        harness_name,
++        harness_declares_mount=bool((harness or {}).get("mount")),
++    )
+     backend_for_mount = "local"
+     if dataset_requires_mount:
+         validate_harness_mount_available(
+diff --git a/scripts/dataset/fetch-dataset.sh b/scripts/dataset/fetch-dataset.sh
+index 50d51af..342eb31 100755
+--- a/scripts/dataset/fetch-dataset.sh
++++ b/scripts/dataset/fetch-dataset.sh
+@@ -62,24 +62,24 @@ have() { command -v "$1" >/dev/null 2>&1; }
+ 
+ download() {
+     local name="$1" dest="$2"
+-    if have huggingface-cli; then
+-        huggingface-cli download "$HF_REPO" "$name.tar.gz" \
+-            --repo-type dataset --local-dir "$(dirname "$dest")" >/dev/null
+-    elif have curl; then
++    if have curl; then
+         curl -fSL "$BASE_URL/$name.tar.gz" -o "$dest"
+     elif have wget; then
+         wget -q "$BASE_URL/$name.tar.gz" -O "$dest"
++    elif have hf; then
++        hf download "$HF_REPO" "$name.tar.gz" \
++            --repo-type dataset --local-dir "$(dirname "$dest")" >/dev/null
+     else
+-        echo "ERROR: need huggingface-cli, curl, or wget to download." >&2; exit 1
++        echo "ERROR: need curl, wget, or hf to download." >&2; exit 1
+     fi
+ }
+ 
+ verify() {
+     local name="$1" dest="$2" sums; sums="$(dirname "$dest")/SHA256SUMS"
+-    # Best-effort: pull the repo-side SHA256SUMS and check this archive's line.
+-    if have curl; then curl -fsSL "$BASE_URL/SHA256SUMS" -o "$sums" 2>/dev/null || return 0
+-    elif have wget; then wget -q "$BASE_URL/SHA256SUMS" -O "$sums" 2>/dev/null || return 0
+-    else return 0; fi
++    # Required: pull the repo-side SHA256SUMS and check this archive's line.
++    if have curl; then curl -fsSL "$BASE_URL/SHA256SUMS" -o "$sums"
++    elif have wget; then wget -q "$BASE_URL/SHA256SUMS" -O "$sums"
++    else echo "ERROR: need curl or wget to verify the download." >&2; exit 1; fi
+     ( cd "$(dirname "$dest")" && grep "  $name.tar.gz\$" SHA256SUMS | sha256sum -c - )
+ }
+ 

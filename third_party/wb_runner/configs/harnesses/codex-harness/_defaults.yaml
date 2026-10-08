@@ -1,0 +1,10 @@
+# The adapter mounts dependencies/codex/dist read-only at /opt/codex and supplies
+# the model and container-accessible Responses endpoint. The job-local
+# Chat Completions proxy serves the benchmark judge separately.
+harness:
+  name: codex-harness
+  import_path: "workbuddy_bench.agents.codex_harness_agent:CodexHarnessAgent"
+  protocol: openai
+  params:
+    CODEX_MAX_TURNS: null
+    CODEX_BIN_DIR: "/opt/codex"

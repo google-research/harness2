@@ -1,0 +1,40 @@
+diff --git a/bun.lock b/bun.lock
+index fd4544f..47ae3f7 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -54,7 +54,7 @@
+         "diff": "catalog:",
+         "effect": "catalog:",
+         "fuzzysort": "catalog:",
+-        "ghostty-web": "github:anomalyco/ghostty-web#main",
++        "ghostty-web": "github:anomalyco/ghostty-web#20bd361",
+         "luxon": "catalog:",
+         "marked": "catalog:",
+         "marked-shiki": "catalog:",
+diff --git a/packages/app/package.json b/packages/app/package.json
+index a308179..b41c807 100644
+--- a/packages/app/package.json
++++ b/packages/app/package.json
+@@ -62,7 +62,7 @@
+     "diff": "catalog:",
+     "effect": "catalog:",
+     "fuzzysort": "catalog:",
+-    "ghostty-web": "github:anomalyco/ghostty-web#main",
++    "ghostty-web": "github:anomalyco/ghostty-web#20bd361",
+     "luxon": "catalog:",
+     "marked": "catalog:",
+     "marked-shiki": "catalog:",
+diff --git a/packages/opencode/src/provider/transform.ts b/packages/opencode/src/provider/transform.ts
+index 4ed43ce..7ea1cb3 100644
+--- a/packages/opencode/src/provider/transform.ts
++++ b/packages/opencode/src/provider/transform.ts
+@@ -390,6 +390,9 @@ const WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"]
+ const OPENAI_EFFORTS = ["none", "minimal", ...WIDELY_SUPPORTED_EFFORTS, "xhigh"]
+ 
+ function anthropicAdaptiveEfforts(apiId: string): string[] | null {
++  if (["opus-4-8", "opus-4.8"].some((v) => apiId.includes(v))) {
++    return ["low", "medium", "high", "xhigh", "max"]
++  }
+   if (["opus-4-7", "opus-4.7"].some((v) => apiId.includes(v))) {
+     return ["low", "medium", "high", "xhigh", "max"]
+   }

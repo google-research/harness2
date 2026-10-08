@@ -1,0 +1,226 @@
+--- a/evaluation/judge.py
++++ b/evaluation/judge.py
+@@ -28,8 +28,12 @@
+ }
+ 
+ def _detect_provider(model: str) -> str:
+-    """Return 'anthropic', 'google', 'openai', or 'mistral' from the model name."""
++    """Return 'vertex-anthropic', 'anthropic', 'google', 'openai', or 'mistral'."""
+     name = model.lower()
++    if name.startswith("vertex/gemini"):
++        return "vertex-google"
++    if name.startswith("vertex/"):
++        return "vertex-anthropic"
+     if name.startswith("claude"):
+         return "anthropic"
+     if name.startswith("gemini"):
+@@ -50,9 +54,24 @@
+             model: Model ID (e.g. 'claude-sonnet-4-6', 'gemini-3-flash-preview',
+                 'gpt-5.4', 'mistral-medium-3.5').
+         """
+-        self.model = model
+         self.provider = _detect_provider(model)
+-        if self.provider == "anthropic":
++        # 'vertex/claude-opus-4-8' -> API model id 'claude-opus-4-8'. The bare
++        # id is what lands in scores_<model>.json filenames, so keep it clean.
++        self.model = model.split("/", 1)[1] if self.provider.startswith("vertex-") else model
++        if self.provider == "vertex-anthropic":
++            # Claude on Vertex via ADC — no API key. Anthropic models on
++            # Vertex are served from the global endpoint.
++            self.client = anthropic.AnthropicVertex(
++                project_id=os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
++                or os.environ["GOOGLE_CLOUD_PROJECT"],
++                region=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
++                max_retries=5,
++                timeout=900.0,
++            )
++        elif self.provider == "vertex-google":
++            self.client = genai.Client(vertexai=True, project=os.environ["GOOGLE_CLOUD_PROJECT"],
++                                       location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"))
++        elif self.provider == "anthropic":
+             self.client = anthropic.Anthropic(max_retries=1)
+         elif self.provider == "google":
+             self.client = genai.Client()
+@@ -65,7 +84,13 @@
+             )
+ 
+     def evaluate(
+-        self, prompt_template: str, variables: dict, temperature: float = 0.0, _retries: int = 2,
++        # _retries=4 rather than 2: an unparseable verdict is intermittent (~9% of
++        # calls), and because a run fails if ANY criterion exhausts its retries, a
++        # ~50-criterion run failed ~32% of the time at 2 attempts. Retries are also
++        # what gives the schema more than one chance — it is dropped on the final
++        # attempt as an unstructured fallback, so 2 retries meant exactly one
++        # schema-constrained try.
++        self, prompt_template: str, variables: dict, temperature: float = 0.0, _retries: int = 4,
+     ) -> dict:
+         """Send a formatted prompt to the judge and parse the JSON response.
+ 
+@@ -78,13 +103,78 @@
+             Parsed JSON dict from the judge's response.
+         """
+         prompt = prompt_template.format(**variables)
++        if self.provider == "vertex-anthropic":
++            return self._evaluate_anthropic_vertex(prompt, _retries)
+         if self.provider == "anthropic":
+             return self._evaluate_anthropic(prompt, temperature, _retries)
+-        if self.provider == "google":
++        if self.provider in ("google", "vertex-google"):
+             return self._evaluate_google(prompt, temperature, _retries)
+         if self.provider == "openai":
+             return self._evaluate_openai(prompt, temperature, _retries)
+         return self._evaluate_mistral(prompt, temperature, _retries)
++
++    # System steer replaces the structured-output constraint we can't use on
++    # Vertex (see _evaluate_anthropic_vertex). The rubric prompt already asks
++    # for a fenced JSON object, and _parse_json strips the fences.
++    _VERTEX_SYSTEM = (
++        "You are an evaluation judge. You must return valid JSON only, "
++        "with no markdown formatting or extra text."
++    )
++
++    def _evaluate_anthropic_vertex(self, prompt: str, _retries: int) -> dict:
++        """Claude on Vertex AI (ADC auth), e.g. --judge-model vertex/claude-opus-4-8.
++
++        Differs from the direct-Anthropic path in two ways:
++          * No output_config.format — a Vertex organisation policy may deny
++            `structured_outputs` for partner models, which 400s a schema'd
++            request. JSON comes from the prompt and _parse_json instead.
++          * Extended thinking is on (adaptive) with effort from
++            JUDGE_EFFORT (default 'high'), so content[0] can be a thinking
++            block; take the first *text* block rather than content[0].
++        """
++        effort = os.environ.get("JUDGE_EFFORT", "high")
++        last_err: Exception | None = None
++        for attempt in range(_retries):
++            # No output_config.format here, unlike the anthropic/google/openai
++            # paths. Claude on Vertex is a *partner* model, and a Vertex
++            # organisation policy may deny structured_outputs for partner models:
++            #   constraints/vertexai.allowedPartnerModelFeatures -> 400
++            # Sending a schema therefore burns the attempt on a 400 that the
++            # `except Exception: continue` below swallows, leaving only the
++            # schema-free attempts real. Every attempt here is unstructured and
++            # so genuinely retries; _parse_json repairs the malformed JSON the
++            # judge sometimes emits (unescaped quotes when citing source text).
++            output_config: dict = {"effort": effort}
++            try:
++                response = self.client.messages.create(
++                    model=self.model,
++                    max_tokens=32000,
++                    system=self._VERTEX_SYSTEM,
++                    thinking={"type": "adaptive"},
++                    output_config=output_config,
++                    messages=[{"role": "user", "content": prompt}],
++                )
++            except Exception as e:
++                last_err = e
++                continue
++
++            if response.stop_reason == "max_tokens":
++                input_tokens = response.usage.input_tokens if response.usage else "unknown"
++                raise ValueError(
++                    f"Judge response truncated (stop_reason=max_tokens, "
++                    f"input_tokens={input_tokens}, max_tokens=32000). "
++                    f"The agent output is likely too large for the judge context window. "
++                    f"Ensure criteria have deliverables lists to scope output."
++                )
++
++            text = next((b.text for b in response.content if b.type == "text"), "")
++            try:
++                return self._parse_json(text)
++            except (ValueError, json.JSONDecodeError) as e:
++                last_err = e
++        raise ValueError(
++            f"Judge returned unparseable response after {_retries} attempts: {last_err}"
++        )
+ 
+     def _evaluate_anthropic(self, prompt: str, temperature: float, _retries: int) -> dict:
+         last_err: Exception | None = None
+@@ -236,11 +326,21 @@
+         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+         if match:
+             try:
+-                return json.loads(match.group(1).strip())
++                # strict=False tolerates raw control characters (notably literal
++                # newlines) inside strings — the judge quotes multi-line document
++                # excerpts into `reasoning`, and strict parsing rejects those.
++                return json.loads(match.group(1).strip(), strict=False)
+             except json.JSONDecodeError:
+                 pass  # Fall through to brace matching
+ 
+-        # Try to find a JSON object by matching balanced braces
++        # Try to find a JSON object by matching balanced braces.
++        #
++        # Collect EVERY parseable object rather than returning the first. A
++        # response that prints the required format as valid JSON before answering
++        # ('Format: {"verdict": "pass"} ... Answer: {"verdict": "fail", ...}')
++        # would otherwise be scored on the echo, which is the same manufactured
++        # verdict the last-resort branch below guards against -- just one layer up.
++        objs = []
+         for i, ch in enumerate(text):
+             if ch == '{':
+                 depth = 0
+@@ -251,9 +351,61 @@
+                         depth -= 1
+                     if depth == 0:
+                         try:
+-                            return json.loads(text[i:j + 1])
++                            objs.append(json.loads(text[i:j + 1], strict=False))
+                         except json.JSONDecodeError:
+-                            break  # Try next opening brace
++                            pass
+                         break
++        if objs:
++            verdicts = {str(o["verdict"]).lower() for o in objs
++                        if isinstance(o, dict) and "verdict" in o}
++            if len(verdicts) > 1:
++                raise ValueError(
++                    f"Ambiguous judge response: parsed objects disagree on verdict "
++                    f"({sorted(verdicts)}); refusing to guess: {text[:200]}")
++            # Prefer a full verdict object; fall back to the first parseable one so
++            # non-verdict callers (other prompts reuse this parser) are unaffected.
++            for o in objs:
++                if isinstance(o, dict) and "verdict" in o:
++                    return o
++            return objs[0]
++
++        # Last resort: field extraction for the verdict shape.
++        #
++        # The judge quotes source text into `reasoning` with UNESCAPED double
++        # quotes ('... an "inadequate disclosure" loophole ...'), which is not
++        # valid JSON, so no parser above can succeed. On Vertex we cannot force
++        # well-formed output with a schema (partner-model structured_outputs is
++        # denied by org policy), and re-asking does not reliably help because the
++        # model repeats the same quoting for the same source text. The verdict
++        # schema is only {verdict, reasoning}, so both fields can be recovered
++        # positionally: verdict is a closed enum, and reasoning runs to the last
++        # quote before the closing brace.
++        # AMBIGUITY IS NOT A VERDICT. A bare search here manufactures verdicts: a
++        # response that echoes the required output format ('"verdict": "pass" |
++        # "fail"') matches on the FIRST alternative and books a pass the judge
++        # never gave. LAB grading is all-criteria-pass, so one manufactured pass
++        # can flip a task to ALL-PASS and, through the margin gate, promote a
++        # candidate harness on the strength of a parse artefact.
++        #
++        # So: take every occurrence, drop the ones that are schema echoes (a
++        # verdict immediately followed by `|`, the alternation form), and accept
++        # only when what survives agrees on ONE value. Anything else raises, which
++        # is the safe direction -- the caller writes no scores.json, the adapter
++        # returns None, and the rollout is excluded as n_unscored rather than
++        # scored. Scoring an unjudged rollout as failed would make an outage look
++        # like a regression; scoring it as passed is worse.
++        hits = [m for m in re.finditer(r'"verdict"\s*:\s*"(pass|fail)"', text, re.I)
++                if not re.match(r'\s*\|', text[m.end():])]
++        found = {m.group(1).lower() for m in hits}
++        if len(found) == 1:
++            reasoning = ""
++            m = re.search(r'"reasoning"\s*:\s*"(.*)"\s*,?\s*\}', text, re.DOTALL)
++            if m:
++                reasoning = m.group(1)
++            return {"verdict": found.pop(), "reasoning": reasoning}
++        if len(found) > 1:
++            raise ValueError(
++                f"Ambiguous judge response: {len(hits)} verdict fields disagree "
++                f"({sorted(found)}); refusing to guess: {text[:200]}")
+ 
+         raise ValueError(f"No JSON found in judge response: {text[:200]}")

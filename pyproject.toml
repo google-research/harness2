@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harness2"
+version = "0.1.0"
+description = "Harness²: Recursive Agent Harnessing for an Open World"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.14"
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX",
+]
+authors = [
+    { name = "Google LLC" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+render = ["openpyxl>=3.1,<4", "python-pptx>=1,<2"]
+bridge = ["litellm[proxy]==1.95.0", "fastapi==0.139.2", "google-auth==2.56.3"]
+
+[project.scripts]
+harness2 = "harness2.cli.run_sweep:main"
+harness2-judge = "harness2.cli.judge:main"
+harness2-report = "harness2.cli.report:main"
+harness2-setup = "harness2.cli.setup:main"
+harness2-check = "harness2.cli.check:main"
+harness2-demo = "harness2.cli.demo:main"
+harness2-bridge = "harness2.cli.bridge:main"
+
+[tool.setuptools.packages.find]
+include = ["harness2*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["third_party", "dependencies"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

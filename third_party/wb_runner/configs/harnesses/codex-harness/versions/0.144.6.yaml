@@ -1,0 +1,4 @@
+# Model and endpoint are supplied from the user configuration by Harness².
+harness:
+  params:
+    CODEX_VERSION: "0.144.6"

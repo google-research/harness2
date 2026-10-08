@@ -1,0 +1,43 @@
+diff --git a/eval/judge.py b/eval/judge.py
+index 8412969..1c83bb5 100755
+--- a/eval/judge.py
++++ b/eval/judge.py
+@@ -531,6 +531,15 @@ IMPORTANT:
+     last_error = None
+     raw_response = ""
+     parse_status = "failed"
++    # Thinking judge models (e.g. Gemini 3) can spend the entire completion
++    # budget on hidden reasoning and return finish_reason="length" with no
++    # content. Cap the reasoning effort so the judge actually emits its verdict.
++    extra_kwargs: dict = {}
++    reasoning_effort = os.environ.get("JUDGE_REASONING_EFFORT", "low").strip()
++    if reasoning_effort and reasoning_effort.lower() != "default":
++        # via extra_body so it reaches the endpoint regardless of SDK version
++        extra_kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
++
+     for attempt in range(max_retries):
+         try:
+             client = get_openai_client(api_base, api_key)
+@@ -543,11 +552,20 @@ IMPORTANT:
+                     },
+                     {"role": "user", "content": user_content},
+                 ],
+-                max_completion_tokens=8192,
++                # 64k so extended-thinking effort doesn't consume the whole budget and starve the
++                # verdict output (thinking + verdict share this cap; 32k was too small at effort=high,
++                # which silently zeroed rubrics on hard tasks).
++                max_completion_tokens=int(os.environ.get("JUDGE_MAX_COMPLETION_TOKENS", "65536")),
+                 temperature=0.0,
+                 timeout=timeout_sec,
++                **extra_kwargs,
+             )
+-            raw_response = response.choices[0].message.content.strip()
++            message = response.choices[0].message if response.choices else None
++            content = getattr(message, "content", None) if message else None
++            if not content:
++                finish = response.choices[0].finish_reason if response.choices else "unknown"
++                raise ValueError(f"Judge returned empty content (finish_reason={finish})")
++            raw_response = content.strip()
+             parsed, parse_status = parse_judge_json(raw_response)
+ 
+             model_criteria = parsed.get("criteria_results", [])

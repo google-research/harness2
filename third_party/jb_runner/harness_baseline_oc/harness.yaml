@@ -1,0 +1,29 @@
+# Owned harness manifest for the JobBench OpenCode harness (v0 baseline).
+# Lists the EVOLVABLE components as editable files. OpenCode itself (the CLI, its tool
+# implementations, the provider) is FROZEN infrastructure and is NOT referenced here.
+# An evolve loop edits files under this workspace only.
+name: jobbench_oc_harness
+
+components:
+  system_prompt: systemprompt.md            # c1 — the OpenCode agent body (REPLACES the stock prompt)
+  guardrails: guardrails.md                 # c6 — always-on rules
+  long_term_memory: LongTermMEMORY.md       # c3 — durable domain facts
+  skills_dir: skills/                       # c6 — reusable workflows (.opencode/skills/<n>/SKILL.md)
+  sub_agents_dir: sub_agents/               # c5 — delegated subagents (.opencode/agent/<n>.md, mode: subagent)
+  scripts_dir: scripts/                     # c7 — deterministic helper scripts run via Bash
+  tool_guidance: tool_descriptions/tool_guidance.md   # c4 — prose guidance about the OpenCode toolset
+  plugins_dir: plugin/                      # c8 — OpenCode plugins (TS): custom tools + middleware
+                                            #      hooks (tool.execute.after / chat.system.transform).
+                                            #      Auto-discovered from .opencode/plugin/*.ts at runtime.
+  # c2 context_policy: NOT injectable — OpenCode owns context assembly/compaction.
+
+# NOTE: the harness is injected in APPEND mode (composed prose -> AGENTS.md on top of OpenCode's
+# stock provider prompt; no --agent). To stay faithful to the real run1/run2/high runs — which set
+# NEITHER temperature NOR a step cap and use OpenCode/provider defaults — we intentionally do NOT set
+# temperature/steps here. (Setting temperature=0 or a low step cap would diverge from the real runs
+# and, in the case of a step cap, could truncate long office tasks before they write deliverables.)
+agent_config_values: {}
+
+# Order in which prose components are concatenated for the offline validation/preview compose.
+# (render_opencode.py places each component into its real OpenCode slot separately.)
+compose_order: [system_prompt, guardrails, long_term_memory, skills]

@@ -1,0 +1,32 @@
+# OpenCode CLI harness defaults shared by all OpenCode versions.
+
+harness:
+  name: opencode
+  import_path: "workbuddy_bench.agents.oc_agent:OcAgent"
+  # OpenCode speaks OpenAI Chat Completions (via @ai-sdk/openai-compatible), so an
+  # OpenAI-protocol backend routes as same-protocol `passthrough` — no a2o
+  # conversion, unlike claude-code. local_proxy is still required whenever the
+  # model declares extra_body or uses a dynamic backend_key_command.
+  protocol: openai
+  params:
+    # OpenCode has NO --max-turns equivalent; its loop is bounded by the step/tool
+    # budget and, in practice, by Harbor's per-trial timeout. Declared so the
+    # harness YAML shape matches cbc/cc and so the intended cap is auditable in the
+    # manifest, but oc_agent cannot enforce it. Left null to avoid implying it does.
+    OPENCODE_MAX_TURNS: null
+  # No models_file: OpenCode resolves --model against the `provider` map in
+  # opencode.json, which oc_agent generates per run (endpoint + key + context
+  # limit). There is no static models preset to share.
+  #
+  # The deny list lives in each version's settings preset, mapped per version
+  # because OpenCode's tool set grows across releases — the same reasoning as the
+  # codebuddy-code presets. There is deliberately NO shared default: a version that
+  # forgets to map would otherwise silently inherit the wrong deny list.
+  mount:
+    name: opencode
+    path: /opt/opencode
+    dockerfile: configs/harnesses/opencode/docker/Dockerfile
+    context: configs/harnesses/opencode/docker
+    build:
+      args:
+        MOUNT_PATH: /opt/opencode
