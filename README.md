@@ -1,37 +1,69 @@
+<h3 align="center">
+  <img src="assets/Harness2-wordmark.png" alt="Harness²" width="360"><br>
+  Recursive Agent Harnessing for an Open World
+</h3>
+
 <p align="center">
-  <img src="assets/logo.png" alt="Harness² logo" width="128"><br>
-  <img src="assets/Harness2-wordmark.png" alt="Harness²" width="500">
-</p>
-<p align="center"><strong>Recursive Agent Harnessing for an Open World</strong></p>
-<p align="center">
-  <a href="#install">Install</a> ·
-  <a href="#run-a-benchmark">Run a benchmark</a> ·
-  <a href="docs/BENCHMARKS.md">Benchmark guides</a> ·
-  <a href="#experiments">Experiments</a> ·
-  <a href="#web-access">Web access</a>
+  <a href="https://arxiv.org/abs/TODO"><img src="https://img.shields.io/badge/Paper-arXiv-EA4335?logo=arxiv&logoColor=white" alt="Paper"></a>
+  <a href="https://harness2.github.io"><img src="https://img.shields.io/badge/Website-harness2.github.io-4285F4?logo=googlechrome&logoColor=white" alt="Website"></a>
+  <a href="docs/BENCHMARKS.md"><img src="https://img.shields.io/badge/Docs-Benchmark%20guides-FBBC04" alt="Benchmark guides"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-34A853" alt="License"></a>
 </p>
 
-Official code for **Harness²: Recursive Agent Harnessing for an Open World**.
+<p align="center">
+  <a href="docs/BENCHMARKS.md#jobbench">
+    <img src="assets/harness2-setup.gif" alt="Install, set up, and run JobBench: uv pip install -e '.[render]', harness2-setup jb, then harness2 --bench jb --k 1 --mode parallel. Click for prerequisites and commands." width="640">
+  </a>
+</p>
 
-Harness² keeps model weights fixed and improves two harnesses. **Task-level
-recursion** refines the execution harness through **Propose–Probe–Compose**:
-edit general procedures and domain knowledge, execute the candidates, and
-compose a successor from their behavioral contrasts. **Harnessing-level
-recursion** updates the improvement harness after each task, retaining adopted
-harness files and supported lessons in a per-domain library.
+A **harness** is the system around a model that enables it to act as an agent:
+prompts, tools, memory, skills, orchestration, and more. **Harnessing** is the
+process of optimizing that system.
+
+Harness² is a plug-and-play framework for **recursive agent harnessing** in an
+open world, where agents encounter tasks unseen during harness design. It
+connects two levels of recursion while keeping model weights fixed:
+
+* **Task-level recursion** refines the execution harness for the current task
+  through a contrastive **Propose–Probe–Compose** step: propose edits, probe
+  their effects on the same task, and compose a refined harness from behavioral
+  contrasts between executions, without ground-truth feedback.
+* **Harnessing-level recursion** updates a persistent *improvement harness*
+  with adopted harnesses and evidence-supported lessons from each task to guide
+  future refinement.
 
 <p align="center">
   <a href="assets/harness2_pipeline.png">
-    <img src="assets/harness2_pipeline.png" alt="Harness² pipeline: task-level recursion proposes, probes, and composes execution harnesses; harnessing-level recursion retains harnesses and lessons for subsequent tasks." width="100%">
+    <img src="assets/harness2_pipeline.png" alt="Harness² pipeline. Task-level recursion: an agent executor runs the initial harness, a harness editor proposes invariant and domain edits, candidate probes execute them, and a harness composer combines them into the final harness. Harnessing-level recursion: an experience reflector reflects on the step and updates the improvement harness used for the next task." width="100%">
   </a>
 </p>
-<p align="center"><em>Improve the executor on the current task; learn how to improve across tasks.</em></p>
 
-The pipeline supports **parallel and sequential recursion**, **OpenCode and
-Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**. Improvement uses
-task instructions, trajectories, and deliverables. Reference answers and grader
-scores stay out of improvement and selection. The judging command reports the
-adopted output; WorkBuddy also runs its verifier inside each execution.
+Across three professional benchmarks and four model–harness configurations, a
+single Harness² step improves GLM-5 and Gemini 3.5 Flash over their base
+harnesses, with gains of up to 11.5 points on WorkBuddy-Bench, 4.5 points on
+JobBench, and 11.8 percentage points on LAB's partial pass rate. Increasing the
+task-level recursion budget brings further gains.
+
+The release supports **parallel and sequential recursion**, **OpenCode and
+Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
+
+## Video overview
+
+https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
+
+## Contents
+
+- [Video overview](#video-overview)
+- [Harness components](#harness-components)
+- [Install](#install)
+- [Run a benchmark](#run-a-benchmark)
+- [Experiments](#experiments)
+- [Web access](#web-access)
+- [Results and resume](#results-and-resume)
+- [Citation](#citation)
+- [Contributing](#contributing)
+- [License](#license)
+- [Disclaimer](#disclaimer)
 
 ## Harness components
 
@@ -45,139 +77,54 @@ inside the tool loop.
     <img src="assets/components.png" alt="Eight harness components grouped by runtime role: system prompt, guardrails, memory, and skills construct context; tool guidance and scripts define the tool interface; subagents orchestrate delegated work; plugins control middleware." width="100%">
   </a>
 </p>
-<p align="center"><em>The eight harness components and where they act during execution.</em></p>
 
 ## Install
 
-Use **Linux and Python 3.12**; the Python package also supports 3.13. On
-Debian/Ubuntu:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git curl unzip ca-certificates pandoc poppler-utils
-```
-
-Pandoc and Poppler are needed by LAB. Also install
-[Node.js](https://nodejs.org/en/download) 20 or newer,
-[uv](https://docs.astral.sh/uv/getting-started/installation/), and the
-[Google Cloud CLI](https://cloud.google.com/sdk/docs/install). WorkBuddy needs
-[Docker Engine](https://docs.docker.com/engine/install/) and an account that can
-run `docker info`. Benchmark setup installs its own pinned Bun runtime under
-`dependencies/`.
-
-Run every command from the `harness2` directory:
+Use **Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
+From the repository root:
 
 ```bash
 uv venv --python 3.12 .venv
 source .venv/bin/activate
 uv pip install -e '.[render]'
 harness2-demo --output runs/demo --k 2
-cp .env.example .env
 ```
 
-The demo runs both recursion modes across two local tasks with deterministic
-editors and real Python executions, and needs no model credentials. Repeat it to
-verify resume.
+The local demo runs both recursion modes with deterministic editors and real
+Python executions. It requires no model credentials.
 
-A wheel ships the `harness2` package only, so the task partitioner, invoked as
-`python scripts/split_tasks.py`, needs this source tree. For a wheel installation, work from a dedicated directory:
-`.env`, `dependencies/`, and `runs/` are resolved there.
-
-### Models and credentials
-
-Edit `.env` with your Vertex AI project and the model IDs available to your
-account, then authenticate:
+For model-backed benchmarks, install **Node.js 20+, the Google Cloud CLI**, and
+the [benchmark dependencies](docs/SETUP.md#requirements). LAB needs Pandoc and
+Poppler; WorkBuddy-Bench needs Docker. Then configure your models:
 
 ```bash
+cp .env.example .env
+# Edit .env with your Vertex AI project and model IDs.
 gcloud auth application-default login
 ```
 
-A machine with an attached service account needs no further step. Without a
-browser, use `gcloud auth application-default login --no-browser`, which prints a
-command to run on a machine that has one; or `GOOGLE_APPLICATION_CREDENTIALS`
-pointing at a service account key file; or
-`gcloud auth application-default login --impersonate-service-account=<account>`.
-`gcloud` must be on `PATH` in every case, including the key-file route, because
-the installation check runs `gcloud auth application-default print-access-token`.
-
-The shell takes precedence over `.env`. `GOOGLE_CLOUD_PROJECT` identifies your
-project; `GOOGLE_CLOUD_LOCATION` defaults to `global`. Account access to each
-configured model is required.
-
-| Setting | Meaning |
-|---|---|
-| `HARNESS2_SOLVER_MODEL` | Executor model in OpenCode's `provider/model` format |
-| `HARNESS2_IMPROVER_MODEL` | Improver model in the same format; defaults to the executor |
-| `HARNESS2_JUDGE_MODEL` | Bare judge model ID; the adapter supplies the Vertex prefix |
-| `HARNESS2_RUNS_DIR` | Output root; defaults to `runs/` |
-
-The provided configuration uses Vertex Gemini executors and judges, and supports
-either Vertex Claude or Gemini as the improver. LAB also supports the upstream
-judge's direct providers when their credentials are configured. For WorkBuddy,
-setup generates the Gemini solver and judge routes from these settings; rerun it
-after changing either model.
-
-### Network access
-
-Installation reaches these hosts:
-
-| Host | Used for |
-|---|---|
-| `github.com` | the pinned upstream checkouts |
-| `registry.npmjs.org` | the pinned Bun runtime and Codex CLI, plus what `bun install` resolves |
-| `huggingface.co` and its CDN | the JobBench dataset and the WorkBuddy subset archives |
-| a Docker registry | the WorkBuddy container image |
-| `astral.sh` | the CPython 3.12 build `uv` downloads when the host has no system 3.12 |
-
-`harness2-setup <bench> --dry-run` prints every command that reaches the network,
-so an egress-restricted host can be pre-cleared from that output. Experiments
-additionally reach the model endpoints configured in `.env`.
+See the [setup guide](docs/SETUP.md) for model settings, authentication
+alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
 
 ## Run a benchmark
 
-Install one benchmark, then run adaptation, judging, and reporting:
+The following example installs LAB and runs one task, then evaluates and reports
+its result. Model-backed runs incur API costs; start with a small task selection.
 
 ```bash
 harness2-setup lab
 harness2-check --bench lab
-harness2 --bench lab --k 1 --mode parallel
+harness2 --bench lab --k 1 --mode parallel \
+  --only-domains antitrust-competition --max-tasks 1
 harness2-judge --bench lab --k 1 --mode parallel
 harness2-report --bench lab --k 1 --mode parallel
 ```
 
 Sequential recursion runs the same commands with `--mode sequential`. `--k` is
 the task-level recursion budget; see [Experiments](#experiments). Judging and
-reporting must reuse the adaptation's `--k` and `--mode`.
-
-Each benchmark also has a script that runs the check, adaptation, judging, and
-reporting in sequence. Settings are read from `SUBSTRATE`, `K`, `MODE`, and, for
-WorkBuddy, `SUBSET`; any further arguments are passed to the adaptation command:
-
-```bash
-bash scripts/run_lab.sh --only-domains antitrust-competition --max-tasks 1
-SUBSTRATE=cx K=3 MODE=sequential bash scripts/run_jobbench.sh
-SUBSET=web bash scripts/run_workbuddy.sh
-```
-
-This copy does not include the benchmark runners and patches that setup
-installs; see [`harness2/third_party/README.md`](harness2/third_party/README.md).
-Everything else, including the demo and the tests, works without them.
-
-Setup clones each upstream checkout at its supported pin under `dependencies/`,
-applies the included patches, creates that benchmark's environment, and downloads
-the task data. Each benchmark environment lives inside its upstream checkout —
-`dependencies/harvey-labs/.venv`, `dependencies/job-bench-eval/.venv`,
-`dependencies/workbuddy-bench/.venv` — so the directory follows the upstream
-repository name, not the `lab`/`jb`/`wb` command token. Harness² selects their
-interpreters automatically; do not activate them for the main commands.
-
-`harness2-setup <bench> --dry-run` previews an installation without changing
-anything. `harness2-check` inspects the installation without calling a model;
-adaptation runs the same checks, judge configuration included, and refuses to
-start when they fail, so running the check first surfaces those problems without
-waiting for a sweep to reach them. No model is called until the first real run,
-so a model your account cannot serve fails there, not at the check. Adaptation
-and judging return nonzero when incomplete.
+reporting must use the same benchmark, executor, subset, `--k`, `--mode`, and
+seed as the refinement run. Add `--dry-run` to `harness2` to preview task
+selection without model calls.
 
 | Benchmark | Tasks | Install | Guide |
 |---|---|---|---|
@@ -190,127 +137,72 @@ Choose one benchmark per command. WorkBuddy also takes `--subset office`,
 [benchmark guides](docs/BENCHMARKS.md) cover each one's data, domains, and
 grading.
 
-### Codex executor
-
-The Codex executor requires an endpoint that implements the OpenAI Responses API.
-Vertex AI does not provide this API for Gemini models, so the release includes
-`harness2-bridge`, a local LiteLLM server that exposes the Responses API and
-forwards requests to Vertex AI using the same Application Default Credentials and
-`GOOGLE_CLOUD_PROJECT`. Install the optional dependencies and start the bridge in
-a separate session:
-
-```bash
-uv pip install -e '.[render,bridge]'
-harness2-bridge                 # for WorkBuddy: harness2-bridge --host 0.0.0.0
-```
-
-The bridge prints the `HARNESS2_CODEX_*` settings to add to `.env`. Its port and
-a generated access key are stored under `dependencies/codex/` and reused when it
-restarts, so these settings remain valid. Then pass `--substrate cx` to every
-command:
-
-```bash
-harness2-setup lab --substrate cx
-harness2-check --bench lab --substrate cx
-harness2 --bench lab --substrate cx --k 1 --mode parallel
-```
-
-WorkBuddy executes Codex inside Docker containers, so the bridge must listen on
-`--host 0.0.0.0`; it then also prints `HARNESS2_CODEX_CONTAINER_URL`. Any other
-Responses API endpoint can be used instead by setting `HARNESS2_CODEX_BASE_URL`,
-`HARNESS2_CODEX_API_KEY`, and `HARNESS2_CODEX_MODEL` directly. Setup records the
-endpoint and model in `dependencies/codex/home/config.toml`; rerun it after
-changing either, and `harness2-check` reports the file as out of date until then.
-
 ## Experiments
 
-Both modes begin with `k` reference executions of the common base harness.
-Parallel recursion explores `k` candidate harnesses per scope and composes them;
-sequential recursion carries one composed harness through `k` successive steps.
-After adoption, reflection stores the adopted harness with a supported lesson in
-a per-domain library: tasks in a domain run in order and read only earlier
-entries, separate domains can run concurrently, and the library is kept separate
-by benchmark, executor, mode, budget, and seed.
+Scale task-level recursion in two ways: **parallel recursion** explores multiple
+candidate harnesses and composes refinements from their execution evidence;
+**sequential recursion** carries the refined harness and accumulated evidence
+through successive Propose–Probe–Compose steps.
+
+<p align="center">
+  <a href="assets/harness2_recursion_modes.png">
+    <img src="assets/harness2_recursion_modes.png" alt="Two ways to scale task-level recursion. Parallel: probe k general and k domain-specific candidate harnesses, then produce k compositions from the shared evidence. Sequential: carry the refined harness and accumulated evidence through k Propose–Probe–Compose steps." width="100%">
+  </a>
+</p>
+<p align="center"><em>Parallel recursion explores wider; sequential recursion refines deeper.</em></p>
 
 | Option | Behavior |
 |---|---|
-| `--k 1` | One improvement step: edit, probe, compose, and reflect |
-| `--k K --mode parallel` | Explore `K` proposals per scope and `K` compositions |
-| `--k K --mode sequential` | Carry the harness through `K` successive steps |
-| `--workers N` | Run `N` domains concurrently; tasks within a domain stay ordered |
-| `--substrate cx` | Use the optional Codex executor; OpenCode is the default |
-| `--seed N` | Shuffle the task stream reproducibly; does not control model sampling |
+| `--k 1` | One Propose–Probe–Compose step |
+| `--k K --mode parallel` | Probe `K` general and `K` domain-specific candidates, then produce `K` compositions |
+| `--k K --mode sequential` | Refine the harness through `K` successive steps |
+| `--substrate cx` | Use Codex instead of the default OpenCode executor |
 
-When changing the budget or mode, choose a new output root:
-
-```bash
-export HARNESS2_RUNS_DIR=runs/full
-harness2 --bench lab --k 3 --mode sequential
-harness2-judge --bench lab --k 3 --mode sequential
-harness2-report --bench lab --k 3 --mode sequential
-```
-
-Run `harness2-judge` and `harness2-report` with the same benchmark, subset, `k`,
-mode, and seed used for adaptation. Add `--dry-run` to `harness2` to preview
-task selection and available domains without model calls. Adaptation calls paid
-models on every rollout and every improver stage — the full LAB stream is 1143
-tasks — so check your own pricing before a full run; `--only-domains` and
-`--max-tasks` (a per-domain cap) scope a smaller trial.
-
-When comparing budgets or modes, keep task selection, executor, improver, judge,
-and web access fixed, and use a distinct `HARNESS2_RUNS_DIR` when changing the
-model or task configuration; the saved configuration prevents incompatible
-resumes. JobBench's dataset is resolved at download time rather than pinned to a
-commit: setup records the Hugging Face revision it received in
-`dependencies/job-bench-eval/dataset/main/.harness2-download.json`, so report
-that revision alongside any JobBench result.
-
-`harness2-judge --bases` scores a namespace's reference executions, writing
-`base_judged.json` beside `judged.json` — the base-harness comparison row.
-`harness2-report` covers the adapted harness only.
-
-For a reproducible, domain-stratified partition instead of the installed task set:
-
-```bash
-python scripts/split_tasks.py --bench lab --seed 42 --output splits/lab.json
-harness2 --bench lab --split-file splits/lab.json --split test --mode parallel
-```
-
-The default train fraction is 0.5, generated files are local and not release
-assets, and the script refuses to overwrite an existing file.
+After each task, harnessing-level recursion retains the adopted harness and
+evidence-supported lessons to guide future refinement. See the
+[experiment guide](docs/EXPERIMENTS.md) for task selection, concurrency,
+reproducibility, and baseline comparisons.
 
 ## Web access
 
-All three benchmarks are public, and JobBench publishes each task's
-`RUBRICS.json` on Hugging Face. An executor with network access can therefore
-retrieve the criteria used to grade it. In a validation run of this release, a
-Codex rollout on JobBench downloaded its task's rubric without being instructed to.
-This release does not restrict network access. We recommend blocking the
-following hosts for the executor once setup has completed, since setup itself
-requires them to download the data:
-
-- `huggingface.co`, `hf.co`, and `*.hf.co`
-- `github.com` and `raw.githubusercontent.com`, for the benchmark repositories
-
-Codex runs with its sandbox disabled, so apply the restriction at the network
-level, for example with an egress firewall or DNS policy on the executor host,
-rather than through a tool setting. Report the restrictions in effect alongside
-any result.
+Executor network access is unrestricted, and Codex runs with its sandbox
+disabled. Public benchmark rubrics may be accessible online. Before evaluation,
+configure [network restrictions](docs/EXPERIMENTS.md#web-access) to prevent
+access to benchmark answers and grading criteria.
 
 ## Results and resume
 
-Results are saved under `runs/<benchmark>/` (and the WorkBuddy subset), including
-per-task summaries, execution artifacts, adopted harnesses, reflection notes, and
-graded results. Repeat the same command to resume. A failed judge stays unscored.
-Use a new `HARNESS2_RUNS_DIR` when changing models or task selection.
+Results are saved under `runs/`, organized by benchmark and subset where
+applicable. They include task summaries, deliverables, adopted harnesses,
+reflection notes, and evaluation results.
 
-Adaptation, judging, and reporting use `harness2`, `harness2-judge`, and
-`harness2-report`; each has `--help`.
+Repeat the same command to resume. Use a new `HARNESS2_RUNS_DIR` when changing
+models or task selection. See [results and resume](docs/EXPERIMENTS.md#results-and-resume)
+for details; each command also supports `--help`.
+
+## Citation
+
+```bibtex
+@article{xu2026harness2,
+  title   = {Harness$^2$: Recursive Agent Harnessing for an Open World},
+  author  = {Xu, Ruiyao and Chen, Yanfei and CuiZhu, Zhongying and Dalvi Mishra, Bhavana and Ming, Yifei and Yu, Han and Han, Rujun and Lee, Chen-Yu and Pfister, Tomas},
+  journal = {arXiv preprint},
+  year    = {2026}
+}
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Harness² is licensed under Apache 2.0. Benchmarks, datasets, and
-derived runner files retain their upstream licenses; see
+Harness² is licensed under [Apache 2.0](LICENSE). Third-party code under
+[`third_party/`](third_party/README.md), benchmarks, and datasets retain their
+upstream licenses; see
 [third-party notices](dependencies/README.md).
 
-This is not an officially supported Google product. This project is not eligible for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).
+## Disclaimer
+
+This is not an officially supported Google product. This project is not eligible
+for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).

@@ -1,9 +1,9 @@
 # Benchmark guides
 
-Complete the [installation and credentials](../README.md#install) first. Each
+Complete the [installation and credentials](SETUP.md) first. Each
 benchmark installs separately; install the ones you intend to run. Every command
 below takes `--substrate cx` to use the
-[Codex executor](../README.md#codex-executor) instead of OpenCode. Choose the
+[Codex executor](SETUP.md#codex-executor) instead of OpenCode. Choose the
 recursion mode with `--mode parallel` or `--mode sequential` and the task-level
 recursion budget with `--k`. Keep both identical across the run, judge, and
 report commands.
@@ -69,7 +69,7 @@ weights; unscored tasks are reported separately. Results are under `runs/jb/`.
 
 Note: JobBench data, including `RUBRICS.json`, is public on Hugging Face, so an
 executor with web access may retrieve it. Block those hosts during runs as
-described under [Web access](../README.md#web-access).
+described under [Web access](EXPERIMENTS.md#web-access).
 
 ## WorkBuddy-Bench
 
@@ -122,4 +122,3 @@ the improver never receives verifier output. Missing verifier results remain
 unscored. Runs live under `runs/wb/<subset>/`.
 
 For Codex, start the bridge with `harness2-bridge --host 0.0.0.0` so that the containers can reach it.
-

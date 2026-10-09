@@ -13,8 +13,7 @@ control. Pins are defined in `harness2/config.py`; setup commands are in the
 
 The WorkBuddy license includes a territorial limitation concerning use within
 the European Union. The derived runners, the patches, and the upstream license
-notices that cover them are not included in this copy; see
-[`harness2/third_party/`](../harness2/third_party/README.md).
+notices that cover them are bundled in [`third_party/`](../third_party/README.md).
 
 Dataset licenses are separate from software licenses. Data is downloaded from
 its upstream distribution and is not redistributed in Harness². Generated
