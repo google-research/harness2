@@ -9,3 +9,6 @@ log paths use the `harness2` namespace. Setup installs these runners into the LA
 
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.
+
+The OpenCode CLI propagates the executor exit status to its caller while retaining
+the captured session and diagnostic metrics for failed attempts.

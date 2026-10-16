@@ -177,7 +177,7 @@ def invoke(args_extra: list[str], *, base: list[str], env: dict, timeout: int,
     return proc.returncode
 
 
-def main(args) -> None:
+def main(args) -> int:
     force_utf8_stdio()
     _load_env()
 
@@ -353,6 +353,7 @@ def main(args) -> None:
     print(f"  Deliverables:   {', '.join(delivered) or 'NONE'}")
     print(f"  Exit code:      {rc}")
     print(f"\nResults saved to: {results_dir}")
+    return rc
 
 
 parser = argparse.ArgumentParser(description="Run a LAB task through OpenCode")
@@ -415,4 +416,4 @@ parser.add_argument("--bun", default=DEFAULT_BUN, help="Path to the bun binary")
 
 
 if __name__ == "__main__":
-    main(parser.parse_args())
+    sys.exit(main(parser.parse_args()))
