@@ -368,7 +368,7 @@ def _resume(
             flush=True,
         )
         return False
-    if got.get("status") != "ok":
+    if got.get("status") not in ("ok", "partial"):
         return False
     cached_modes = _modes_of(got)
     cached_sels = got.get("selections") or {}
