@@ -1,0 +1,9 @@
+
+[bridge]
+litellm[proxy]==1.95.0
+fastapi==0.139.2
+google-auth==2.56.3
+
+[render]
+openpyxl<4,>=3.1
+python-pptx<2,>=1
