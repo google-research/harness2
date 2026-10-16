@@ -358,7 +358,10 @@ class OcAgent(BaseInstalledAgent):
                 # OpenCode reports reasoning separately; ATIF completion_tokens includes it.
                 t_reason = int(tokens.get("reasoning") or 0)
                 t_cache = int(cache.get("read") or 0)
-                total_in += t_in
+                # OpenCode subtracts cache reads/writes from tokens.input; ATIF
+                # prompt_tokens includes the complete input, not only cache misses.
+                t_prompt = t_in + t_cache + int(cache.get("write") or 0)
+                total_in += t_prompt
                 total_out += t_out
                 total_reason += t_reason
                 total_cache += t_cache
@@ -366,7 +369,8 @@ class OcAgent(BaseInstalledAgent):
                     total_cost += float(part["cost"])
                     have_cost = True
                 flush(
-                    Metrics(prompt_tokens=t_in, completion_tokens=t_out + t_reason),
+                    Metrics(prompt_tokens=t_prompt, completion_tokens=t_out + t_reason,
+                            cached_tokens=t_cache or None),
                     part.get("modelID"),
                 )
             elif etype == "error":
@@ -410,7 +414,8 @@ class OcAgent(BaseInstalledAgent):
 
         notes = (
             "OpenCode emits no run-level total event, so totals are summed across "
-            "step_finish events. completion_tokens = tokens.output + tokens.reasoning "
+            "step_finish events. prompt_tokens includes input and cache read/write tokens. "
+            "completion_tokens = tokens.output + tokens.reasoning "
             "(OpenCode reports reasoning separately; the raw split is in "
             "extra.reasoning_tokens). One Step = one step_finish boundary."
         )
