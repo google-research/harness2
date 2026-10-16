@@ -33,4 +33,5 @@ status=$?
 harness2-judge "${run[@]}"
 judged=$?
 harness2-report "${run[@]}"
-exit $((status ? status : judged))
+reported=$?
+exit $((status ? status : (judged ? judged : reported)))
