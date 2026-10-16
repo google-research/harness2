@@ -525,7 +525,7 @@ def _job_yaml(
             "environment_override:\n"
             "  mounts:\n"
             "    - type: bind\n"
-            f"      source: {config.CODEX_DIST}\n"
+            f"      source: {json.dumps(str(config.CODEX_DIST))}\n"
             "      target: /opt/codex\n"
             "      read_only: true\n"
             "env_override:\n"
@@ -551,7 +551,7 @@ dataset: datasets/{subset.dataset_id}/tasks
 harness_backend: local
 model_connection: {config.WB_MODEL_CONNECTION}
 n_attempts: {k}
-jobs_dir: {jobs_dir_abs}
+jobs_dir: {json.dumps(str(jobs_dir_abs))}
 task_selection:
   mode: name
   names:
