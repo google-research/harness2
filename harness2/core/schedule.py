@@ -393,6 +393,12 @@ def _resume(
         harness_dir = namespace.task_dir(runs_root, task_id) / "harnesses" / sel["chosen_label"]
         run_dir = Path(sel.get("chosen_run_dir") or "")
         try:
+            mode_lib = mode_libs.get(mode)
+            library_dir = mode_lib.context_dir() if mode_lib else None
+            if mode_lib and sel.get("input_library_fingerprint") != runmark.fingerprint(
+                library_dir
+            ):
+                raise ValueError("input experience library has changed")
             if not sel.get("chosen_run_dir") or not run_dir.is_dir():
                 raise ValueError("adopted run directory is missing")
             if sel.get("evidence") == "trajectory" and adapter.spec.state_deliverable:
@@ -497,6 +503,7 @@ def _run_one_mode(
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
     lib_dir = mode_lib.context_dir() if mode_lib else None
+    library_fingerprint = runmark.fingerprint(lib_dir)
     r = recursion.run_mode(
         mode,
         task_id,
@@ -537,6 +544,7 @@ def _run_one_mode(
             decisions={stage.label: stage.notes or stage.error for stage in r.stages},
         )
     d = sel.to_dict()
+    d["input_library_fingerprint"] = library_fingerprint
     d["chosen_run_dir"] = str(
         candidates[sel.chosen_label].run_dir if sel.chosen_label in candidates else ""
     )
