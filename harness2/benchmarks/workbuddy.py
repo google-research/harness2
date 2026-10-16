@@ -997,7 +997,7 @@ class WbAdapter:
         if sc is None:
             return None
         return {
-            "n_passed": round(sc * 100),
+            "n_passed": sc * 100,
             "n_criteria": 100,
             "all_pass": sc >= 1.0,
             "raw_score": sc,
