@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/Job-Bench/job-bench-eval",
+  "commit": "fa03a17f9ff662f136798a274e10011c3aa00fd0",
+  "source": "eval/judge.py",
+  "file": "judge.py.txt",
+  "sha256": "e83816acf6b9b923eab89324977a07a05ed760da3a7ca9a7394fd5460361408f",
+  "license": "Apache-2.0; retained in third_party/licenses/job-bench-eval.LICENSE",
+  "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+  "purpose": "Offline exact upstream report producer and worker-exception path protocol fixture."
+}
