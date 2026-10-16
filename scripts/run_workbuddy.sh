@@ -27,6 +27,22 @@ K=${K:-1}
 MODE=${MODE:-parallel}
 run=(--bench wb --subset "$SUBSET" --substrate "$SUBSTRATE" --k "$K" --mode "$MODE")
 
+# Keep refinement, judging and reporting in the same seeded namespace.
+seed_value=""
+has_seed=0
+expect_seed=0
+for arg in "$@"; do
+  if ((expect_seed)); then
+    seed_value=$arg; has_seed=1; expect_seed=0
+    continue
+  fi
+  case "$arg" in
+    --seed) expect_seed=1 ;;
+    --seed=*) seed_value=${arg#--seed=}; has_seed=1 ;;
+  esac
+done
+if ((has_seed)); then run+=(--seed "$seed_value"); fi
+
 harness2-check --bench wb --subset "$SUBSET" --substrate "$SUBSTRATE" || exit
 harness2 "${run[@]}" "$@"
 status=$?
