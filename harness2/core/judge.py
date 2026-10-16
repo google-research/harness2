@@ -29,6 +29,11 @@ from typing import Sequence
 from .spec import BenchmarkAdapter
 
 
+def has_grade(n_passed: int | None, n_criteria: int | None) -> bool:
+    """A score needs a numerator and a positive denominator; zero passes is valid."""
+    return n_passed is not None and n_criteria is not None and n_criteria > 0
+
+
 @dataclass
 class Scored:
     task_id: str
@@ -46,7 +51,7 @@ class Scored:
     @property
     def graded(self) -> bool:
         """Whether the judge succeeded, not whether the run did well."""
-        return self.n_criteria is not None and self.n_criteria > 0
+        return has_grade(self.n_passed, self.n_criteria)
 
     @property
     def frac(self) -> float | None:
