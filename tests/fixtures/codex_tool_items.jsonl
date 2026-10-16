@@ -1,0 +1,11 @@
+{"type":"item.started","item":{"id":"mcp-1","type":"mcp_tool_call","server":"search service","tool":"web_run","arguments":{"search_query":[{"q":"OpenAI Codex CLI documentation"}]},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"mcp-1","type":"mcp_tool_call","server":"search service","tool":"web_run","arguments":{"search_query":[{"q":"OpenAI Codex CLI documentation"}]},"result":{"content":[{"type":"text","text":"search result"}],"structured_content":null,"_meta":{"raw_messages":[{"ref_id":"turn0search0"}]}},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"mcp-2","type":"mcp_tool_call","server":"local","tool":"write","arguments":{"path":"answer.txt"},"result":null,"error":{"message":"permission denied"},"status":"failed"}}
+{"type":"item.completed","item":{"id":"patch-1","type":"file_change","changes":[{"path":"answer.txt","kind":"update"},{"path":"appendix.md","kind":"add"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"patch-2","type":"file_change","changes":[{"path":"missing.txt","kind":"delete"}],"status":"failed"}}
+{"type":"item.completed","item":{"id":"collab-1","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"main-thread","receiver_thread_ids":["review-thread"],"prompt":"Review the totals","agents_states":{"review-thread":{"status":"completed","message":"Totals verified"}},"status":"completed"}}
+{"type":"item.completed","item":{"id":"web-1","type":"web_search","query":"revenue report","action":{"type":"search","query":"revenue report"}}}
+{"type":"item.completed","item":{"id":"web-2","type":"web_search","query":"","action":{"type":"open_page","url":"https://example.org/report"}}}
+{"type":"item.completed","item":{"id":"web-3","type":"web_search","query":"","action":{"type":"find_in_page","url":"https://example.org/report","pattern":"Revenue"}}}
+{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"python scripts/check.py","aggregated_output":"checks passed","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"Deliverables are ready."}}
