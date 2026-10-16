@@ -301,10 +301,12 @@ class Proposer:
             timeout=wall,
         )
         cost = _opencode_cost(p.stdout)
+        text, err = _opencode_stdout(p.stdout)
+        if err:
+            return "", cost, err
         ans = out / "answer.md"
         if ans.is_file() and ans.read_text(errors="replace").strip():
             return ans.read_text(errors="replace"), cost, ""
-        text, err = _opencode_stdout(p.stdout)
         if text.strip():
             return text, cost, ""
         tail = _strip_oc_banner(p.stderr or "").strip()[-300:]
