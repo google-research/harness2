@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -53,8 +54,9 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
         if not key or not all(c.isalnum() or c == "_" for c in key):
             continue
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
+        quoted = re.fullmatch(r"""(['"])(.*?)\1(?:\s+#.*)?""", value)
+        if quoted:
+            value = quoted.group(2)
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         os.environ.setdefault(key, value)
