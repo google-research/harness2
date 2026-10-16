@@ -23,8 +23,10 @@ workbook to a stub.
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -428,12 +430,7 @@ def listing(trial_dir: Path | str, subset: str) -> list[str]:
         if not patch.is_file():
             return []
         body = _text(_read_bytes(trial, patch, subset))
-        names = {
-            ln.split(" b/", 1)[1].strip()
-            for ln in body.splitlines()
-            if ln.startswith("diff --git ") and " b/" in ln
-        }
-        return sorted(names)
+        return sorted(set(_patch_names(body)))
     if subset == "web":
         tb = trial / "verifier" / "agent.workspace.tar.gz"
         if not tb.is_file():
@@ -533,13 +530,55 @@ def _entries_patch(trial: Path, subset: str, patch: Path) -> list[tuple[str, int
     if not patch.is_file():
         return []
     body = _text(_read_bytes(trial, patch, subset))
-    touched = [
-        ln.split(" b/", 1)[1]
-        for ln in body.splitlines()
-        if ln.startswith("diff --git ") and " b/" in ln
-    ]
+    touched = _patch_names(body)
     head = ("## Files touched\n" + "\n".join(f"- {t}" for t in touched) + "\n\n") if touched else ""
     return [("agent.patch", len(body.encode("utf-8")), head + "## Diff\n" + body, True)]
+
+
+def _git_path(raw: str) -> str:
+    """Decode Git's C-quoted UTF-8 paths, preserving unquoted Unicode."""
+    if raw.startswith('"') and raw.endswith('"'):
+        return codecs.escape_decode(raw[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return raw
+
+
+def _diff_target(header: str) -> str | None:
+    quoted = re.match(r'"(?:\\.|[^"\\])*" ', header)
+    if quoted:
+        return _git_path(header[quoted.end() :]).removeprefix("b/")
+    if ' "b/' in header:
+        return _git_path(header[header.index(' "b/') + 1 :]).removeprefix("b/")
+    # Unquoted Git paths may themselves contain spaces and " b/". An ordinary
+    # edit repeats the same path on both sides, identifying the real separator.
+    for match in re.finditer(" b/", header):
+        old, new = header[: match.start()], header[match.start() + 1 :]
+        if old.removeprefix("a/") == new.removeprefix("b/"):
+            return new.removeprefix("b/")
+    if " b/" in header:
+        return header.split(" b/", 1)[1]
+    return None
+
+
+def _patch_names(body: str) -> list[str]:
+    names: list[str] = []
+    current: str | None = None
+    preamble = False
+    for line in body.splitlines():
+        if line.startswith("diff --git "):
+            if current is not None:
+                names.append(current)
+            current = _diff_target(line[len("diff --git ") :])
+            preamble = True
+        elif preamble:
+            if line.startswith(("@@", "GIT binary patch", "Binary files ")):
+                preamble = False
+            elif line.startswith(("rename to ", "copy to ")):
+                current = _git_path(line.split(" to ", 1)[1])
+            elif line.startswith("+++ ") and line[4:] != "/dev/null":
+                current = _git_path(line[4:].split("\t", 1)[0]).removeprefix("b/")
+    if current is not None:
+        names.append(current)
+    return names
 
 
 def _bridge_main() -> None:
