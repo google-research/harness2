@@ -224,3 +224,10 @@
 +                f"({sorted(found)}); refusing to guess: {text[:200]}")
  
          raise ValueError(f"No JSON found in judge response: {text[:200]}")
+--- a/evaluation/scoring.py
++++ b/evaluation/scoring.py
+@@ -331,3 +331,3 @@
+     if deliverables_map and output_dir.exists():
+-        actual_files = [f.name for f in output_dir.rglob("*") if f.is_file()]
++        actual_files = [f.relative_to(output_dir).as_posix() for f in output_dir.rglob("*") if f.is_file()]
+         resolved_map = _match_deliverables(deliverables_map, actual_files, output_dir=output_dir)
