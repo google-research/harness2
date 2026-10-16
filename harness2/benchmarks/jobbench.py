@@ -684,10 +684,9 @@ class JobBenchAdapter:
         """`<store>/<profession>/<taskN>/model_output/<label>` -> (task_id, label)."""
         p = Path(run_dir)
         parts = p.parts
-        if "model_output" not in parts:
+        if len(parts) < 4 or p.parent.name != "model_output":
             raise ValueError(f"{p} is not a JobBench model_output run directory")
-        i = parts.index("model_output")
-        return "/".join(parts[i - 2 : i]), p.name
+        return "/".join(parts[-4:-2]), p.name
 
     def _ensure_store_task(self, task_id: str) -> Path:
         """Copy the clean task inputs from the dataset into the run store, once, atomically."""
