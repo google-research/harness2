@@ -313,7 +313,7 @@ class Proposer:
     def _harvest(self, tmp: Path, sub: str, label: str, cache_key: str = "") -> Path | None:
         """Copy `tmp/<sub>` somewhere durable before the session directory is removed."""
         src = tmp / sub
-        if not src.is_dir():
+        if not src.is_dir() or src.is_symlink():
             return None
         dest = Path(self.audit_dir or tempfile.mkdtemp(prefix="harness2-harvest-"))
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
@@ -321,7 +321,7 @@ class Proposer:
             safe = f"{safe}.{cache_key}"
         dest = dest / f"{safe}.workspace"
         shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(src, dest)
+        shutil.copytree(src, dest, symlinks=True)
         return dest
 
     def _paths(self, label: str, cache_key: str = "") -> dict[str, Path] | None:

@@ -122,6 +122,7 @@ def _accept_tree(
         harness_tree.validate(
             surface,
             new,
+            base=fallback,
             allow_subagents=adapter.spec.allow_subagents,
             reserved_scripts=harness_tree.RESERVED_SCRIPTS | adapter.spec.reserved_scripts,
         )
