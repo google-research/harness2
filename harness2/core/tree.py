@@ -82,7 +82,7 @@ def _rx(surface: SurfaceSpec) -> dict[str, re.Pattern]:
 def normalize_rel(rel: str) -> str:
     """Normalise a relative path, rejecting escapes before it is joined to a directory."""
     r = str(rel).strip().replace("\\", "/")
-    if r.startswith("/") or ".." in r.split("/"):
+    if "\x00" in r or r.startswith("/") or ".." in r.split("/"):
         raise ValueError(f"path escapes the harness: {rel!r}")
     while r.startswith("./"):
         r = r[2:]
@@ -131,11 +131,17 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
     """
     d = Path(d)
     out: Tree = {}
-    if not d.is_dir():
+    if not d.is_dir() or d.is_symlink():
         return out
     stubs = _stub_paths(surface)
     for p in sorted(d.rglob("*")):
-        if not p.is_file() or "__pycache__" in p.parts:
+        if "__pycache__" in p.parts:
+            continue
+        if p.is_symlink():
+            if rejected is not None:
+                rejected.append(str(p.relative_to(d)))
+            continue
+        if not p.is_file():
             continue
         rel = str(p.relative_to(d))
         if rel in stubs:
@@ -150,7 +156,11 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
 
 def is_tree(surface: SurfaceSpec, d: Path | str) -> bool:
     d = Path(d)
-    return d.is_dir() and any((d / a).is_file() for a in surface.always_on)
+    return (
+        d.is_dir()
+        and not d.is_symlink()
+        and any((p := d / a).is_file() and not p.is_symlink() for a in surface.always_on)
+    )
 
 
 def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: bool = True) -> Path:
@@ -159,9 +169,17 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
     Files outside the editable surface are preserved; editable files already there are not.
     """
     dest = Path(dest)
+    if dest.is_symlink():
+        raise ValueError(f"destination root is a symlink: {dest}")
+    bad = [rel for rel in tree if not is_allowed(surface, rel)]
+    if bad:
+        raise ValueError(f"path is off the editable surface: {bad[0]!r}")
     dest.mkdir(parents=True, exist_ok=True)
     stub_set = _stub_paths(surface)
     for p in sorted(dest.rglob("*"), reverse=True):
+        if p.is_symlink():
+            p.unlink()
+            continue
         if not p.is_file():
             continue
         rel = str(p.relative_to(dest))
@@ -337,6 +355,7 @@ def validate(
     surface: SurfaceSpec,
     tree: Tree,
     *,
+    base: Tree | None = None,
     allow_subagents: bool = True,
     always_on_max: int | None = None,
     reserved_scripts: frozenset[str] | set[str] = RESERVED_SCRIPTS,
@@ -346,6 +365,15 @@ def validate(
     r = _rx(surface)
     cap = surface.always_on_max if always_on_max is None else always_on_max
     body = always_on_text(surface, tree)
+
+    baseline = base or {}
+    for rel in sorted(set(tree) | set(baseline)):
+        if (
+            r["script"].fullmatch(rel)
+            and rel.rsplit("/", 1)[-1] in reserved_scripts
+            and tree.get(rel) != baseline.get(rel)
+        ):
+            errs.append(f"{rel} is a reserved runner script and may not be modified")
 
     if len(body) > cap:
         errs.append(

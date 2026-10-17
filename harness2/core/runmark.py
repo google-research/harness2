@@ -45,11 +45,11 @@ def fingerprint(harness_dir: Path | None) -> str:
     if harness_dir is None:
         return "base"
     root = Path(harness_dir)
-    if not root.is_dir():
+    if not root.is_dir() or root.is_symlink():
         return "absent"
     h = hashlib.sha1()
     for p in sorted(root.rglob("*")):
-        if not p.is_file() or p.name == MARK or _ignored(p):
+        if p.is_symlink() or not p.is_file() or p.name == MARK or _ignored(p):
             continue
         h.update(str(p.relative_to(root)).encode())
         h.update(b"\0")
