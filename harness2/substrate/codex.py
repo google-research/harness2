@@ -22,6 +22,7 @@ Per-deployment differences are values in Install.extras, never subclasses.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shutil
@@ -218,14 +219,30 @@ class CodexSubstrate:
             raise RuntimeError(
                 "Codex is not installed; run scripts/setup_benchmark.py with --substrate cx"
             )
-        if require_bridge and not config.CODEX_CONTAINER_URL:
+        # Unset, it defaults to the base URL, which harness2-bridge prints as loopback.
+        if require_bridge and _container_local(urlparse(config.CODEX_CONTAINER_URL).hostname):
             raise RuntimeError(
-                "Set HARNESS2_CODEX_CONTAINER_URL to a container-accessible Responses endpoint"
+                f"HARNESS2_CODEX_CONTAINER_URL is {config.CODEX_CONTAINER_URL!r} (unset, it "
+                "defaults to HARNESS2_CODEX_BASE_URL), which WorkBuddy containers cannot reach. "
+                "Set it to a container-accessible Responses endpoint; harness2-bridge "
+                "--host 0.0.0.0 prints one"
             )
         with socket.create_connection(
             (url.hostname, url.port or (443 if url.scheme == "https" else 80)), timeout=5
         ):
             pass
+
+
+def _container_local(host: str | None) -> bool:
+    """Whether `host`, resolved inside a container, names the container itself."""
+    name = (host or "").rstrip(".")
+    if not name or name == "localhost" or name.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
 
 
 _TRUNC_FMT = "…(+{n} chars — render truncation)"
