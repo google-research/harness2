@@ -115,10 +115,11 @@ The default output roots are `runs/lab/`, `runs/jb/`, and
 harnesses, reflection notes, and graded results.
 
 Repeat the same command to resume. Failed evaluations remain unscored rather
-than being counted as zero. A finished task re-runs when the rendered selection
-or experience prompts change; summaries written before `prompts_digest` was
-recorded re-run once. Use a new `HARNESS2_RUNS_DIR` when changing models or task
-selection.
+than being counted as zero. A finished task re-runs when the selection or
+experience prompt templates change, or when the library it read has changed
+(for example because an earlier task in the domain re-ran); summaries written
+before `prompts_digest` was recorded re-run once. Use a new `HARNESS2_RUNS_DIR`
+when changing models or task selection.
 
 Refinement, judging, and reporting use `harness2`, `harness2-judge`, and
 `harness2-report`; each supports `--help`.

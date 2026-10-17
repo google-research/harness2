@@ -224,8 +224,8 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
-    def test_prompts_digest_resume_and_runmark(self):
-        from harness2.core import prompts, runmark
+    def test_prompts_digest_resume(self):
+        from harness2.core import prompts
 
         first = self.run_stream(k=2)
         self.assertEqual([r["status"] for r in first["tasks"]], ["ok", "ok"])
@@ -274,15 +274,70 @@ class WorkflowTests(unittest.TestCase):
             )
             self.assertEqual([r["status"] for r in res_assets["tasks"]], expected)
 
+    def test_prompts_digest_survives_scratch_and_entry_point(self):
+        import shutil
+
+        from harness2.core import selection
+
+        self.run_stream(k=2)
+        sel_dirs = list(self.adapter.spec.runs_root.glob("*/*/selection"))
+        self.assertTrue(sel_dirs)
+        for sel_dir in sel_dirs:
+            shutil.rmtree(sel_dir)
+        pruned = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in pruned["tasks"]], ["skipped", "skipped"])
+
+        header = selection._candidate_header
+        with patch.object(selection, "_candidate_header", lambda *a: header(*a) + "EDITED"):
+            edited = self.run_stream(k=2)
+            self.assertEqual([r["status"] for r in edited["tasks"]], ["ok", "ok"])
+        restored = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in restored["tasks"]], ["ok", "ok"])
+
+        first = self.adapter.tasks()[0]
+        solo = schedule.run_task(
+            first,
+            3,
+            adapter=self.adapter,
+            prop=self.proposer,
+            runs_root=self.adapter.spec.runs_root,
+        )
+        self.assertEqual(solo.status, "ok")
+        streamed = self.run_stream(k=3)
+        self.assertEqual([r["status"] for r in streamed["tasks"]], ["skipped", "ok"])
+
+    def test_library_change_invalidates_later_tasks(self):
+        self.run_stream(k=2)
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg2/ledger-1/summary.json"
+        doc = json.loads(summary_path.read_text())
+        for sel in doc["selections"].values():
+            sel["experience"]["lesson"] += " (revised)"
+        summary_path.write_text(json.dumps(doc))
+        resumed = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in resumed["tasks"]], ["skipped", "ok"])
+        again = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in again["tasks"]], ["skipped", "skipped"])
+
+    def test_prompts_digest_failure_keeps_selection(self):
+        from harness2.core import selection
+
+        boom = Mock(side_effect=TypeError("adapter bug"))
+        with patch.object(selection, "prompts_digest", boom):
+            broken = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in broken["tasks"]], ["partial", "partial"])
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg2/ledger-1/summary.json"
+        doc = json.loads(summary_path.read_text())
+        for sel in doc["selections"].values():
+            self.assertTrue(sel["ok"] and sel["chosen_label"])
+            self.assertEqual(sel["prompts_digest"], "")
         surface = self.adapter.substrate.surface()
-        base = tree.read_tree(surface, self.adapter.base_harness())
-        staged = tree.write_tree(surface, base, self.root / "staged_mark")
-        run_dir = self.root / "marked_run"
-        mark_path = runmark.mark_complete(run_dir, run_id="r1", harness_dir=staged)
-        self.assertEqual(runmark.VERSION, 1)
-        self.assertNotIn("prompts", json.loads(mark_path.read_text()))
-        self.assertTrue(runmark.is_complete(run_dir, harness_dir=staged))
-        self.assertTrue(runmark.is_complete(run_dir, match_harness=False))
+        self.assertTrue(Library(self.root / "library/2/agg", "accounting", surface).entries())
+
+        fixed = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in fixed["tasks"]], ["ok", "ok"])
+        with patch.object(selection, "prompts_digest", boom):
+            resumed = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in resumed["tasks"]], ["partial", "partial"])
 
 
 if __name__ == "__main__":
