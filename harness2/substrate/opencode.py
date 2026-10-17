@@ -279,7 +279,7 @@ class OpencodeSubstrate:
         for root in extra_allowed:
             allow[str(root)] = "allow"
             allow[f"{root}/**"] = "allow"
-        env = dict(base_env)
+        env = config.scrub_env(base_env)
         env["OPENCODE_PERMISSION"] = json.dumps({"external_directory": allow})
         env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = str(int(output_token_max))
         return env

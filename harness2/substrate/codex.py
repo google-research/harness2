@@ -178,7 +178,7 @@ class CodexSubstrate:
 
         The custom provider comes from CODEX_HOME, not a global OpenAI URL override.
         """
-        env = dict(base_env)
+        env = config.scrub_env(base_env)
         env.pop("OPENAI_BASE_URL", None)
         env["CODEX_HOME"] = str(codex_home)
         env["PATH"] = str(Path(config.CODEX_DIST) / "codex-path") + os.pathsep + env.get("PATH", "")

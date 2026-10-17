@@ -187,3 +187,34 @@ def validate_models(*, judge: bool = False) -> None:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:
         require("HARNESS2_JUDGE_MODEL", needed_by="benchmark judging")
+
+
+SCRUB_ENV = frozenset(
+    {
+        "HARNESS2_JUDGE_API_KEY",
+        "HARNESS2_BRIDGE_KEY",
+        "HARNESS2_CODEX_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_WEBHOOK_URL",
+        "JIRA_API_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    }
+)
+
+
+def scrub_env(base_env=None, *, keep=()) -> dict[str, str]:
+    """Return a copy of `base_env` (default `os.environ`) with runner and host secrets removed."""
+    src = os.environ if base_env is None else base_env
+    drop = SCRUB_ENV - set(keep)
+    return {k: v for k, v in src.items() if k not in drop}
