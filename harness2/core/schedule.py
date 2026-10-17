@@ -390,7 +390,8 @@ def _resume(
     for mode in modes:
         sel = cached_sels[mode]
         namespace = Namespace(adapter.spec.name, adapter.substrate.name, mode, k, seed, tag)
-        harness_dir = namespace.task_dir(runs_root, task_id) / "harnesses" / sel["chosen_label"]
+        work_dir = namespace.task_dir(runs_root, task_id)
+        harness_dir = work_dir / "harnesses" / sel["chosen_label"]
         run_dir = Path(sel.get("chosen_run_dir") or "")
         try:
             if not sel.get("chosen_run_dir") or not run_dir.is_dir():
@@ -409,6 +410,19 @@ def _resume(
             fingerprint = sel.get("harness_fingerprint")
             if fingerprint and runmark.fingerprint(harness_dir) != fingerprint:
                 raise ValueError("adopted harness has changed")
+            lib = mode_libs.get(mode)
+            if sel.get("library_fingerprint") != runmark.fingerprint(
+                lib.context_dir() if lib else None
+            ):
+                raise ValueError("the library it read has changed")
+            try:
+                want_prompts = selection.prompts_digest(
+                    task_id, adapter, sel, experience=bool(sel.get("experience_prompted"))
+                )
+            except Exception as exc:
+                raise ValueError(f"prompts digest failed ({type(exc).__name__}: {exc})") from exc
+            if sel.get("prompts_digest") != want_prompts:
+                raise ValueError("selection/experience prompts changed")
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"  [{task_id}] cannot resume {mode}: {exc}; re-running", flush=True)
             return False
@@ -497,6 +511,7 @@ def _run_one_mode(
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
     lib_dir = mode_lib.context_dir() if mode_lib else None
+    lib_fingerprint = runmark.fingerprint(lib_dir)
     r = recursion.run_mode(
         mode,
         task_id,
@@ -546,6 +561,16 @@ def _run_one_mode(
     d["chosen_tree_is_base"] = chosen_tree_is_base
     if sel.chosen_label:
         d["harness_fingerprint"] = runmark.fingerprint(work_dir / "harnesses" / sel.chosen_label)
+    d["library_fingerprint"] = lib_fingerprint
+    d["experience_prompted"] = bool(mode_lib and sel.ok)
+    try:
+        d["prompts_digest"] = selection.prompts_digest(
+            task_id, adapter, d, experience=d["experience_prompted"]
+        )
+    except Exception as exc:
+        # The paid sessions already ran; keep their result and let the next resume re-run.
+        d["prompts_digest"] = ""
+        res.errors.append(f"{mode}: prompts digest failed: {type(exc).__name__}: {exc}")
     res.selections[mode] = d
     if not sel.ok:
         res.errors.append(f"{mode}: selection failed: {sel.error}")

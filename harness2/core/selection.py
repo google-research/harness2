@@ -63,6 +63,8 @@ class Selection:
     experience: dict = field(default_factory=dict)
     trivial: bool = False
     evidence: str = "deliverable"
+    pool_kind: str = ""
+    asset_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {k: v for k, v in self.__dict__.items()}
@@ -209,14 +211,19 @@ def _write_candidates(
                 names.append(a.name)
             note = _assets_note(adapter, anon, names)
             asset_names.update(names)
-        header = (
-            f"<!-- candidate {anon}: {len(text):,} chars, {text.count(chr(10)) + 1:,} lines. "
-            f"COMPLETE -- nothing trimmed. Navigate with grep/offsets; evaluating a "
-            f"candidate means opening the part that determines whether it works.\n"
-            f"{note}-->\n"
+        (cand_dir / f"{anon}.md").write_text(
+            _candidate_header(anon, text, note) + text, encoding="utf-8"
         )
-        (cand_dir / f"{anon}.md").write_text(header + text, encoding="utf-8")
     return asset_names
+
+
+def _candidate_header(anon: str, text: str, note: str) -> str:
+    return (
+        f"<!-- candidate {anon}: {len(text):,} chars, {text.count(chr(10)) + 1:,} lines. "
+        f"COMPLETE -- nothing trimmed. Navigate with grep/offsets; evaluating a "
+        f"candidate means opening the part that determines whether it works.\n"
+        f"{note}-->\n"
+    )
 
 
 def _evidence_block(
@@ -232,6 +239,81 @@ def _evidence_block(
         + f": {shown}\n"
     )
     return _assets_line(adapter, shown), a_evid
+
+
+def _select_mission(
+    bp: BenchPrompts,
+    adapter: BenchmarkAdapter,
+    n_candidates: int,
+    ids: str,
+    *,
+    pool_kind: str,
+    asset_names: set[str],
+) -> str:
+    reference_only = bool(getattr(adapter, "deliverable_assets_reference_only", False))
+    a_line, a_evid = _evidence_block(asset_names, adapter, reference_only)
+    return "\n\n".join(
+        [
+            P.select(bp, n_candidates, pool_kind=pool_kind, assets_note=a_line),
+            "# YOUR EVIDENCE\n\nIt is on disk. Read it -- do not answer from this message alone.\n\n"
+            "context/task.md                 the instructions\n"
+            "context/source/                 task source materials, when supplied\n"
+            f"context/candidates/<id>.md      one file per candidate: {ids}\n"
+            + a_evid
+            + (
+                "\nOpen every candidate before choosing"
+                + (
+                    ", INCLUDING the rendered evidence in its directory"
+                    if asset_names and not reference_only
+                    else ""
+                )
+                + f". Choose exactly one of: {ids}."
+            ),
+        ]
+    )
+
+
+def _experience_mission(bp: BenchPrompts, chosen_label: str, why: str, layout: str) -> str:
+    return "\n\n".join(
+        [
+            P.experience(bp),
+            "# WHAT HAPPENED\n\n"
+            f"Harness {chosen_label} was adopted. The selection reasoning was:\n\n{why}\n\n"
+            "context/adoption.json maps any anonymous IDs in that reasoning to rollout labels. "
+            "Compare context/harness/ with context/base_harness/ and the candidates in "
+            "context/pool/. Read the decisions and execution contrasts before writing.\n\n"
+            + layout,
+        ]
+    )
+
+
+def prompts_digest(task_id: str, adapter: BenchmarkAdapter, sel: dict, *, experience: bool) -> str:
+    """A digest of the selection and experience prompt templates one recorded selection was sent.
+
+    Task data (candidate text, reasoning, layout) is replaced by placeholders, and every other
+    input comes from the record, so the same record digests the same until a template changes.
+    """
+    bp = resolve_prompts(adapter, task_id)
+    h = hashlib.sha256()
+    n = int(sel.get("n_candidates") or 0)
+    if not sel.get("trivial") and n > 0:
+        names = set(sel.get("asset_names") or [])
+        ids = ", ".join(sorted(_anon_id(i) for i in range(n)))
+        note = _assets_note(adapter, "{anon}", sorted(names)) if names else ""
+        h.update(b"select\0")
+        h.update(
+            _select_mission(
+                bp, adapter, n, ids, pool_kind=str(sel.get("pool_kind") or ""), asset_names=names
+            ).encode()
+        )
+        h.update(b"\0")
+        h.update(_candidate_header("{anon}", "", note).encode())
+        h.update(b"\0")
+    if experience:
+        h.update(b"experience\0")
+        h.update(_experience_mission(bp, "{label}", "{why}", "{layout}").encode())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 
 
 def _fallback(sel: Selection, pool: dict[str, RunView], pool_kind: str, exc: Exception) -> bool:
@@ -282,7 +364,7 @@ def run_selection(
     `pool_kind="finals"` adjusts only the wording shown to the selector and the failure
     fallback; the default is byte-identical to the mixed-pool behaviour.
     """
-    sel = Selection(task_id=task_id, mode=mode, k=k)
+    sel = Selection(task_id=task_id, mode=mode, k=k, pool_kind=pool_kind)
     bp = resolve_prompts(adapter, task_id)
 
     pool, artifacts = _render_pool(candidates, adapter, sel)
@@ -304,27 +386,11 @@ def run_selection(
     cand_dir.mkdir(exist_ok=True)
     asset_names = _write_candidates(sel, artifacts, pool, cand_dir, adapter)
 
+    sel.asset_names = sorted(asset_names)
+
     ids = ", ".join(sorted(sel.id_map))
-    reference_only = bool(getattr(adapter, "deliverable_assets_reference_only", False))
-    a_line, a_evid = _evidence_block(asset_names, adapter, reference_only)
-    mission = "\n\n".join(
-        [
-            P.select(bp, len(pool), pool_kind=pool_kind, assets_note=a_line),
-            "# YOUR EVIDENCE\n\nIt is on disk. Read it -- do not answer from this message alone.\n\n"
-            "context/task.md                 the instructions\n"
-            "context/source/                 task source materials, when supplied\n"
-            f"context/candidates/<id>.md      one file per candidate: {ids}\n"
-            + a_evid
-            + (
-                "\nOpen every candidate before choosing"
-                + (
-                    ", INCLUDING the rendered evidence in its directory"
-                    if asset_names and not reference_only
-                    else ""
-                )
-                + f". Choose exactly one of: {ids}."
-            ),
-        ]
+    mission = _select_mission(
+        bp, adapter, len(pool), ids, pool_kind=pool_kind, asset_names=asset_names
     )
 
     context.assert_no_grader_verdicts(root)
@@ -463,16 +529,8 @@ def _distil(
     layout: str = "",
 ) -> dict:
     """Extract a supported lesson from the complete task-local improvement record."""
-    mission = "\n\n".join(
-        [
-            P.experience(bp or resolve_prompts(adapter, task_id)),
-            "# WHAT HAPPENED\n\n"
-            f"Harness {sel.chosen_label} was adopted. The selection reasoning was:\n\n{sel.why}\n\n"
-            "context/adoption.json maps any anonymous IDs in that reasoning to rollout labels. "
-            "Compare context/harness/ with context/base_harness/ and the candidates in "
-            "context/pool/. Read the decisions and execution contrasts before writing.\n\n"
-            + layout,
-        ]
+    mission = _experience_mission(
+        bp or resolve_prompts(adapter, task_id), sel.chosen_label, sel.why, layout
     )
     exp_root = root.with_name(root.name + ".experience")
     shutil.rmtree(exp_root, ignore_errors=True)
