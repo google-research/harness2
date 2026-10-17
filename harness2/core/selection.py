@@ -234,6 +234,46 @@ def _evidence_block(
     return _assets_line(adapter, shown), a_evid
 
 
+def prompts_digest(
+    task_id: str,
+    adapter: BenchmarkAdapter,
+    work_dir: Path,
+    *,
+    mode: str,
+    k: int,
+    n_candidates: int,
+    trivial: bool = False,
+    pool_kind: str = "finals",
+    experience: bool = True,
+) -> str:
+    """A digest of the rendered selection and experience prompts sent for one mode."""
+    bp = resolve_prompts(adapter, task_id)
+    h = hashlib.sha256()
+    if not trivial and n_candidates > 0:
+        cand_dir = Path(work_dir) / "selection" / f"{mode}{k}" / "candidates"
+        asset_names = (
+            {
+                p.name
+                for d in cand_dir.iterdir()
+                if d.is_dir()
+                for p in d.iterdir()
+                if p.is_file()
+            }
+            if cand_dir.is_dir()
+            else set()
+        )
+        ref_only = bool(getattr(adapter, "deliverable_assets_reference_only", False))
+        a_line, _ = _evidence_block(asset_names, adapter, ref_only)
+        h.update(b"select\0")
+        h.update(P.select(bp, n_candidates, pool_kind=pool_kind, assets_note=a_line).encode())
+        h.update(b"\0")
+    if experience:
+        h.update(b"experience\0")
+        h.update(P.experience(bp).encode())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
 def _fallback(sel: Selection, pool: dict[str, RunView], pool_kind: str, exc: Exception) -> bool:
     """The neutral stand-in after a selector failure: a delivered base, else the first final."""
     base = sorted(label for label in pool if _is_base(label))

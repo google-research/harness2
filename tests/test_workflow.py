@@ -224,6 +224,66 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
+    def test_prompts_digest_resume_and_runmark(self):
+        from harness2.core import prompts, runmark
+
+        first = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in first["tasks"]], ["ok", "ok"])
+        second = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in second["tasks"]], ["skipped", "skipped"])
+
+        with patch.object(prompts, "ANSWER_FREE_SELECT", prompts.ANSWER_FREE_SELECT + "\nEDITED."):
+            edited_sel = self.run_stream(k=2)
+            self.assertEqual([r["status"] for r in edited_sel["tasks"]], ["ok", "ok"])
+            resumed_sel = self.run_stream(k=2)
+            self.assertEqual([r["status"] for r in resumed_sel["tasks"]], ["skipped", "skipped"])
+
+        with patch.object(prompts, "ANSWER_FREE", prompts.ANSWER_FREE + "\nEDITED."):
+            edited_exp = self.run_stream(k=2)
+            self.assertEqual([r["status"] for r in edited_exp["tasks"]], ["ok", "ok"])
+        restored = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in restored["tasks"]], ["ok", "ok"])
+
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg2/ledger-1/summary.json"
+        doc = json.loads(summary_path.read_text())
+        del doc["selections"]["agg"]["prompts_digest"]
+        summary_path.write_text(json.dumps(doc))
+        upgraded = self.run_stream(k=2)
+        self.assertEqual([r["status"] for r in upgraded["tasks"]], ["ok", "skipped"])
+
+        first_k1 = self.run_stream(k=1)
+        self.assertEqual([r["status"] for r in first_k1["tasks"]], ["ok", "ok"])
+        with patch.object(prompts, "ANSWER_FREE_SELECT", prompts.ANSWER_FREE_SELECT + "\nEDITED."):
+            sel_only_k1 = self.run_stream(k=1)
+            self.assertEqual([r["status"] for r in sel_only_k1["tasks"]], ["skipped", "skipped"])
+        with patch.object(prompts, "ANSWER_FREE", prompts.ANSWER_FREE + "\nEDITED."):
+            exp_k1 = self.run_stream(k=1)
+            self.assertEqual([r["status"] for r in exp_k1["tasks"]], ["ok", "ok"])
+
+        assets_adapter = DemoAdapter(self.root / "with_assets")
+        assets_adapter.deliverable_assets = lambda rd: [Path(rd) / "answer.txt"]
+        for expected in (["ok", "ok"], ["skipped", "skipped"]):
+            res_assets = schedule.run_domain(
+                "accounting",
+                assets_adapter.tasks(),
+                2,
+                adapter=assets_adapter,
+                prop=self.proposer,
+                runs_root=assets_adapter.spec.runs_root,
+                library_root=self.root / "with_assets/library",
+            )
+            self.assertEqual([r["status"] for r in res_assets["tasks"]], expected)
+
+        surface = self.adapter.substrate.surface()
+        base = tree.read_tree(surface, self.adapter.base_harness())
+        staged = tree.write_tree(surface, base, self.root / "staged_mark")
+        run_dir = self.root / "marked_run"
+        mark_path = runmark.mark_complete(run_dir, run_id="r1", harness_dir=staged)
+        self.assertEqual(runmark.VERSION, 1)
+        self.assertNotIn("prompts", json.loads(mark_path.read_text()))
+        self.assertTrue(runmark.is_complete(run_dir, harness_dir=staged))
+        self.assertTrue(runmark.is_complete(run_dir, match_harness=False))
+
 
 if __name__ == "__main__":
     unittest.main()

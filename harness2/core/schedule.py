@@ -390,7 +390,8 @@ def _resume(
     for mode in modes:
         sel = cached_sels[mode]
         namespace = Namespace(adapter.spec.name, adapter.substrate.name, mode, k, seed, tag)
-        harness_dir = namespace.task_dir(runs_root, task_id) / "harnesses" / sel["chosen_label"]
+        work_dir = namespace.task_dir(runs_root, task_id)
+        harness_dir = work_dir / "harnesses" / sel["chosen_label"]
         run_dir = Path(sel.get("chosen_run_dir") or "")
         try:
             if not sel.get("chosen_run_dir") or not run_dir.is_dir():
@@ -409,6 +410,18 @@ def _resume(
             fingerprint = sel.get("harness_fingerprint")
             if fingerprint and runmark.fingerprint(harness_dir) != fingerprint:
                 raise ValueError("adopted harness has changed")
+            want_prompts = selection.prompts_digest(
+                task_id,
+                adapter,
+                work_dir,
+                mode=mode,
+                k=k,
+                n_candidates=int(sel.get("n_candidates") or 0),
+                trivial=bool(sel.get("trivial")),
+                experience=bool(mode_libs.get(mode)),
+            )
+            if sel.get("prompts_digest") != want_prompts:
+                raise ValueError("selection/experience prompts changed")
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"  [{task_id}] cannot resume {mode}: {exc}; re-running", flush=True)
             return False
@@ -546,6 +559,16 @@ def _run_one_mode(
     d["chosen_tree_is_base"] = chosen_tree_is_base
     if sel.chosen_label:
         d["harness_fingerprint"] = runmark.fingerprint(work_dir / "harnesses" / sel.chosen_label)
+    d["prompts_digest"] = selection.prompts_digest(
+        task_id,
+        adapter,
+        work_dir,
+        mode=mode,
+        k=k,
+        n_candidates=sel.n_candidates,
+        trivial=sel.trivial,
+        experience=bool(mode_lib and sel.ok),
+    )
     res.selections[mode] = d
     if not sel.ok:
         res.errors.append(f"{mode}: selection failed: {sel.error}")
