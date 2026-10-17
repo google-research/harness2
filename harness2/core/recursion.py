@@ -221,6 +221,8 @@ def _run_stage(
                 f"(e.g. `{surface.skill_dir}/doc_review/SKILL.md`, "
                 f"`scripts/check_totals.py`)."
             )
+            # The retry reads a fresh copy of `context/`, so it must hold this attempt's edits.
+            harness_tree.write_tree(surface, new, tree.root / "harness")
             continue
 
         kept, err = _accept_tree(surface, adapter, new, fallback, label)
