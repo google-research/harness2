@@ -618,7 +618,7 @@ def run_batch(
 
         timeout_s = timeout_s or int((len(todo) * k / _conc(substrate)) * 3600 * 1.2 + 900)
         env = {
-            **os.environ,
+            **config.scrub_env(),
             "NO_FORCE_BUILD": "1",
             "HARNESS2_WB_VERTEX_URL": config.VERTEX_OPENAI_URL + "/chat/completions",
         }

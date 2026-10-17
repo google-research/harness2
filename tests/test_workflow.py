@@ -224,6 +224,134 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
+    def test_scrub_env_across_launchers(self):
+        from harness2.benchmarks import jobbench, lab, workbuddy
+        from harness2.substrate.base import Install, RunRequest
+        from harness2.substrate.codex import CodexSubstrate
+
+        cx = CodexSubstrate()
+        prop_inst = Proposer(self.proposer.spec, audit_dir=self.root / "audit_env")
+        host = {
+            "HARNESS2_JUDGE_API_KEY": "secret-judge",
+            "HARNESS2_BRIDGE_KEY": "secret-bridge",
+            "HARNESS2_CODEX_API_KEY": "secret-codex",
+            "OPENAI_API_KEY": "sk-judge",
+            "ANTHROPIC_API_KEY": "sk-ant",
+            "ANTHROPIC_AUTH_TOKEN": "tok-ant",
+            "ANTHROPIC_BASE_URL": "https://proxy.example/v1",
+            "GITHUB_TOKEN": "ghp_secret",
+            "AWS_ACCESS_KEY_ID": "AKIA_TEST",
+            "AWS_SECRET_ACCESS_KEY": "aws_secret",
+            "AWS_SESSION_TOKEN": "aws_sess",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/adc.json",
+        }
+        with patch.dict("os.environ", host):
+            for env_map in (
+                config.scrub_env(),
+                prop_inst.env(),
+                self.adapter.substrate.run_env(config.os.environ, self.root),
+                cx.exec_env(config.os.environ, codex_home=self.root),
+                lab._lab_env(),
+            ):
+                for key in (
+                    "HARNESS2_JUDGE_API_KEY",
+                    "HARNESS2_BRIDGE_KEY",
+                    "HARNESS2_CODEX_API_KEY",
+                    "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_BASE_URL",
+                    "GITHUB_TOKEN",
+                    "AWS_ACCESS_KEY_ID",
+                    "AWS_SECRET_ACCESS_KEY",
+                    "AWS_SESSION_TOKEN",
+                ):
+                    self.assertNotIn(key, env_map)
+                self.assertEqual(env_map["GOOGLE_APPLICATION_CREDENTIALS"], "/adc.json")
+            judge_env = lab._lab_env(judge=True)
+            self.assertEqual(judge_env["OPENAI_API_KEY"], "sk-judge")
+            self.assertEqual(judge_env["ANTHROPIC_API_KEY"], "sk-ant")
+            self.assertEqual(judge_env["ANTHROPIC_AUTH_TOKEN"], "tok-ant")
+            self.assertEqual(judge_env["ANTHROPIC_BASE_URL"], "https://proxy.example/v1")
+            self.assertNotIn("GITHUB_TOKEN", judge_env)
+            self.assertNotIn("AWS_ACCESS_KEY_ID", judge_env)
+            self.assertNotIn("HARNESS2_CODEX_API_KEY", judge_env)
+
+            with patch("harness2.demo.subprocess.run") as demo_run:
+                demo_run.return_value = Mock(stdout="42\n", stderr="")
+                self.adapter.execute("ledger-1", self.adapter.base_harness(), "env_check", timeout=5)
+                demo_env = demo_run.call_args.kwargs["env"]
+                self.assertNotIn("HARNESS2_JUDGE_API_KEY", demo_env)
+                self.assertNotIn("GITHUB_TOKEN", demo_env)
+
+            jb = jobbench.JobBenchAdapter.__new__(jobbench.JobBenchAdapter)
+            jb.substrate = Mock()
+            jb.store = self.root / "jb_store"
+            jb.domain_of = lambda _tid: "finance"
+            jb._require_artifacts = lambda _tid, _lbl: self.root / "jb_out"
+            captured = {}
+            jb._run_runner = lambda _r, env, **_kw: captured.update(env)
+            with patch("harness2.benchmarks.jobbench.render_opencode_tree"):
+                jb._launch_opencode(
+                    RunRequest(task_ref="t1", run_ids=("r1",), timeout=10),
+                    Install(staging_dir=self.root, fingerprint="fp"),
+                )
+            self.assertNotIn("HARNESS2_JUDGE_API_KEY", captured)
+            self.assertNotIn("GITHUB_TOKEN", captured)
+
+            jb_repo_dir = self.root / "jb_repo"
+            (jb_repo_dir / "eval").mkdir(parents=True)
+            (jb_repo_dir / "eval" / "judge.py").write_text("# stub\n")
+            with (
+                patch("harness2.config.jb_repo", return_value=jb_repo_dir),
+                patch("harness2.benchmarks.jobbench.subprocess.run") as jb_extract_run,
+            ):
+                jb_extract_run.return_value = Mock(returncode=0, stdout='{"files": {}}')
+                jb._extract(self.root / "jb_deliverable")
+                extract_env = jb_extract_run.call_args.kwargs["env"]
+                self.assertNotIn("HARNESS2_JUDGE_API_KEY", extract_env)
+                self.assertNotIn("GITHUB_TOKEN", extract_env)
+
+            wb_jobs = self.root / "wb_repo" / "configs" / "jobs"
+            wb_jobs.mkdir(parents=True)
+            proc_mock = Mock(returncode=0)
+            proc_mock.communicate.return_value = ("", "")
+            with (
+                patch("harness2.config.wb_repo", return_value=self.root / "wb_repo"),
+                patch("harness2.benchmarks.workbuddy._job_yaml", return_value="job: test\n"),
+                patch("harness2.benchmarks.workbuddy.subprocess.Popen", return_value=proc_mock) as popen,
+            ):
+                workbuddy.run_batch(
+                    subset=next(iter(workbuddy.SUBSETS.values())),
+                    substrate=next(iter(workbuddy._slots)),
+                    label="b1",
+                    tasks=["t1"],
+                    ws=self.root,
+                    k=1,
+                    label_dir=self.root / "wb_runs",
+                    done=lambda _t: False,
+                    timeout_s=5,
+                )
+                wb_env = popen.call_args.kwargs["env"]
+                self.assertNotIn("HARNESS2_JUDGE_API_KEY", wb_env)
+                self.assertNotIn("GITHUB_TOKEN", wb_env)
+
+    def test_jobbench_opencode_runner_runs_as_script(self):
+        import subprocess
+        import sys
+
+        from harness2.benchmarks import jobbench
+
+        res = subprocess.run(
+            [sys.executable, str(jobbench.OC_RUNNER)],
+            env={"PATH": config.os.environ.get("PATH", "")},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertNotIn("ImportError", res.stderr)
+        self.assertIn("unset:", res.stdout + res.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+from . import config
 from .core import tree
 from .core.proposer import Proposer, Reply
 from .core.spec import BenchPrompts, BenchSpec, ChannelSpec
@@ -96,6 +97,7 @@ class DemoAdapter:
             text=True,
             check=True,
             timeout=timeout or 10,
+            env=config.scrub_env(),
         )
         (run_dir / "answer.txt").write_text(result.stdout, encoding="utf-8")
         (run_dir / "trajectory.md").write_text(

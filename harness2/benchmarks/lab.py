@@ -386,9 +386,19 @@ except Exception as exc:
 """
 
 
-def _lab_env() -> dict[str, str]:
+_JUDGE_KEEP_ENV = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+)
+
+
+def _lab_env(*, judge: bool = False) -> dict[str, str]:
+    """LAB subprocess env; `judge=True` keeps direct-provider judge keys."""
     return {
-        **os.environ,
+        **config.scrub_env(keep=_JUDGE_KEEP_ENV if judge else ()),
         "PYTHONPATH": str(config.lab_repo()),
         "PATH": f"{config.LAB_PYTHON.parent}:{config.BUN.parent}:{config.CODEX_DIST}/codex-path:"
         + os.environ.get("PATH", ""),
@@ -982,7 +992,7 @@ class LabAdapter:
                     run_detached(
                         cmd,
                         cwd=config.lab_repo(),
-                        env=_lab_env(),
+                        env=_lab_env(judge=True),
                         stdin=subprocess.DEVNULL,
                         stdout=out,
                         stderr=subprocess.STDOUT,
