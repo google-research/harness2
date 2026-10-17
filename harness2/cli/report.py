@@ -55,6 +55,22 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
     return fell_back, usd
 
 
+def _feedback_tasks(ns_dir: Path) -> int:
+    """How many tasks human feedback steered, from the sweep's identity and the summaries."""
+    try:
+        marked = bool(json.loads((ns_dir / "config.json").read_text()).get("feedback"))
+    except (OSError, json.JSONDecodeError):
+        marked = False
+    steered = 0
+    for summary_path in sorted(ns_dir.glob("*/summary.json")):
+        try:
+            selections = json.loads(summary_path.read_text()).get("selections") or {}
+        except (OSError, json.JSONDecodeError):
+            continue
+        steered += any((s or {}).get("feedback_fingerprint") for s in selections.values())
+    return max(steered, 1) if marked else steered
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="harness2.cli.report", description=__doc__, formatter_class=C.HelpFormatter
@@ -79,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--k named no scale")
 
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
-    rows, fell_back, usd = [], {}, {}
+    rows, fell_back, usd, steered = [], {}, {}, {}
     for k in ks:
         ns_dir = C.runs_root_for(adapter) / C.summary_namespace(adapter, k, seed=args.seed)
         judged = ns_dir / "judged.json"
@@ -88,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ! no judged rows at {judged} — run cli.judge for k={k} first", flush=True)
             continue
         rows.extend(r for r in got if r.mode in modes)
+        steered[k] = _feedback_tasks(ns_dir)
         fb, sp = _spend_and_fallbacks(ns_dir, modes, k)
         fell_back.update(fb)
         usd.update(sp)
@@ -101,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     summaries = R.summarise(rows, fell_back=fell_back, usd=usd)
     print(R.render(summaries, title=title, bench=adapter.spec.name))
+    for k, n in steered.items():
+        if n:
+            print(
+                f"\n  ! k={k}: human feedback steered {n} task(s) in this run; these results are "
+                f"not comparable to runs without it"
+            )
     spend = sum(s.usd for s in summaries)
     if spend:
         print(

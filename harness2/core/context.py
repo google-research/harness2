@@ -20,6 +20,7 @@
     context/harness/<rel>            the c1..c8 tree being edited
     context/library/INDEX.md         earlier tasks in this domain + their full harnesses
     context/pool/<label>/            candidate harness + its rollout (aggregate / select only)
+    context/feedback.md              a person's notes on this task, only when feedback is on
     MISSION.md                       what to do with all of it
 
 Evidence is served as files and the prompt is a short pointer, so nothing is truncated to fit
@@ -38,6 +39,10 @@ from typing import Mapping, Sequence
 from . import tree as harness_tree
 from .spec import BenchmarkAdapter, RunView
 
+FEEDBACK_LAYOUT_LINE = (
+    "context/feedback.md             notes from the person who reviewed this task"
+)
+
 
 @dataclass
 class ContextTree:
@@ -55,11 +60,14 @@ class ContextTree:
     deliverables_mode: str = "contents"
     source_files: int = 0
     decisions: int = 0
+    feedback: bool = False
 
     @property
     def layout(self) -> str:
         """The evidence-layout listing that goes in the mission; only mentions what exists."""
         lines = ["context/task.md                  the task as the agent received it"]
+        if self.feedback:
+            lines.append(FEEDBACK_LAYOUT_LINE)
         if self.source_files:
             lines.append("context/source/                 task source materials")
         if self.decisions:
@@ -113,10 +121,12 @@ def build(
     pool: Sequence[tuple[str, Path, RunView | None]] = (),
     decisions: Mapping[str, str] | None = None,
     obs_trunc: int | None = None,
+    feedback: str = "",
 ) -> ContextTree:
     """Write the evidence tree; return what landed, so the mission describes only that.
 
     `obs_trunc` applies per observation, but a trajectory as a whole is written in full.
+    `feedback` is a person's notes on the task (core.feedback); empty leaves no file.
     Runs inside `recursion._run_stage`'s failure domain, so an adapter bug raised here is
     recorded as a stage error; only the trajectory and deliverable readers are caught,
     because their failure is itself evidence.
@@ -129,6 +139,8 @@ def build(
     trunc = obs_trunc if obs_trunc is not None else adapter.spec.obs_trunc
 
     (dest / "task.md").write_text(adapter.task_prompt(task_id), encoding="utf-8")
+    if feedback:
+        (dest / "feedback.md").write_text(feedback + "\n", encoding="utf-8")
     source_files = copy_source(adapter, task_id, dest)
     for label, notes in (decisions or {}).items():
         path = dest / "decisions" / f"{label}.md"
@@ -185,6 +197,7 @@ def build(
         deliverables_mode=("names" if names_only else "contents"),
         source_files=source_files,
         decisions=len(decisions or {}),
+        feedback=bool(feedback),
     )
 
 
