@@ -42,14 +42,15 @@ to `global`. Your account must have access to each configured model.
 |---|---|
 | `HARNESS2_SOLVER_MODEL` | Executor model in OpenCode's `provider/model` format |
 | `HARNESS2_IMPROVER_MODEL` | Improver model in the same format; defaults to the executor |
-| `HARNESS2_JUDGE_MODEL` | Bare judge model ID; the adapter supplies the Vertex prefix |
+| `HARNESS2_JUDGE_MODEL` | Judge model in OpenCode's `provider/model` format; a bare Claude or Gemini ID is treated as Vertex |
 | `HARNESS2_RUNS_DIR` | Output root; defaults to `runs/` |
 
 The provided configuration uses Vertex Gemini executors and judges, and supports
 either Vertex Claude or Gemini as the improver. LAB also supports the upstream
 judge's direct providers when their credentials are configured. For WorkBuddy,
 setup generates the Gemini solver and judge routes from these settings; rerun
-setup after changing either model.
+setup after changing either model. Route files generated before this change are
+reported stale and need `harness2-setup wb` rerun.
 
 ### Authentication alternatives
 
@@ -64,6 +65,43 @@ Credentials can use that account. Other options include:
 Keep `gcloud` on `PATH` for these Vertex configurations, including the key-file
 route: the installation check runs
 `gcloud auth application-default print-access-token`.
+
+### OpenRouter models
+
+OpenRouter uses the same OpenCode-style model IDs as Vertex. Set all three
+roles and provide the key:
+
+```bash
+OPENROUTER_API_KEY=...
+HARNESS2_SOLVER_MODEL=openrouter/anthropic/claude-sonnet-4
+HARNESS2_IMPROVER_MODEL=openrouter/anthropic/claude-sonnet-4
+HARNESS2_JUDGE_MODEL=openrouter/openai/gpt-5
+```
+
+The `openrouter/` prefix is stripped for APIs that take the bare
+`<vendor>/<model>` (OpenRouter itself and the JobBench judge); LAB's judge
+recognizes the prefix directly. WorkBuddy generates its solver and judge routes
+from these IDs, so rerun `harness2-setup wb` after changing either one.
+
+The `claude_cli` proposer channel remains Anthropic/Vertex-only; OpenRouter
+improvers use the default `opencode` channel. Explicit
+`HARNESS2_JUDGE_BASE_URL` / `HARNESS2_JUDGE_API_KEY` still override provider
+inference.
+
+For the Codex executor, install the optional bridge dependencies and serve the
+OpenRouter route:
+
+```bash
+uv pip install -e '.[render,bridge]'
+harness2-bridge --model openrouter/anthropic/claude-sonnet-4
+```
+
+Add the printed `HARNESS2_CODEX_*` lines to `.env`, then run setup with
+`--substrate cx`. The bridge process holds `OPENROUTER_API_KEY`; WorkBuddy
+containers receive only the bridge key.
+
+Vertex settings remain valid unchanged. `OPENROUTER_API_KEY` is required only
+when an OpenRouter model is configured.
 
 ## Benchmark installation
 
