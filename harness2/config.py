@@ -360,19 +360,25 @@ def credential_requirements(
     improver: str | None = None,
     judge_model: str | None = None,
 ) -> dict[str, bool]:
-    """Which cloud credentials the configured roles actually need."""
+    """Which cloud credentials the configured roles actually need.
+
+    `judge` includes the judge credentials for benchmark grading, while
+    `workbuddy` includes them for WorkBuddy's solver and judge routes. The
+    result reports the providers of the configured roles, not whether every
+    credential needed for a benchmark is present and valid.
+    """
     refs = [
         resolve_model(SOLVER_MODEL_OC if solver is None else solver),
         resolve_model(IMPROVER_MODEL if improver is None else improver),
     ]
     judge_ref = None
     if judge or workbuddy:
-        value = JUDGE_MODEL if judge_model is None else judge_model
+        value = _judge_value(judge_model)
         if value:
             judge_ref = resolve_model(value)
     return {
         "vertex": any(r.is_vertex for r in refs)
-        or bool(judge_ref and uses_vertex_credentials(judge_ref)),
+        or (judge_ref is not None and uses_vertex_credentials(judge_ref)),
         "openrouter": any(r.is_openrouter for r in refs)
-        or bool(judge_ref and judge_ref.is_openrouter),
+        or (judge_ref is not None and judge_ref.is_openrouter),
     }

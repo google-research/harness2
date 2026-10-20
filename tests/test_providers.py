@@ -187,3 +187,52 @@ class CredentialRequirementTests(unittest.TestCase):
                 config.credential_requirements(judge=False),
                 {"vertex": False, "openrouter": True},
             )
+
+    def test_workbuddy_with_openrouter_judge_needs_openrouter_only(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "openrouter/openai/gpt-5"
+        ), patch.object(config, "JUDGE_MODEL", "openrouter/openai/gpt-5"):
+            self.assertEqual(
+                config.credential_requirements(workbuddy=True),
+                {"vertex": False, "openrouter": True},
+            )
+
+    def test_workbuddy_with_vertex_roles_needs_vertex_only(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "google-vertex/gemini-3.5-flash"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "google-vertex/gemini-3.5-flash"
+        ), patch.object(config, "JUDGE_MODEL", "google-vertex/gemini-3.5-flash"):
+            self.assertEqual(
+                config.credential_requirements(workbuddy=True),
+                {"vertex": True, "openrouter": False},
+            )
+
+    def test_explicit_models_override_module_globals(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/solver"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "openrouter/improver"
+        ), patch.object(config, "JUDGE_MODEL", "openrouter/judge"):
+            self.assertEqual(
+                config.credential_requirements(
+                    judge=True,
+                    solver="google-vertex/gemini-3.5-flash",
+                    improver="google-vertex/gemini-3.5-flash",
+                    judge_model="gemini-3.5-flash",
+                ),
+                {"vertex": True, "openrouter": False},
+            )
+
+    def test_workbuddy_without_judge_ignores_judge_ref(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "openrouter/openai/gpt-5"
+        ), patch.object(config, "JUDGE_MODEL", ""):
+            self.assertEqual(
+                config.credential_requirements(workbuddy=True),
+                {"vertex": False, "openrouter": True},
+            )
