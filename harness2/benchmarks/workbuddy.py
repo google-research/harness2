@@ -620,7 +620,7 @@ def run_batch(
         env = {
             **os.environ,
             "NO_FORCE_BUILD": "1",
-            "HARNESS2_WB_VERTEX_URL": config.VERTEX_OPENAI_URL + "/chat/completions",
+            **config.workbuddy_env(),
         }
         try:
             with _slots[substrate]:

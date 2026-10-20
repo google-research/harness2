@@ -236,3 +236,47 @@ class CredentialRequirementTests(unittest.TestCase):
                 config.credential_requirements(workbuddy=True),
                 {"vertex": False, "openrouter": True},
             )
+
+
+class WorkBuddyRouteTests(unittest.TestCase):
+    def test_openrouter_solver_route(self):
+        from harness2 import install
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            payload = install.workbuddy_route(
+                "solver", model="openrouter/anthropic/claude-sonnet-4"
+            )
+        model = payload["model"]
+        self.assertEqual(model["name"], "anthropic/claude-sonnet-4")
+        self.assertEqual(model["backend_url_env"], "HARNESS2_WB_SOLVER_URL")
+        self.assertEqual(model["backend_key_env"], "HARNESS2_WB_SOLVER_KEY")
+        self.assertNotIn("backend_key_command", model)
+        self.assertNotIn("thought_signature_passback", model)
+
+    def test_vertex_judge_route_keeps_dynamic_key(self):
+        from harness2 import install
+
+        with patch.object(config, "VERTEX_PROJECT", "proj"), patch.object(
+            config, "VERTEX_OPENAI_URL", "https://vertex.example/v1"
+        ):
+            payload = install.workbuddy_route(
+                "judge", model="google-vertex/gemini-3.5-flash"
+            )
+        model = payload["model"]
+        self.assertEqual(model["name"], "google/gemini-3.5-flash")
+        self.assertEqual(model["backend_url_env"], "HARNESS2_WB_JUDGE_URL")
+        self.assertEqual(model["backend_key_command"], config.GCLOUD_TOKEN_COMMAND)
+        self.assertTrue(model["thought_signature_passback"])
+
+    def test_workbuddy_env_carries_static_keys_only(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            env = config.workbuddy_env(
+                solver="openrouter/openai/gpt-5",
+                judge="openrouter/anthropic/claude-sonnet-4",
+            )
+        self.assertEqual(
+            env["HARNESS2_WB_SOLVER_URL"],
+            "https://openrouter.ai/api/v1/chat/completions",
+        )
+        self.assertEqual(env["HARNESS2_WB_SOLVER_KEY"], "or-key")
+        self.assertEqual(env["HARNESS2_WB_JUDGE_KEY"], "or-key")

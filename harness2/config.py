@@ -382,3 +382,19 @@ def credential_requirements(
         "openrouter": any(r.is_openrouter for r in refs)
         or (judge_ref is not None and judge_ref.is_openrouter),
     }
+
+
+def workbuddy_env(
+    *, solver: str | None = None, judge: str | None = None
+) -> dict[str, str]:
+    """The URL/key environment every WorkBuddy proxy route reads."""
+    result: dict[str, str] = {}
+    for role, value in (
+        ("SOLVER", SOLVER_MODEL_OC if solver is None else solver),
+        ("JUDGE", JUDGE_MODEL if judge is None else judge),
+    ):
+        backend = model_backend(value)
+        result[f"HARNESS2_WB_{role}_URL"] = backend.url
+        if backend.key:
+            result[f"HARNESS2_WB_{role}_KEY"] = backend.key
+    return result

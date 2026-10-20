@@ -148,45 +148,46 @@ def overlays(name: str, *, dry_run=False):
             )
 
 
+def workbuddy_route(role: str, *, model: str | None = None) -> dict:
+    """The generated WorkBuddy route for one role, from the configured model."""
+    if role not in ("solver", "judge"):
+        raise ValueError(f"role must be 'solver' or 'judge', got {role!r}")
+    value = model or (config.SOLVER_MODEL_OC if role == "solver" else config.JUDGE_MODEL)
+    backend = config.model_backend(value)
+    env_prefix = f"HARNESS2_WB_{role.upper()}"
+    route = {
+        "name": backend.api_model,
+        "protocols": ["openai"],
+        "backend_url_env": f"{env_prefix}_URL",
+        "params": {
+            "max_output_tokens": 64000 if role == "solver" else 16384,
+            "extra_body": {"reasoning_effort": "high" if role == "solver" else "low"},
+        },
+    }
+    if backend.key_command:
+        route["backend_key_command"] = backend.key_command
+        route["backend_key_ttl"] = 1800
+    else:
+        route["backend_key_env"] = f"{env_prefix}_KEY"
+    if backend.thought_signature:
+        route["thought_signature_passback"] = True
+    return {"model": route}
+
+
 def workbuddy_models(*, dry_run=False):
-    """Generate the two Vertex routes from the user's model IDs, never credentials."""
-    solver = config.SOLVER_MODEL_OC.removeprefix("google-vertex/")
-    judge = config.JUDGE_MODEL
-    problem = ""
-    if not config.SOLVER_MODEL_OC.startswith("google-vertex/gemini") or not judge.startswith(
-        "gemini"
-    ):
-        problem = (
-            "WorkBuddy setup requires a google-vertex/gemini... executor "
-            "and a gemini... judge; choose IDs available in your project"
-        )
-    elif not config.VERTEX_PROJECT:
-        problem = "Set GOOGLE_CLOUD_PROJECT for WorkBuddy's Vertex routes"
-    if problem:
+    """Generate the solver and judge routes from the configured model IDs."""
+    try:
+        payloads = {role: workbuddy_route(role) for role in ("solver", "judge")}
+    except config.ConfigError as exc:
         if not dry_run:
-            raise config.ConfigError(problem)
-        print(f"Configure WorkBuddy solver and judge routes -- {problem}", flush=True)
+            raise
+        print(f"Configure WorkBuddy solver and judge routes -- {exc}", flush=True)
         return
-    for role, model in (("solver", solver), ("judge", judge)):
-        payload = {
-            "model": {
-                "name": "google/" + model,
-                "protocols": ["openai"],
-                "backend_url_env": "HARNESS2_WB_VERTEX_URL",
-                "backend_key_command": "gcloud auth application-default print-access-token",
-                "backend_key_ttl": 1800,
-                "thought_signature_passback": True,
-                "params": {
-                    "max_output_tokens": 64000 if role == "solver" else 16384,
-                    "extra_body": {"reasoning_effort": "high" if role == "solver" else "low"},
-                },
-            }
-        }
+    for role, payload in payloads.items():
         path = config.wb_repo() / "configs" / "models" / "harness2" / f"{role}.yaml"
-        print(f"Configure WorkBuddy {role}: {model}", flush=True)
+        print(f"Configure WorkBuddy {role}: {payload['model']['name']}", flush=True)
         if not dry_run:
             path.parent.mkdir(parents=True, exist_ok=True)
-
             path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
