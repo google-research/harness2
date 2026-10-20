@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Serve a Responses-API endpoint on Vertex AI for the Codex executor."""
+"""Serve a Responses-API endpoint (Vertex AI or OpenRouter) for the Codex executor."""
 
 from __future__ import annotations
 
@@ -39,21 +39,17 @@ general_settings:
 
 def litellm_params(ref: config.ModelRef) -> dict[str, str]:
     """The provider-specific LiteLLM route for one configured model."""
-    if ref.is_vertex:
-        return {
-            "model": config.litellm_model(ref),
-            "vertex_project": "os.environ/GOOGLE_CLOUD_PROJECT",
-            "vertex_location": "os.environ/GOOGLE_CLOUD_LOCATION",
-        }
+    model = config.litellm_model(ref)
     if ref.is_openrouter:
         return {
-            "model": config.litellm_model(ref),
+            "model": model,
             "api_key": "os.environ/OPENROUTER_API_KEY",
         }
-    raise config.ConfigError(
-        f"Unsupported Responses API provider {ref.provider or '(none)'!r} for "
-        f"model {ref.opencode_id!r}; use google-vertex/... or openrouter/..."
-    )
+    return {
+        "model": model,
+        "vertex_project": "os.environ/GOOGLE_CLOUD_PROJECT",
+        "vertex_location": "os.environ/GOOGLE_CLOUD_LOCATION",
+    }
 
 
 def _params_yaml(params: dict[str, str]) -> str:
@@ -99,8 +95,9 @@ def main(argv=None):
 
     raw = args.model if "/" in args.model else "google-vertex/" + args.model
     ref = config.resolve_model(raw)
+    if not ref.api_model:
+        p.exit(1, "--model is empty; set HARNESS2_CODEX_MODEL or pass --model\n")
     alias = config.codex_alias(ref)
-    params = litellm_params(ref)
 
     litellm = Path(sys.executable).with_name("litellm")
     if not litellm.is_file():
@@ -109,6 +106,11 @@ def main(argv=None):
         p.exit(1, "Set GOOGLE_CLOUD_PROJECT in .env\n")
     if ref.is_openrouter and not config.env("OPENROUTER_API_KEY"):
         p.exit(1, "Set OPENROUTER_API_KEY in .env\n")
+
+    try:
+        params = litellm_params(ref)
+    except config.ConfigError as exc:
+        p.exit(1, f"{exc}\n")
 
     root = config.DEPENDENCIES / "codex"
     endpoint = _endpoint(root / "bridge.json", args.host, args.port)
@@ -133,6 +135,8 @@ def main(argv=None):
     if ref.is_vertex:
         env["GOOGLE_CLOUD_PROJECT"] = config.VERTEX_PROJECT
         env["GOOGLE_CLOUD_LOCATION"] = config.VERTEX_REGION
+    if ref.is_openrouter:
+        env["OPENROUTER_API_KEY"] = config.env("OPENROUTER_API_KEY", "")
     command = [str(litellm), "--config", str(litellm_config), "--host", args.host]
     os.execve(str(litellm), [*command, "--port", str(port)], env)
 

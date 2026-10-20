@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from harness2 import config, preflight
 from harness2.benchmarks import jobbench
+from harness2.cli import bridge
 
 
 class ResolverTests(unittest.TestCase):
@@ -459,17 +460,63 @@ class JobBenchJudgeTokenTests(unittest.TestCase):
 
 class BridgeTests(unittest.TestCase):
     def test_openrouter_bridge_params(self):
-        from harness2.cli import bridge
-
         ref = config.resolve_model("openrouter/anthropic/claude-sonnet-4")
         params = bridge.litellm_params(ref)
         self.assertEqual(params["model"], "openrouter/anthropic/claude-sonnet-4")
         self.assertEqual(params["api_key"], "os.environ/OPENROUTER_API_KEY")
 
     def test_vertex_bridge_params(self):
-        from harness2.cli import bridge
-
         ref = config.resolve_model("google-vertex/gemini-3.5-flash")
         params = bridge.litellm_params(ref)
         self.assertEqual(params["model"], "vertex_ai/gemini-3.5-flash")
         self.assertEqual(params["vertex_project"], "os.environ/GOOGLE_CLOUD_PROJECT")
+
+
+class BridgeMainTests(unittest.TestCase):
+    def _main(self, argv, env=None, vertex_project=None):
+        """Run main with the litellm binary and dependencies directory stubbed."""
+        calls = []
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            config, "DEPENDENCIES", Path(td)
+        ), patch.object(
+            bridge.Path, "is_file", return_value=True
+        ), patch.object(
+            bridge, "_endpoint", return_value={"port": 4321, "key": "bridge-key"}
+        ), patch.object(
+            bridge.os, "execve", side_effect=lambda *a: calls.append(a)
+        ), patch.dict(os.environ, env or {}, clear=False):
+            (Path(td) / "codex").mkdir()
+            if vertex_project is not None:
+                with patch.object(config, "VERTEX_PROJECT", vertex_project):
+                    bridge.main(argv)
+            else:
+                bridge.main(argv)
+            text = (Path(td) / "codex" / "bridge.yaml").read_text(encoding="utf-8")
+        return calls, text
+
+    def test_bare_model_serves_vertex(self):
+        calls, text = self._main(
+            ["--model", "gemini-3.5-flash"], vertex_project="proj"
+        )
+        self.assertTrue(calls)
+        self.assertIn("model: vertex_ai/gemini-3.5-flash", text)
+        self.assertIn("- model_name: gemini-3.5-flash", text)
+
+    def test_openrouter_serves_full_alias_with_key(self):
+        calls, text = self._main(
+            ["--model", "openrouter/anthropic/claude-sonnet-4"],
+            env={"OPENROUTER_API_KEY": "or-key"},
+        )
+        self.assertIn("model: openrouter/anthropic/claude-sonnet-4", text)
+        self.assertIn("api_key: os.environ/OPENROUTER_API_KEY", text)
+        self.assertIn("- model_name: openrouter/anthropic/claude-sonnet-4", text)
+        self.assertEqual(calls[0][2]["OPENROUTER_API_KEY"], "or-key")
+
+    def test_unsupported_provider_exits_without_traceback(self):
+        with self.assertRaises(SystemExit):
+            self._main(["--model", "openai/gpt-5"])
+
+    def test_openrouter_requires_key(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}, clear=False):
+            with self.assertRaises(SystemExit):
+                self._main(["--model", "openrouter/a/b"])
