@@ -1,0 +1,133 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+
+"""Provider resolution and OpenRouter derivation contracts."""
+
+import os
+import unittest
+from unittest.mock import patch
+
+from harness2 import config
+
+
+class ResolverTests(unittest.TestCase):
+    def test_openrouter_splits_provider_from_api_model(self):
+        ref = config.resolve_model("openrouter/anthropic/claude-sonnet-4")
+        self.assertEqual(ref.provider, "openrouter")
+        self.assertEqual(ref.opencode_id, "openrouter/anthropic/claude-sonnet-4")
+        self.assertEqual(ref.api_model, "anthropic/claude-sonnet-4")
+        self.assertTrue(ref.is_openrouter)
+        self.assertFalse(ref.is_vertex)
+
+    def test_vertex_splits_provider_from_api_model(self):
+        ref = config.resolve_model("google-vertex/gemini-3.5-flash")
+        self.assertEqual(ref.provider, "google-vertex")
+        self.assertEqual(ref.api_model, "gemini-3.5-flash")
+        self.assertTrue(ref.is_vertex)
+
+    def test_unknown_provider_keeps_opencode_id(self):
+        ref = config.resolve_model("openai/gpt-5")
+        self.assertEqual(ref.provider, "openai")
+        self.assertEqual(ref.opencode_id, "openai/gpt-5")
+        self.assertEqual(ref.api_model, "gpt-5")
+
+    def test_bare_id_is_preserved(self):
+        ref = config.resolve_model("gemini-3.5-flash")
+        self.assertEqual(ref.provider, "")
+        self.assertEqual(ref.opencode_id, "gemini-3.5-flash")
+        self.assertEqual(ref.api_model, "gemini-3.5-flash")
+
+    def test_codex_alias_keeps_openrouter_prefix(self):
+        self.assertEqual(
+            config.codex_alias(config.resolve_model("openrouter/openai/gpt-5")),
+            "openrouter/openai/gpt-5",
+        )
+        self.assertEqual(
+            config.codex_alias(config.resolve_model("google-vertex/gemini-3.5-flash")),
+            "gemini-3.5-flash",
+        )
+
+
+class BackendTests(unittest.TestCase):
+    def test_openrouter_backend(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            backend = config.model_backend("openrouter/anthropic/claude-sonnet-4")
+        self.assertEqual(backend.url, "https://openrouter.ai/api/v1/chat/completions")
+        self.assertEqual(backend.api_model, "anthropic/claude-sonnet-4")
+        self.assertEqual(backend.key, "or-key")
+        self.assertEqual(backend.key_command, "")
+        self.assertFalse(backend.thought_signature)
+
+    def test_openrouter_backend_requires_key(self):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}, clear=False):
+            with self.assertRaisesRegex(config.ConfigError, "OPENROUTER_API_KEY"):
+                config.model_backend("openrouter/anthropic/claude-sonnet-4")
+
+    def test_vertex_backend_uses_gcloud_and_thought_signatures(self):
+        with patch.object(config, "VERTEX_PROJECT", "proj"), patch.object(
+            config, "VERTEX_OPENAI_URL", "https://vertex.example/v1"
+        ):
+            backend = config.model_backend("google-vertex/gemini-3.5-flash")
+        self.assertEqual(backend.url, "https://vertex.example/v1/chat/completions")
+        self.assertEqual(backend.api_model, "google/gemini-3.5-flash")
+        self.assertEqual(backend.key, "")
+        self.assertEqual(backend.key_command, config.GCLOUD_TOKEN_COMMAND)
+        self.assertTrue(backend.thought_signature)
+
+    def test_unsupported_backend_provider_is_rejected(self):
+        with self.assertRaisesRegex(config.ConfigError, "Unsupported backend provider"):
+            config.model_backend("openai/gpt-5")
+
+
+class JudgeTests(unittest.TestCase):
+    def test_openrouter_judge_target(self):
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "or-key", "HARNESS2_JUDGE_BASE_URL": "", "HARNESS2_JUDGE_API_KEY": ""},
+            clear=False,
+        ):
+            model = "openrouter/openai/gpt-5"
+            self.assertEqual(config.judge_api_base(model), "https://openrouter.ai/api/v1")
+            self.assertEqual(config.judge_api_key(model), "or-key")
+            self.assertEqual(config.jobbench_judge_model(model), "openai/gpt-5")
+            self.assertEqual(config.lab_judge_model(model), model)
+
+    def test_explicit_judge_override_wins(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HARNESS2_JUDGE_BASE_URL": "https://proxy.example/v1",
+                "HARNESS2_JUDGE_API_KEY": "explicit-key",
+            },
+            clear=False,
+        ):
+            model = "openrouter/openai/gpt-5"
+            self.assertEqual(config.judge_api_base(model), "https://proxy.example/v1")
+            self.assertEqual(config.judge_api_key(model), "explicit-key")
+
+    def test_legacy_bare_gemini_judge_still_maps_to_vertex(self):
+        with patch.dict(os.environ, {"HARNESS2_JUDGE_BASE_URL": ""}, clear=False):
+            self.assertEqual(
+                config.lab_judge_model("gemini-3.5-flash"), "vertex/gemini-3.5-flash"
+            )
+            self.assertEqual(
+                config.jobbench_judge_model("gemini-3.5-flash"),
+                "google/gemini-3.5-flash",
+            )
+
+    def test_litellm_model_mapping(self):
+        self.assertEqual(
+            config.litellm_model(config.resolve_model("openrouter/anthropic/claude-sonnet-4")),
+            "openrouter/anthropic/claude-sonnet-4",
+        )
+        self.assertEqual(
+            config.litellm_model(config.resolve_model("google-vertex/gemini-3.5-flash")),
+            "vertex_ai/gemini-3.5-flash",
+        )
+        with self.assertRaisesRegex(config.ConfigError, "Unsupported Responses API provider"):
+            config.litellm_model(config.resolve_model("openai/gpt-5"))
