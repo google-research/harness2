@@ -153,6 +153,16 @@ def workbuddy_route(role: str, *, model: str | None = None) -> dict:
     if role not in ("solver", "judge"):
         raise ValueError(f"role must be 'solver' or 'judge', got {role!r}")
     value = model or (config.SOLVER_MODEL_OC if role == "solver" else config.JUDGE_MODEL)
+    if not value:
+        value = config.require(
+            "HARNESS2_SOLVER_MODEL" if role == "solver" else "HARNESS2_JUDGE_MODEL",
+            needed_by=f"WorkBuddy {role} setup",
+        )
+    ref = config.resolve_model(value)
+    if config.uses_vertex_credentials(ref) and not ref.api_model.startswith("gemini"):
+        raise config.ConfigError(
+            f"WorkBuddy Vertex routes support Gemini only; got {value!r}"
+        )
     backend = config.model_backend(value)
     env_prefix = f"HARNESS2_WB_{role.upper()}"
     route = {

@@ -159,7 +159,7 @@ class Backend:
 def model_backend(model: str) -> Backend:
     """The HTTP endpoint, API model name, and credentials one model talks to."""
     ref = resolve_model(model)
-    if not ref.provider and ref.api_model.startswith(("claude", "gemini")):
+    if ref.provider == "" and uses_vertex_credentials(ref):
         ref = resolve_model("google-vertex/" + ref.api_model)
     if ref.is_openrouter:
         key = env("OPENROUTER_API_KEY", "")

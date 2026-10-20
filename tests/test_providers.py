@@ -8,11 +8,14 @@
 
 """Provider resolution and OpenRouter derivation contracts."""
 
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from harness2 import config
+from harness2 import config, preflight
 
 
 class ResolverTests(unittest.TestCase):
@@ -292,3 +295,55 @@ class WorkBuddyRouteTests(unittest.TestCase):
         self.assertEqual(
             payload["model"]["backend_key_command"], config.GCLOUD_TOKEN_COMMAND
         )
+
+    def test_workbuddy_env_mixed_providers(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "google-vertex/gemini-3.5-flash"
+        ), patch.object(config, "VERTEX_PROJECT", "proj"), patch.object(
+            config, "VERTEX_OPENAI_URL", "https://vertex.example/v1"
+        ), patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            env = config.workbuddy_env(judge="openrouter/anthropic/claude-sonnet-4")
+        self.assertEqual(
+            env["HARNESS2_WB_SOLVER_URL"],
+            "https://vertex.example/v1/chat/completions",
+        )
+        self.assertNotIn("HARNESS2_WB_SOLVER_KEY", env)
+        self.assertEqual(
+            env["HARNESS2_WB_JUDGE_URL"],
+            "https://openrouter.ai/api/v1/chat/completions",
+        )
+        self.assertEqual(env["HARNESS2_WB_JUDGE_KEY"], "or-key")
+
+    def test_invalid_role_is_rejected(self):
+        from harness2 import install
+
+        with self.assertRaises(ValueError):
+            install.workbuddy_route("selector", model="openrouter/a/b")
+
+    def test_vertex_claude_is_rejected(self):
+        from harness2 import install
+
+        with self.assertRaisesRegex(config.ConfigError, "Gemini only"):
+            install.workbuddy_route("solver", model="google-vertex/claude-sonnet-4")
+
+    def test_missing_model_names_the_env_var(self):
+        from harness2 import install
+
+        with patch.dict(os.environ, {"HARNESS2_JUDGE_MODEL": ""}, clear=False), patch.object(
+            config, "JUDGE_MODEL", ""
+        ):
+            with self.assertRaisesRegex(config.ConfigError, "HARNESS2_JUDGE_MODEL"):
+                install.workbuddy_route("judge")
+
+    def test_workbuddy_route_errors_detects_stale_and_missing(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            tmp = Path(td)
+            route_dir = tmp / "configs/models/harness2"
+            route_dir.mkdir(parents=True)
+            (route_dir / "solver.yaml").write_text(
+                json.dumps({"model": {"name": "stale"}}), encoding="utf-8"
+            )
+            self.assertIn("stale", preflight.workbuddy_route_errors(tmp, "solver")[0])
+            self.assertIn("missing", preflight.workbuddy_route_errors(tmp, "judge")[0])

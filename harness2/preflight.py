@@ -21,8 +21,23 @@ import shutil
 import subprocess
 
 from . import config
-from .install import PATCHES, missing_runners
+from .install import PATCHES, missing_runners, workbuddy_route
 from .substrate.opencode import OpencodeSubstrate
+
+
+def workbuddy_route_errors(repo, role: str) -> list[str]:
+    """Why one generated WorkBuddy route no longer matches configuration."""
+    path = repo / "configs/models/harness2" / f"{role}.yaml"
+    try:
+        actual = json.loads(path.read_text())["model"]
+        expected = workbuddy_route(role)["model"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [f"WorkBuddy {role} configuration missing; rerun setup"]
+    except config.ConfigError as exc:
+        return [str(exc)]
+    if actual != expected:
+        return [f"WorkBuddy {role} configuration is stale; rerun setup"]
+    return []
 
 
 def check(adapter, *, judge=False) -> list[str]:
@@ -76,9 +91,8 @@ def check(adapter, *, judge=False) -> list[str]:
     if not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
-    if any(
-        m.startswith("google-vertex") for m in (config.SOLVER_MODEL_OC, config.IMPROVER_MODEL)
-    ) or (judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini")))):
+    needs = config.credential_requirements(judge=judge, workbuddy=bench == "wb")
+    if needs["vertex"]:
         probe(
             "Google Application Default Credentials",
             ["gcloud", "auth", "application-default", "print-access-token"],
@@ -131,16 +145,8 @@ def check(adapter, *, judge=False) -> list[str]:
             ],
             cwd=repo,
         )
-        for role, expected in (
-            ("solver", config.SOLVER_MODEL_OC.removeprefix("google-vertex/")),
-            ("judge", config.JUDGE_MODEL),
-        ):
-            path = repo / "configs/models/harness2" / f"{role}.yaml"
-            try:
-                if json.loads(path.read_text())["model"]["name"] != "google/" + expected:
-                    errors.append(f"WorkBuddy {role} configuration is stale; rerun setup")
-            except (OSError, ValueError, KeyError, TypeError):
-                errors.append(f"WorkBuddy {role} configuration missing; rerun setup")
+        for role in ("solver", "judge"):
+            errors.extend(workbuddy_route_errors(repo, role))
     return errors
 
 

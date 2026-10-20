@@ -612,6 +612,7 @@ def run_batch(
         slug = f"{EPHEMERAL_PREFIX}{label_sanitize(label)[:40]}-{digest}"
         yaml_path = config.wb_repo() / "configs" / "jobs" / f"{slug}.yaml"
         label_dir.mkdir(parents=True, exist_ok=True)
+        resolved_env = config.workbuddy_env()
         yaml_path.write_text(
             _job_yaml(subset, substrate, label, todo, ws, k, label_dir), encoding="utf-8"
         )
@@ -620,7 +621,7 @@ def run_batch(
         env = {
             **os.environ,
             "NO_FORCE_BUILD": "1",
-            **config.workbuddy_env(),
+            **resolved_env,
         }
         try:
             with _slots[substrate]:
