@@ -653,6 +653,7 @@ def run_task(
             )
         except Exception as exc:
             res.modes[mode] = {
+                **(res.modes.get(mode) or {}),
                 "ok": False,
                 "error": f"{type(exc).__name__}: {exc}",
                 "traceback": traceback.format_exc()[-1500:],

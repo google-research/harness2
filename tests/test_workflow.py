@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from harness2 import config
+from harness2.cli import report as report_cli
 from harness2.core import context, judge, recursion, schedule, tree
 from harness2.core.library import Library
 from harness2.core.proposer import Proposer, ProposerError, Reply
@@ -223,6 +224,30 @@ class WorkflowTests(unittest.TestCase):
         )
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
+
+    def test_paid_stages_count_in_the_report_when_a_mode_fails(self):
+        class UnwritableLibrary(Library):
+            def add(self, *args, **kwargs):
+                raise OSError("library write failed")
+
+        class PricedProposer(DemoProposer):
+            def call(self, *args, **kwargs):
+                reply = super().call(*args, **kwargs)
+                reply.cost_usd = 0.25
+                return reply
+
+        proposer = PricedProposer(self.adapter.spec.channels["proposer"])
+        with patch("harness2.core.schedule.library_store.Library", UnwritableLibrary):
+            self.run_stream(k=2, proposer=proposer)
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg2/ledger-1/summary.json"
+        summary = json.loads(summary_path.read_text())
+        _, usd = report_cli._spend_and_fallbacks(summary_path.parent.parent, ("agg", "seq"), 2)
+        for mode in ("agg", "seq"):
+            record = summary["modes"][mode]
+            self.assertFalse(record["ok"])
+            self.assertIn("error", record)
+            self.assertTrue(record["stages"])
+            self.assertGreater(usd[(mode, 2)], 0.0)
 
 
 if __name__ == "__main__":
