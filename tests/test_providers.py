@@ -347,3 +347,36 @@ class WorkBuddyRouteTests(unittest.TestCase):
             )
             self.assertIn("stale", preflight.workbuddy_route_errors(tmp, "solver")[0])
             self.assertIn("missing", preflight.workbuddy_route_errors(tmp, "judge")[0])
+
+
+class WorkBuddyPreflightTests(unittest.TestCase):
+    def test_matching_route_reports_no_errors(self):
+        from harness2 import install
+
+        model = "openrouter/openai/gpt-5"
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            config, "SOLVER_MODEL_OC", model
+        ), patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            tmp = Path(td)
+            route_dir = tmp / "configs/models/harness2"
+            route_dir.mkdir(parents=True)
+            (route_dir / "solver.yaml").write_text(
+                json.dumps(install.workbuddy_route("solver", model=model)),
+                encoding="utf-8",
+            )
+            self.assertEqual(preflight.workbuddy_route_errors(tmp, "solver"), [])
+
+    def test_generator_error_is_reported_not_as_missing_configuration(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}, clear=False):
+            tmp = Path(td)
+            route_dir = tmp / "configs/models/harness2"
+            route_dir.mkdir(parents=True)
+            (route_dir / "solver.yaml").write_text(
+                json.dumps({"model": {"name": "openrouter/openai/gpt-5"}}),
+                encoding="utf-8",
+            )
+            errors = preflight.workbuddy_route_errors(tmp, "solver")
+            self.assertTrue(errors)
+            self.assertIn("OPENROUTER_API_KEY", errors[0])

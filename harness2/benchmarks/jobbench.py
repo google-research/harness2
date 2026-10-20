@@ -1085,21 +1085,23 @@ class JobBenchAdapter:
             )
             return False
         api_base = config.JB_JUDGE_API_BASE
-        try:
-            token = (
-                config.JB_JUDGE_API_KEY
-                or subprocess.run(
+        token = config.JB_JUDGE_API_KEY
+        judge_ref = (
+            config.resolve_model(config.JUDGE_MODEL) if config.JUDGE_MODEL else None
+        )
+        if not token and judge_ref is not None and config.uses_vertex_credentials(judge_ref):
+            try:
+                token = subprocess.run(
                     ["gcloud", "auth", "application-default", "print-access-token"],
                     capture_output=True,
                     text=True,
                     timeout=60,
                 ).stdout.strip()
-            )
-        except (subprocess.SubprocessError, OSError):
-            token = ""
+            except (subprocess.SubprocessError, OSError):
+                token = ""
         if not token:
             print(
-                "  [jb] no Vertex access token (gcloud auth print-access-token); judge not run",
+                "  [jb] no judge API key (set HARNESS2_JUDGE_API_KEY); judge not run",
                 flush=True,
             )
             return False

@@ -29,10 +29,11 @@ def workbuddy_route_errors(repo, role: str) -> list[str]:
     """Why one generated WorkBuddy route no longer matches configuration."""
     path = repo / "configs/models/harness2" / f"{role}.yaml"
     try:
-        actual = json.loads(path.read_text())["model"]
-        expected = workbuddy_route(role)["model"]
+        actual = json.loads(path.read_text(encoding="utf-8"))["model"]
     except (OSError, ValueError, KeyError, TypeError):
         return [f"WorkBuddy {role} configuration missing; rerun setup"]
+    try:
+        expected = workbuddy_route(role)["model"]
     except config.ConfigError as exc:
         return [str(exc)]
     if actual != expected:
@@ -119,13 +120,17 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(
                 "Set GOOGLE_CLOUD_PROJECT or HARNESS2_JUDGE_BASE_URL for JobBench judging"
             )
+        judge_ref = (
+            config.resolve_model(config.JUDGE_MODEL) if config.JUDGE_MODEL else None
+        )
         if (
-            config.JUDGE_MODEL
+            judge_ref is not None
             and not config.JB_JUDGE_API_KEY
-            and not config.JUDGE_MODEL.startswith("gemini")
+            and not config.uses_vertex_credentials(judge_ref)
         ):
             errors.append(
-                "A non-Gemini JobBench judge requires HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY"
+                "A non-Vertex JobBench judge requires HARNESS2_JUDGE_BASE_URL "
+                "and HARNESS2_JUDGE_API_KEY"
             )
     elif bench == "wb":
         probe("Docker daemon", ["docker", "info", "--format", "{{.ServerVersion}}"])
