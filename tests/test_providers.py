@@ -280,3 +280,15 @@ class WorkBuddyRouteTests(unittest.TestCase):
         )
         self.assertEqual(env["HARNESS2_WB_SOLVER_KEY"], "or-key")
         self.assertEqual(env["HARNESS2_WB_JUDGE_KEY"], "or-key")
+
+    def test_bare_vertex_judge_id_still_builds_a_vertex_route(self):
+        from harness2 import install
+
+        with patch.object(config, "VERTEX_PROJECT", "proj"), patch.object(
+            config, "VERTEX_OPENAI_URL", "https://vertex.example/v1"
+        ):
+            payload = install.workbuddy_route("judge", model="gemini-3.5-flash")
+        self.assertEqual(payload["model"]["name"], "google/gemini-3.5-flash")
+        self.assertEqual(
+            payload["model"]["backend_key_command"], config.GCLOUD_TOKEN_COMMAND
+        )
