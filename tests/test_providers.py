@@ -455,3 +455,21 @@ class JobBenchJudgeTokenTests(unittest.TestCase):
         self.assertFalse(any(cmd[0] == "gcloud" for cmd, _ in calls))
         judge = [env for cmd, env in calls if cmd[0] != "gcloud"]
         self.assertEqual(judge[0]["JUDGE_API_KEY"], "static-key")
+
+
+class BridgeTests(unittest.TestCase):
+    def test_openrouter_bridge_params(self):
+        from harness2.cli import bridge
+
+        ref = config.resolve_model("openrouter/anthropic/claude-sonnet-4")
+        params = bridge.litellm_params(ref)
+        self.assertEqual(params["model"], "openrouter/anthropic/claude-sonnet-4")
+        self.assertEqual(params["api_key"], "os.environ/OPENROUTER_API_KEY")
+
+    def test_vertex_bridge_params(self):
+        from harness2.cli import bridge
+
+        ref = config.resolve_model("google-vertex/gemini-3.5-flash")
+        params = bridge.litellm_params(ref)
+        self.assertEqual(params["model"], "vertex_ai/gemini-3.5-flash")
+        self.assertEqual(params["vertex_project"], "os.environ/GOOGLE_CLOUD_PROJECT")
