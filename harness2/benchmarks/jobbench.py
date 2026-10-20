@@ -1100,10 +1100,17 @@ class JobBenchAdapter:
             except (subprocess.SubprocessError, OSError):
                 token = ""
         if not token:
-            print(
-                "  [jb] no judge API key (set HARNESS2_JUDGE_API_KEY); judge not run",
-                flush=True,
-            )
+            if judge_ref is not None and config.uses_vertex_credentials(judge_ref):
+                message = (
+                    "  [jb] no Vertex access token "
+                    "(run gcloud auth application-default login); judge not run"
+                )
+            else:
+                message = (
+                    "  [jb] no judge API key "
+                    "(set HARNESS2_JUDGE_API_KEY or OPENROUTER_API_KEY); judge not run"
+                )
+            print(message, flush=True)
             return False
         _reporting, own = self._details_candidates(task_id, label)
         own.parent.mkdir(parents=True, exist_ok=True)

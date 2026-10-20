@@ -10,12 +10,15 @@
 
 import json
 import os
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from harness2 import config, preflight
+from harness2.benchmarks import jobbench
 
 
 class ResolverTests(unittest.TestCase):
@@ -380,3 +383,75 @@ class WorkBuddyPreflightTests(unittest.TestCase):
             errors = preflight.workbuddy_route_errors(tmp, "solver")
             self.assertTrue(errors)
             self.assertIn("OPENROUTER_API_KEY", errors[0])
+
+
+class JobBenchJudgeTokenTests(unittest.TestCase):
+    def _fixture(self, tmp: Path) -> None:
+        (tmp / "eval").mkdir(parents=True)
+        (tmp / "eval" / "judge.py").write_text("", encoding="utf-8")
+        rubrics = tmp / "dataset" / "main" / "profession" / "task1" / "RUBRICS.json"
+        rubrics.parent.mkdir(parents=True)
+        rubrics.write_text("[]", encoding="utf-8")
+
+    def _run(self, tmp: Path, *, judge_model: str, judge_cli_model: str, key: str):
+        calls = []
+
+        def fake_run(cmd, *args, **kwargs):
+            calls.append((cmd, kwargs.get("env")))
+            if cmd[0] == "gcloud":
+                return types.SimpleNamespace(stdout="gcloud-token\n", returncode=0, stderr="")
+            return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+        self._fixture(tmp)
+        adapter = jobbench.JobBenchAdapter(store_root=tmp / "store")
+        with patch.object(config, "jb_repo", lambda: tmp), patch.object(
+            config, "JB_JUDGE_PYTHON", Path(sys.executable)
+        ), patch.object(config, "JUDGE_MODEL", judge_model), patch.object(
+            config, "JB_JUDGE_MODEL", judge_cli_model
+        ), patch.object(
+            config, "JB_JUDGE_API_KEY", key
+        ), patch.object(
+            config, "JB_JUDGE_API_BASE", "http://judge.example/v1"
+        ), patch(
+            "harness2.benchmarks.jobbench.subprocess.run", side_effect=fake_run
+        ):
+            result = adapter._run_judge("profession/task1", "label", tmp / "run")
+        return result, calls
+
+    def test_vertex_judge_without_key_uses_gcloud(self):
+        with tempfile.TemporaryDirectory() as td:
+            result, calls = self._run(
+                Path(td),
+                judge_model="gemini-3.5-flash",
+                judge_cli_model="vertex/gemini-3.5-flash",
+                key="",
+            )
+        self.assertTrue(result)
+        self.assertTrue(any(cmd[0] == "gcloud" for cmd, _ in calls))
+        judge = [env for cmd, env in calls if cmd[0] != "gcloud"]
+        self.assertEqual(judge[0]["JUDGE_API_KEY"], "gcloud-token")
+
+    def test_openrouter_judge_without_key_does_not_use_gcloud(self):
+        with tempfile.TemporaryDirectory() as td:
+            result, calls = self._run(
+                Path(td),
+                judge_model="openrouter/openai/gpt-5",
+                judge_cli_model="openrouter/openai/gpt-5",
+                key="",
+            )
+        self.assertFalse(result)
+        self.assertFalse(any(cmd[0] == "gcloud" for cmd, _ in calls))
+        self.assertEqual(calls, [])
+
+    def test_static_key_bypasses_gcloud(self):
+        with tempfile.TemporaryDirectory() as td:
+            result, calls = self._run(
+                Path(td),
+                judge_model="openrouter/openai/gpt-5",
+                judge_cli_model="openrouter/openai/gpt-5",
+                key="static-key",
+            )
+        self.assertTrue(result)
+        self.assertFalse(any(cmd[0] == "gcloud" for cmd, _ in calls))
+        judge = [env for cmd, env in calls if cmd[0] != "gcloud"]
+        self.assertEqual(judge[0]["JUDGE_API_KEY"], "static-key")
