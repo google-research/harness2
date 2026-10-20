@@ -350,3 +350,29 @@ def validate_models(
             "OPENROUTER_API_KEY is required for OpenRouter model(s) "
             f"{', '.join(missing)}; set it in .env or the shell"
         )
+
+
+def credential_requirements(
+    *,
+    judge: bool = False,
+    workbuddy: bool = False,
+    solver: str | None = None,
+    improver: str | None = None,
+    judge_model: str | None = None,
+) -> dict[str, bool]:
+    """Which cloud credentials the configured roles actually need."""
+    refs = [
+        resolve_model(SOLVER_MODEL_OC if solver is None else solver),
+        resolve_model(IMPROVER_MODEL if improver is None else improver),
+    ]
+    judge_ref = None
+    if judge or workbuddy:
+        value = JUDGE_MODEL if judge_model is None else judge_model
+        if value:
+            judge_ref = resolve_model(value)
+    return {
+        "vertex": any(r.is_vertex for r in refs)
+        or bool(judge_ref and uses_vertex_credentials(judge_ref)),
+        "openrouter": any(r.is_openrouter for r in refs)
+        or bool(judge_ref and judge_ref.is_openrouter),
+    }

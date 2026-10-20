@@ -170,3 +170,20 @@ class ValidateModelsTests(unittest.TestCase):
                     judge=True,
                     judge_model="gemini-3.5-flash",
                 )
+
+
+class CredentialRequirementTests(unittest.TestCase):
+    def test_credential_requirements_only_include_configured_roles(self):
+        with patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "openrouter/openai/gpt-5"
+        ), patch.object(config, "JUDGE_MODEL", "gemini-3.5-flash"):
+            self.assertEqual(
+                config.credential_requirements(judge=True),
+                {"vertex": True, "openrouter": True},
+            )
+            self.assertEqual(
+                config.credential_requirements(judge=False),
+                {"vertex": False, "openrouter": True},
+            )
