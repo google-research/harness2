@@ -1,12 +1,16 @@
+diff --git a/evaluation/judge.py b/evaluation/judge.py
+index ffad89d..b950e01 100644
 --- a/evaluation/judge.py
 +++ b/evaluation/judge.py
-@@ -28,8 +28,12 @@
+@@ -28,8 +28,14 @@ _VERDICT_SCHEMA = {
  }
  
  def _detect_provider(model: str) -> str:
 -    """Return 'anthropic', 'google', 'openai', or 'mistral' from the model name."""
 +    """Return 'vertex-anthropic', 'anthropic', 'google', 'openai', or 'mistral'."""
      name = model.lower()
++    if name.startswith("openrouter/"):
++        return "openrouter"
 +    if name.startswith("vertex/gemini"):
 +        return "vertex-google"
 +    if name.startswith("vertex/"):
@@ -14,7 +18,7 @@
      if name.startswith("claude"):
          return "anthropic"
      if name.startswith("gemini"):
-@@ -50,9 +54,24 @@
+@@ -50,9 +56,38 @@ class Judge:
              model: Model ID (e.g. 'claude-sonnet-4-6', 'gemini-3-flash-preview',
                  'gpt-5.4', 'mistral-medium-3.5').
          """
@@ -23,7 +27,12 @@
 -        if self.provider == "anthropic":
 +        # 'vertex/claude-opus-4-8' -> API model id 'claude-opus-4-8'. The bare
 +        # id is what lands in scores_<model>.json filenames, so keep it clean.
-+        self.model = model.split("/", 1)[1] if self.provider.startswith("vertex-") else model
++        # 'openrouter/anthropic/claude-x' -> 'anthropic/claude-x'.
++        self.model = (
++            model.split("/", 1)[1]
++            if self.provider.startswith("vertex-") or self.provider == "openrouter"
++            else model
++        )
 +        if self.provider == "vertex-anthropic":
 +            # Claude on Vertex via ADC — no API key. Anthropic models on
 +            # Vertex are served from the global endpoint.
@@ -37,11 +46,20 @@
 +        elif self.provider == "vertex-google":
 +            self.client = genai.Client(vertexai=True, project=os.environ["GOOGLE_CLOUD_PROJECT"],
 +                                       location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"))
++        elif self.provider == "openrouter":
++            key = os.environ.get("OPENROUTER_API_KEY")
++            if not key:
++                raise ValueError(
++                    "OPENROUTER_API_KEY is required for an openrouter/ judge model"
++                )
++            self.client = openai.OpenAI(
++                base_url="https://openrouter.ai/api/v1", api_key=key
++            )
 +        elif self.provider == "anthropic":
              self.client = anthropic.Anthropic(max_retries=1)
          elif self.provider == "google":
              self.client = genai.Client()
-@@ -65,7 +84,13 @@
+@@ -65,7 +100,13 @@ class Judge:
              )
  
      def evaluate(
@@ -56,7 +74,7 @@
      ) -> dict:
          """Send a formatted prompt to the judge and parse the JSON response.
  
-@@ -78,13 +103,78 @@
+@@ -78,14 +119,79 @@ class Judge:
              Parsed JSON dict from the judge's response.
          """
          prompt = prompt_template.format(**variables)
@@ -67,10 +85,11 @@
 -        if self.provider == "google":
 +        if self.provider in ("google", "vertex-google"):
              return self._evaluate_google(prompt, temperature, _retries)
-         if self.provider == "openai":
+-        if self.provider == "openai":
++        if self.provider in ("openai", "openrouter"):
              return self._evaluate_openai(prompt, temperature, _retries)
          return self._evaluate_mistral(prompt, temperature, _retries)
-+
+ 
 +    # System steer replaces the structured-output constraint we can't use on
 +    # Vertex (see _evaluate_anthropic_vertex). The rubric prompt already asks
 +    # for a fenced JSON object, and _parse_json strips the fences.
@@ -133,10 +152,11 @@
 +        raise ValueError(
 +            f"Judge returned unparseable response after {_retries} attempts: {last_err}"
 +        )
- 
++
      def _evaluate_anthropic(self, prompt: str, temperature: float, _retries: int) -> dict:
          last_err: Exception | None = None
-@@ -236,11 +326,21 @@
+         for attempt in range(_retries):
+@@ -236,11 +342,21 @@ class Judge:
          match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
          if match:
              try:
@@ -160,7 +180,7 @@
          for i, ch in enumerate(text):
              if ch == '{':
                  depth = 0
-@@ -251,9 +351,61 @@
+@@ -251,9 +367,61 @@ class Judge:
                          depth -= 1
                      if depth == 0:
                          try:
