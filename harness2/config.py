@@ -238,7 +238,7 @@ def lab_judge_model(model: str | None = None) -> str:
     value = _judge_value(model)
     ref = resolve_model(value)
     if ref.is_openrouter:
-        return value
+        return ref.opencode_id
     if uses_vertex_credentials(ref):
         return "vertex/" + ref.api_model
     return ref.opencode_id

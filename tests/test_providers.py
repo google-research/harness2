@@ -133,7 +133,7 @@ class JudgeTests(unittest.TestCase):
             config.litellm_model(config.resolve_model("openai/gpt-5"))
 
 
-class ValidationTests(unittest.TestCase):
+class ValidateModelsTests(unittest.TestCase):
     def test_explicit_model_arguments_need_no_model_env(self):
         with patch.dict(
             os.environ,
