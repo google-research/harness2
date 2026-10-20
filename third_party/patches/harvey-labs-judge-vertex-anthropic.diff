@@ -1,5 +1,5 @@
 diff --git a/evaluation/judge.py b/evaluation/judge.py
-index ffad89d..b950e01 100644
+index ffad89d..7eab2f3 100644
 --- a/evaluation/judge.py
 +++ b/evaluation/judge.py
 @@ -28,8 +28,14 @@ _VERDICT_SCHEMA = {
@@ -7,7 +7,7 @@ index ffad89d..b950e01 100644
  
  def _detect_provider(model: str) -> str:
 -    """Return 'anthropic', 'google', 'openai', or 'mistral' from the model name."""
-+    """Return 'vertex-anthropic', 'anthropic', 'google', 'openai', or 'mistral'."""
++    """Return a provider key for the model name (including openrouter)."""
      name = model.lower()
 +    if name.startswith("openrouter/"):
 +        return "openrouter"
@@ -156,7 +156,17 @@ index ffad89d..b950e01 100644
      def _evaluate_anthropic(self, prompt: str, temperature: float, _retries: int) -> dict:
          last_err: Exception | None = None
          for attempt in range(_retries):
-@@ -236,11 +342,21 @@ class Judge:
+@@ -176,6 +282,9 @@ class Judge:
+                         "strict": True,
+                     }
+                 }
++                if self.provider == "openrouter":
++                    # Route to endpoints that declare structured-output support.
++                    kwargs["extra_body"] = {"provider": {"require_parameters": True}}
+             try:
+                 response = self.client.responses.create(**kwargs)
+             except Exception as e:
+@@ -236,11 +345,21 @@ class Judge:
          match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
          if match:
              try:
@@ -180,7 +190,7 @@ index ffad89d..b950e01 100644
          for i, ch in enumerate(text):
              if ch == '{':
                  depth = 0
-@@ -251,9 +367,61 @@ class Judge:
+@@ -251,9 +370,61 @@ class Judge:
                          depth -= 1
                      if depth == 0:
                          try:
