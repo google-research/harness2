@@ -56,12 +56,15 @@ class SurfaceSpec:
     hook_events: frozenset[str] = frozenset()
     compile_skill_scripts: bool = False
     reject_empty_always_on: bool = False
+    plugin_extension: str = "ts"
 
     stubs: tuple[tuple[str, str], ...] = ()
 
 
 @lru_cache(maxsize=8)
-def _res(surface_name: str, skill_dir: str, plugin_dir: str | None) -> dict[str, re.Pattern]:
+def _res(
+    surface_name: str, skill_dir: str, plugin_dir: str | None, plugin_extension: str
+) -> dict[str, re.Pattern]:
     sd = re.escape(skill_dir)
     out = {
         "skill": re.compile(rf"{sd}/({_NAME})/SKILL\.md"),
@@ -71,12 +74,14 @@ def _res(surface_name: str, skill_dir: str, plugin_dir: str | None) -> dict[str,
         "script_ref": re.compile(rf"(?:python3?\s+)((?:{sd}/[\w\-]+/)?scripts/[\w.\-]+\.py)"),
     }
     if plugin_dir is not None:
-        out["plugin"] = re.compile(rf"{re.escape(plugin_dir)}/({_NAME})\.ts")
+        out["plugin"] = re.compile(
+            rf"{re.escape(plugin_dir)}/({_NAME})\.{re.escape(plugin_extension)}"
+        )
     return out
 
 
 def _rx(surface: SurfaceSpec) -> dict[str, re.Pattern]:
-    return _res(surface.name, surface.skill_dir, surface.plugin_dir)
+    return _res(surface.name, surface.skill_dir, surface.plugin_dir, surface.plugin_extension)
 
 
 def normalize_rel(rel: str) -> str:
@@ -137,7 +142,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
     for p in sorted(d.rglob("*")):
         if not p.is_file() or "__pycache__" in p.parts:
             continue
-        rel = str(p.relative_to(d))
+        rel = p.relative_to(d).as_posix()
         if rel in stubs:
             continue
         if not is_allowed(surface, rel):
@@ -164,7 +169,7 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
     for p in sorted(dest.rglob("*"), reverse=True):
         if not p.is_file():
             continue
-        rel = str(p.relative_to(dest))
+        rel = p.relative_to(dest).as_posix()
         if is_allowed(surface, rel) or rel in stub_set:
             p.unlink()
     for a in surface.always_on:

@@ -21,6 +21,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -211,6 +212,17 @@ def codex(*, dry_run=False):
             binary.unlink()
         binary.symlink_to("bin/codex")
     configure_codex(dry_run=dry_run)
+
+
+def deepseek(*, dry_run=False):
+    """Install the matched official SDK/runtime pair into the Harness2 interpreter."""
+    run(
+        [
+            "uv", "pip", "install", "--python", sys.executable,
+            f"deepseek-harness-sdk=={config.DEEPSEEK_VERSION}", "psutil>=7,<8",
+        ],
+        dry_run=dry_run,
+    )
 
 
 def _share_with_containers(root: Path) -> None:

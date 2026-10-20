@@ -29,7 +29,7 @@ from ..core.spec import BenchmarkAdapter
 
 BENCHES = ("jb", "wb", "lab")
 WB_SUBSETS = ("office", "web", "code")
-SUBSTRATES = ("oc", "cx")
+SUBSTRATES = ("oc", "cx", "ds")
 
 MODES_DEFAULT = "parallel"
 MODES_HELP = (
@@ -51,6 +51,12 @@ def make_adapter(
     if substrate not in SUBSTRATES:
         raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
     if bench == "wb":
+        if substrate == "ds":
+            raise ValueError(
+                "DeepSeek currently supports JobBench and LAB. WorkBuddy requires a native "
+                "Harbor/Docker agent; host execution would bypass its environment and verifier. "
+                "Use --bench jb/lab --substrate ds, or --bench wb --substrate oc/cx."
+            )
         if subset not in WB_SUBSETS:
             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
         from ..benchmarks.workbuddy import WbAdapter
@@ -104,7 +110,7 @@ def add_cell_args(p: argparse._ActionsContainer) -> None:
         "--substrate",
         default="oc",
         choices=SUBSTRATES,
-        help="task-executor substrate: oc (opencode) | cx (codex)",
+        help="task-executor substrate: oc (opencode) | cx (codex) | ds (DeepSeek; jb/lab)",
     )
 
 

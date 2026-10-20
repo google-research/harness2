@@ -16,7 +16,7 @@
 # Run JobBench end to end: check, adapt, judge, report.
 #   bash scripts/run_jobbench.sh                                          # every task
 #   bash scripts/run_jobbench.sh --only-domains biostatisticians --max-tasks 1
-# Settings: SUBSTRATE=oc|cx  K=1  MODE=parallel|sequential
+# Settings: SUBSTRATE=oc|cx|ds  K=1  MODE=parallel|sequential
 # Extra arguments go to the adaptation command; --dry-run stops after it.
 set -uo pipefail
 cd "$(dirname "$0")/.."

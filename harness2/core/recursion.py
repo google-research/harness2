@@ -290,7 +290,7 @@ def _roll(
         rv = RunView(
             label=label,
             run_id=run_id,
-            run_dir=work_dir / "missing",
+            run_dir=Path(getattr(exc, "run_dir", None) or work_dir / "missing"),
             ok=False,
             delivered=False,
             error=f"{type(exc).__name__}: {exc}",

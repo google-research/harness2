@@ -37,7 +37,9 @@ from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
+from ..substrate.deepseek import DeepSeekSettings, DeepSeekSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
+from . import deepseek as DS
 from .tasks import discover, select
 
 JUDGE_MODEL = config.LAB_JUDGE_MODEL
@@ -477,13 +479,15 @@ def _require_runtime_scripts() -> frozenset[str]:
 
 def lab_spec(substrate_name: str) -> BenchSpec:
     """The LAB BenchSpec for one substrate cell. A value, not a code path."""
-    if substrate_name not in ("oc", "cx"):
-        raise ValueError(f"substrate must be 'oc' or 'cx', got {substrate_name!r}")
+    if substrate_name not in ("oc", "cx", "ds"):
+        raise ValueError(f"substrate must be oc, cx, or ds, got {substrate_name!r}")
     channel = resolve_channel_model(None, None, effort="high")
     return BenchSpec(
         name="lab",
         runs_root=config.RUNS / "lab",
-        install_mode="workspace_config" if substrate_name == "oc" else "codex_root",
+        install_mode={
+            "oc": "workspace_config", "cx": "codex_root", "ds": "deepseek_profile",
+        }[substrate_name],
         prompts=LAB_BASE,
         channels={"proposer": channel, "selector": channel},
         domain_word="practice area",
@@ -522,12 +526,21 @@ class LabAdapter:
             self.substrate = OpencodeSubstrate(launcher=self._launch_oc)
             self.model = model or config.SOLVER_MODEL_OC
             self._results_root = config.RUNS / "lab" / "results" / "oc"
+        elif substrate == "ds":
+            settings = DeepSeekSettings.from_env()
+            if model is not None:
+                settings = replace(settings, model=model)
+            self.substrate = DeepSeekSubstrate(launcher=self._launch_ds, settings=settings)
+            self.model = settings.model
+            self._results_root = config.RUNS / "lab" / "results" / "ds"
         else:
             self.substrate = CodexSubstrate(launcher=self._launch_cx)
             self.model = model or config.SOLVER_MODEL_CX
 
             self._results_root = config.RUNS / "lab" / "results" / "cx"
-        self.timeout = int(timeout or 3600)
+        self.timeout = int(timeout or (
+            self.substrate.settings.wall_timeout if substrate == "ds" else 3600
+        ))
         self.skill_mode = skill_mode
         self.solver_effort = solver_effort
         self.judge_model = judge_model
@@ -589,6 +602,15 @@ class LabAdapter:
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
         out = self._run_dir(run_id)
+        if self.substrate.name == "ds":
+            if not RM.is_complete(out, harness_dir=harness_dir) or not self.artifacts_intact(out):
+                (out / "scores.json").unlink(missing_ok=True)
+            result = DS.execute(
+                self, task_id, harness_dir, run_id, timeout=int(timeout or self.timeout),
+                evidence_dir=out, output_dir=out,
+            )
+            self._deliverables.pop(str(out.resolve()), None)
+            return result
         if RM.is_complete(out, harness_dir=harness_dir) and self.artifacts_intact(out):
             self._check_tool_gate(out)
             return out
@@ -684,6 +706,15 @@ class LabAdapter:
             dirs.append(self._run_dir(run_id))
         return dirs
 
+    def _launch_ds(self, req: RunRequest, install: Install) -> list[Path]:
+        return DS.launch(
+            self, req, install, evidence_dir=self._run_dir(req.run_ids[0]),
+            source_name="documents",
+        )
+
+    def run_metrics(self, run_dir: Path) -> dict:
+        return DS.run_metrics(run_dir) if self.substrate.name == "ds" else {}
+
     def _launch_cx(self, req: RunRequest, install: Install) -> list[Path]:
         runner = config.lab_repo() / "external" / "adapt_runs_cx" / "run_codex_lab.py"
         _require_runner(runner)
@@ -746,6 +777,8 @@ class LabAdapter:
         return RM.fingerprint(Path(run_dir) / "output") if self.delivered(run_dir) else None
 
     def artifacts_intact(self, run_dir: Path) -> bool:
+        if self.substrate.name == "ds":
+            return DS.artifacts_intact(self, evidence_dir=run_dir, output_dir=run_dir)
         marker = RM.read_mark(run_dir) or {}
         return (
             (run_dir / "metrics.json").is_file()
@@ -759,7 +792,10 @@ class LabAdapter:
 
     def trajectory(self, run_dir: Path, *, obs_trunc: int) -> str:
         """The substrate's ONE renderer over the raw session stream, effectively uncapped."""
-        name = "opencode_session.jsonl" if self.substrate.name == "oc" else "codex_session.jsonl"
+        name = {
+            "oc": "opencode_session.jsonl", "cx": "codex_session.jsonl",
+            "ds": "deepseek_session.jsonl",
+        }[self.substrate.name]
         stream = Path(run_dir) / name
         if not stream.is_file():
             return f"(no trajectory recorded for {Path(run_dir).name})"
@@ -820,6 +856,22 @@ class LabAdapter:
     def base_harness(self) -> Path:
         """The unmodified tree this cell starts from, materialised once per process and per
         pid: the domain threads of one sweep share the path."""
+        if self.substrate.name == "ds":
+            parser = config.lab_repo() / "sandbox" / "parsers" / "parse_doc.py"
+            reader = (
+                "import subprocess, sys\nfrom pathlib import Path\n"
+                "path = Path(sys.argv[1]).resolve()\n"
+                "ext = path.suffix.lower().lstrip('.')\n"
+                "if ext not in ('docx', 'pdf', 'pptx', 'xlsx'):\n"
+                "    print(path.read_text(encoding='utf-8'))\n"
+                "else:\n"
+                f"    subprocess.run([{str(config.LAB_PYTHON)!r}, {str(parser)!r}, "
+                "ext, str(path)], check=True, timeout=180)\n"
+            )
+            return DS.base_harness(
+                self, CODEX_BASE_BODY,
+                scripts={"scripts/read_doc.py": reader},
+            )
         if self.substrate.name == "oc":
             d = self.spec.runs_root / f"_base_harness_{self.skill_mode}_{os.getpid()}"
         else:
@@ -845,7 +897,17 @@ class LabAdapter:
     def validate_tree(self, tree: dict[str, str]) -> None:
         """LAB environment invariants: deliverables go to output/, binary documents are read
         via scripts/read_doc.py. oc checks the RENDERED prompt, cx the AGENTS.md body."""
-        if self.substrate.name == "oc":
+        if self.substrate.name == "ds":
+            from ..substrate.deepseek import validate_tree
+
+            validate_tree(tree)
+            body = HT.always_on_text(self.substrate.surface(), tree)
+            if "output/" not in body or "read_doc.py" not in body:
+                raise ValueError(
+                    "Keep the output/ delivery rule and scripts/read_doc.py binary-document "
+                    "reading guidance in the DeepSeek always-on files."
+                )
+        elif self.substrate.name == "oc":
             self._validate_oc(tree)
         else:
             self._validate_cx(tree)
@@ -938,6 +1000,8 @@ class LabAdapter:
         if self.substrate.name == "oc":
             _require_runner(config.lab_repo() / "opencode" / "run_opencode.py")
             _require_runtime_scripts()
+        elif self.substrate.name == "ds":
+            _require_runner(config.lab_repo() / "sandbox" / "parsers" / "parse_doc.py")
         else:
             _require_runner(config.lab_repo() / "external" / "adapt_runs_cx" / "run_codex_lab.py")
         try:
@@ -962,6 +1026,9 @@ class LabAdapter:
         """LAB's own judge (evaluation.run_eval). Judge failure => None, NEVER 0, and
         nothing is cached. The ABSOLUTE run dir is passed: run_eval joins its own
         RESULTS_DIR with it, and an absolute right-hand side wins that join."""
+        if self.substrate.name == "ds" and not self.artifacts_intact(run_dir):
+            print(f"  [lab-ds] refusing to judge incomplete or changed evidence: {run_dir}", flush=True)
+            return None
         p = Path(run_dir) / "scores.json"
         if not p.is_file():
             cmd = [

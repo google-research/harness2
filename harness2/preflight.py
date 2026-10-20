@@ -44,7 +44,7 @@ def check(adapter, *, judge=False) -> list[str]:
             return False
 
     for validate in (
-        lambda: config.validate_models(judge=judge),
+        lambda: config.validate_models(judge=judge, substrate=adapter.substrate.name),
         adapter.tasks,
         OpencodeSubstrate().preflight,
         adapter.preflight,
@@ -76,8 +76,12 @@ def check(adapter, *, judge=False) -> list[str]:
     if not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
+    active_models = (
+        (config.IMPROVER_MODEL,) if adapter.substrate.name == "ds"
+        else (config.SOLVER_MODEL_OC, config.IMPROVER_MODEL)
+    )
     if any(
-        m.startswith("google-vertex") for m in (config.SOLVER_MODEL_OC, config.IMPROVER_MODEL)
+        m.startswith("google-vertex") for m in active_models
     ) or (judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini")))):
         probe(
             "Google Application Default Credentials",

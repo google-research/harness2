@@ -1,7 +1,8 @@
 # Setup guide
 
 Start with the [quick start](../README.md#install). This guide covers benchmark
-dependencies, model credentials, and the optional Codex executor. For individual
+dependencies, model credentials, and the optional Codex and
+[DeepSeek Harness](DEEPSEEK.md) executors. For individual
 benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
@@ -151,6 +152,7 @@ Setup downloads dependencies from the following hosts:
 | `huggingface.co` and its CDN | JobBench data and WorkBuddy subset archives |
 | A Docker registry | WorkBuddy container image |
 | `astral.sh` | CPython 3.12 when the host has no system Python 3.12 |
+| `pypi.org` and `files.pythonhosted.org` | Python dependencies, including the optional pinned DeepSeek SDK/runtime wheels |
 
 Use `harness2-setup <bench> --dry-run` to review setup commands when configuring
 network access. Experiments also access the model endpoints configured in

@@ -38,6 +38,8 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
     Accepts blank lines, `#` comments, an optional `export ` prefix, and single- or
     double-quoted values. A missing or unreadable file is not an error.
     """
+    if os.environ.get("HARNESS2_SKIP_DOTENV") == "1":
+        return
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
@@ -156,6 +158,8 @@ JB_REPORTING_JUDGE_DETAILS = ""
 JB_OBS_TRUNC = 50000
 
 CODEX_VERSION = "0.144.6"
+DEEPSEEK_VERSION = "0.2.1rc2"
+DEEPSEEK_REVISION = "687f282e8625c6b8d11ff58211a90524be2e4317"
 CODEX_DIST = str(DEPENDENCIES / "codex" / "dist")
 CODEX_BASE_URL = env("HARNESS2_CODEX_BASE_URL", "")
 CODEX_CONTAINER_URL = env("HARNESS2_CODEX_CONTAINER_URL", CODEX_BASE_URL)
@@ -178,11 +182,15 @@ TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2
 
 
-def validate_models(*, judge: bool = False) -> None:
-    require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
-    if "/" not in SOLVER_MODEL_OC or "/" not in IMPROVER_MODEL:
-        raise ConfigError("Executor and improver models must use OpenCode's provider/model syntax")
-    if any(m.startswith("google-vertex") for m in (SOLVER_MODEL_OC, IMPROVER_MODEL)):
+def validate_models(*, judge: bool = False, substrate: str = "oc") -> None:
+    if substrate != "ds":
+        require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
+        if "/" not in SOLVER_MODEL_OC:
+            raise ConfigError("Executor model must use OpenCode's provider/model syntax")
+    if "/" not in IMPROVER_MODEL:
+        raise ConfigError("Set HARNESS2_IMPROVER_MODEL using OpenCode's provider/model syntax")
+    models = (IMPROVER_MODEL,) if substrate == "ds" else (SOLVER_MODEL_OC, IMPROVER_MODEL)
+    if any(m.startswith("google-vertex") for m in models):
         if not VERTEX_PROJECT:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:

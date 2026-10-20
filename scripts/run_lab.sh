@@ -16,7 +16,7 @@
 # Run LAB end to end: check, adapt, judge, report.
 #   bash scripts/run_lab.sh                                          # every task
 #   bash scripts/run_lab.sh --only-domains antitrust-competition --max-tasks 1
-# Settings: SUBSTRATE=oc|cx  K=1  MODE=parallel|sequential
+# Settings: SUBSTRATE=oc|cx|ds  K=1  MODE=parallel|sequential
 # Extra arguments go to the adaptation command; --dry-run stops after it.
 set -uo pipefail
 cd "$(dirname "$0")/.."

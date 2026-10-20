@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     modes = C.parse_modes(args.modes)
 
-    config.validate_models(judge=True)
+    config.validate_models(judge=True, substrate=args.substrate)
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
     ns = C.summary_namespace(adapter, args.k, seed=args.seed)
     ns_dir = C.runs_root_for(adapter) / ns

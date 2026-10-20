@@ -614,6 +614,58 @@ class _SurfaceText:
     tts_surface: str
 
 
+_SURFACE_DEEPSEEK = """\
+# EDITABLE DEEPSEEK HARNESS SURFACE
+
+The executor is the official DeepSeek Harness SDK, sdk-minimal profile. Model, endpoint,
+credentials, budgets, and session identities are fixed deployment controls, NOT editable.
+
+| path | component | activation |
+|---|---|---|
+| `systemprompt.md` | c1 role and procedure | always-on system-prompt section |
+| `guardrails.md` | c2 standing rules | always on; prose is not an enforced policy |
+| `LongTermMEMORY.md` | c3 reusable experience | always on; carried only by explicit candidate edits |
+| `tool_descriptions/tool_guidance.md` | c4 guidance | always on; does not rewrite native tool schemas |
+| `skills/<name>/SKILL.md` | c6 workflow | name, description and path advertised; body read on demand |
+| `skills/<name>/scripts/*` | skill helpers | copied with the skill |
+| `scripts/<snake_case_name>.py` | c7 helper | invoked with Python through the platform shell |
+| `plugins/<name>.mjs` | c8 native Cordis plugin | inserted into the profile and activated at startup |
+
+Every skill needs `name:` matching its directory and `description:` in YAML frontmatter,
+and a trigger naming it in the always-on text. Tell the executor to READ the SKILL.md;
+there is no `skill` tool. All relative skills/ and scripts/ paths resolve inside the
+harness directory advertised to the executor. Every referenced helper must be shipped.
+Python scripts must compile. Keep always-on text under 24,000 characters; prefer a skill
+for conditional instructions. Text is literal, not Jinja: braces are safe.
+
+c5 subagents are NOT supported by this mapping: sub_agents/*/AGENT.md is rejected.
+Use a skill for a specialized procedure. Do not pretend a role file spawns a separate agent.
+OpenCode plugin/*.ts and .codex/hooks.json are NOT compatible and are rejected.
+
+Native plugins export `apply(ctx, config)` and, when needed, `inject`. They run trusted
+JavaScript in the runtime, not in a sandbox. Use only DeepSeek/Cordis APIs, never OpenCode
+hook keys, model training, credentials, or endpoint changes. Never write to stdout (SDK
+JSON-RPC uses it). For example, a prompt contribution can use:
+
+    export const inject = ["systemPrompt"];
+    export function apply(ctx) {
+      ctx.effect(() => ctx.systemPrompt.section({
+        name: "candidate:verification", order: 10,
+        text: "Reopen generated artifacts before finishing.", interpolate: false
+      }));
+    }
+
+The pinned runtime also offers ctx.tools.guard and tools/pre-execute, tools/post-execute,
+and tools/result hooks for native policies. These are not Claude/Codex shell hooks.
+Invalid modules fail the rollout visibly; prefer a small Python helper unless native
+tool-loop enforcement is actually needed.
+
+Change HOW the task is performed, not the requested deliverable filenames, schemas,
+or content. Independent probes never share runtime memory. To retain a useful lesson,
+put it in this tree or the existing reflection/library mechanism, not a runtime home.
+"""
+
+
 def _build_surface_texts() -> dict[str, _SurfaceText]:
     oc_tts = "\n\n".join(
         [
@@ -629,7 +681,21 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    ds_surface = _SURFACE_DEEPSEEK + "\n\n" + _surface_part(
+        _SURFACE_OPENCODE, "# HOW TO MAKE A CHANGE"
+    )
     return {
+        "deepseek": _SurfaceText(
+            surface_md=ds_surface,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__", "native Cordis plugin in `plugins/<name>.mjs`"
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "Name each skill in the always-on text and tell the executor to read its SKILL.md.",
+            ),
+            tts_surface=ds_surface,
+        ),
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
             inv=_INV_TEMPLATE.replace(
