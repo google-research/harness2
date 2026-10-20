@@ -522,7 +522,7 @@ def _call_fingerprint(label: str, mission: str, system: str, context_dir: Path |
             for p in sorted(root.rglob("*")):
                 if not p.is_file() or "__pycache__" in p.parts:
                     continue
-                h.update(str(p.relative_to(root)).encode("utf-8", errors="replace"))
+                h.update(p.relative_to(root).as_posix().encode("utf-8", errors="replace"))
                 h.update(b"\0")
                 try:
                     with p.open("rb") as fh:

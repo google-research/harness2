@@ -536,7 +536,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 files = {}
 for f in sorted(p for p in run_dir.rglob("*") if p.is_file()):
-    rel = str(f.relative_to(run_dir))
+    rel = f.relative_to(run_dir).as_posix()
     try:
         files[rel] = str(mod.convert_file_to_text(f))
     except Exception as exc:                       # per-file tool failure, recorded in place
@@ -916,7 +916,7 @@ class JobBenchAdapter:
         parts: list[str] = []
         images: list[str] = []
         for f in sorted(p for p in d.rglob("*") if p.is_file()):
-            rel = str(f.relative_to(d))
+            rel = f.relative_to(d).as_posix()
             if f.suffix.lower().lstrip(".") in _VISION_EXTS:
                 images.append(str(f))
             try:

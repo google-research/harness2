@@ -137,7 +137,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
     for p in sorted(d.rglob("*")):
         if not p.is_file() or "__pycache__" in p.parts:
             continue
-        rel = str(p.relative_to(d))
+        rel = p.relative_to(d).as_posix()
         if rel in stubs:
             continue
         if not is_allowed(surface, rel):
@@ -164,7 +164,7 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
     for p in sorted(dest.rglob("*"), reverse=True):
         if not p.is_file():
             continue
-        rel = str(p.relative_to(dest))
+        rel = p.relative_to(dest).as_posix()
         if is_allowed(surface, rel) or rel in stub_set:
             p.unlink()
     for a in surface.always_on:

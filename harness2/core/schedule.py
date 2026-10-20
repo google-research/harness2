@@ -291,11 +291,19 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
 
     Modes may be written by separate processes, so records accumulate per mode.
     """
-    import fcntl
+    try:
+        import fcntl
+        _has_fcntl = True
+    except ImportError:
+        import msvcrt
+        _has_fcntl = False
 
     lock = summary_path.with_suffix(".lock")
     with open(lock, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
+        if _has_fcntl:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+        else:
+            msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)
         try:
             merged = res.to_dict()
             if summary_path.is_file():
@@ -325,7 +333,14 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             tmp.write_text(json.dumps(merged, indent=2, default=str))
             os.replace(tmp, summary_path)
         finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+            if _has_fcntl:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+            else:
+                try:
+                    lf.seek(0)
+                    msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
 
 
 def _resolve_libraries(
