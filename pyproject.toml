@@ -22,6 +22,7 @@ dependencies = []
 [project.optional-dependencies]
 render = ["openpyxl>=3.1,<4", "python-pptx>=1,<2"]
 bridge = ["litellm[proxy]==1.95.0", "fastapi==0.139.2", "google-auth==2.56.3"]
+deepseek = ["deepseek-harness-sdk==0.2.1rc2", "psutil>=7,<8"]
 
 [project.scripts]
 harness2 = "harness2.cli.run_sweep:main"
@@ -31,9 +32,13 @@ harness2-setup = "harness2.cli.setup:main"
 harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"
 harness2-bridge = "harness2.cli.bridge:main"
+harness2-deepseek-demo = "harness2.cli.deepseek_demo:main"
 
 [tool.setuptools.packages.find]
 include = ["harness2*"]
+
+[tool.setuptools.package-data]
+"harness2.substrate" = ["*.mjs"]
 
 [tool.ruff]
 target-version = "py312"

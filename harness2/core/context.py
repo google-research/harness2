@@ -188,16 +188,15 @@ def build(
     )
 
 
-def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
-    """Copy the task's source material under `root`, minus answer-key paths."""
+def source_files(adapter: BenchmarkAdapter, task_id: str) -> list[tuple[str, Path]]:
+    """The answer-free source boundary shared by context construction and executors."""
     src_fn = getattr(adapter, "task_files", None)
     if not callable(src_fn):
-        return 0
+        return []
     src = src_fn(task_id)
     if not src or not Path(src).is_dir():
-        return 0
-    dst = root / "source"
-    src_n = 0
+        return []
+    found = []
     for f in sorted(Path(src).rglob("*")):
         if not f.is_file() or "__pycache__" in f.parts:
             continue
@@ -207,6 +206,15 @@ def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
             for g in adapter.spec.leak_globs
         ):
             continue
+        found.append((rel, f))
+    return found
+
+
+def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
+    """Copy the task's source material under `root`, minus answer-key paths."""
+    dst = root / "source"
+    src_n = 0
+    for rel, f in source_files(adapter, task_id):
         t = dst / rel
         t.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(f, t)
@@ -221,7 +229,9 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
     failure = ""
     try:
         (dest / "rollouts" / f"{r.label}.md").write_text(
-            adapter.trajectory(r.run_dir, obs_trunc=trunc), encoding="utf-8"
+            (f"[ERROR] Rollout incomplete: {r.error}\n\n" if not r.ok else "")
+            + adapter.trajectory(r.run_dir, obs_trunc=trunc),
+            encoding="utf-8",
         )
     except Exception as exc:
         (dest / "rollouts" / f"{r.label}.md").write_text(

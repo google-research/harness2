@@ -287,45 +287,41 @@ def _load_old(path: Path) -> dict:
 
 
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
-    """Merge `res` into the summary under an flock, atomically, deriving the merged status.
+    """Merge `res` into the summary under a file lock, atomically, deriving the merged status.
 
     Modes may be written by separate processes, so records accumulate per mode.
     """
-    import fcntl
+    from .locking import file_lock
 
     lock = summary_path.with_suffix(".lock")
-    with open(lock, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            merged = res.to_dict()
-            if summary_path.is_file():
-                old = _load_old(summary_path)
-                for key in ("modes", "selections"):
-                    prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
-                    prev.update(merged.get(key) or {})
-                    merged[key] = prev
+    with file_lock(lock):
+        merged = res.to_dict()
+        if summary_path.is_file():
+            old = _load_old(summary_path)
+            for key in ("modes", "selections"):
+                prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
+                prev.update(merged.get(key) or {})
+                merged[key] = prev
 
-                merged["errors"] = list(merged.get("errors") or [])
-                seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
-                for e in old.get("errors") or []:
-                    if e == "no base rollout produced anything" and res.status in ("ok", "partial"):
-                        continue
-                    mode = str(e).partition(":")[0]
-                    if (
-                        (res.modes.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("chosen_label")
-                    ):
-                        continue
-                    if json.dumps(e, sort_keys=True, default=str) not in seen:
-                        merged["errors"].append(e)
-                if merged.get("status") in ("ok", "partial"):
-                    merged["status"] = _merged_status(merged)
-            tmp = summary_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(merged, indent=2, default=str))
-            os.replace(tmp, summary_path)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+            merged["errors"] = list(merged.get("errors") or [])
+            seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
+            for e in old.get("errors") or []:
+                if e == "no base rollout produced anything" and res.status in ("ok", "partial"):
+                    continue
+                mode = str(e).partition(":")[0]
+                if (
+                    (res.modes.get(mode) or {}).get("ok")
+                    and (res.selections.get(mode) or {}).get("ok")
+                    and (res.selections.get(mode) or {}).get("chosen_label")
+                ):
+                    continue
+                if json.dumps(e, sort_keys=True, default=str) not in seen:
+                    merged["errors"].append(e)
+            if merged.get("status") in ("ok", "partial"):
+                merged["status"] = _merged_status(merged)
+        tmp = summary_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(merged, indent=2, default=str))
+        os.replace(tmp, summary_path)
 
 
 def _resolve_libraries(
@@ -467,7 +463,10 @@ def _roll_bases(
                 label=label, run_id=rid, run_dir=rd, ok=True, delivered=adapter.delivered(rd)
             )
         except Exception as exc:
-            return _dead(label, rid, dead_dir, f"{type(exc).__name__}: {exc}")
+            return _dead(
+                label, rid, Path(getattr(exc, "run_dir", None) or dead_dir),
+                f"{type(exc).__name__}: {exc}",
+            )
 
     if len(pending) == 1:
         rv = _one(pending[0])

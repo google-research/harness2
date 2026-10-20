@@ -40,7 +40,9 @@ from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..install import codex_config_error
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CodexSubstrate
+from ..substrate.deepseek import DeepSeekSubstrate
 from ..substrate.opencode import OUTPUT_TOKEN_MAX, OpencodeSubstrate
+from . import deepseek as DS
 from .tasks import discover, select
 
 _RUNNER_DIR = config.THIRD_PARTY / "jb_runner"
@@ -494,9 +496,9 @@ def render_opencode_tree(staged: Path, render_dir: Path, ctx: dict) -> None:
             shutil.copy(p, rd / ".opencode" / "plugin" / p.name)
 
 
-_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root"}
+_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root", "ds": "deepseek_profile"}
 
-_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600}
+_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600, "ds": 3600}
 
 
 def _channels() -> dict:
@@ -507,7 +509,7 @@ def _channels() -> dict:
 
 def make_spec(substrate: str) -> BenchSpec:
     if substrate not in _INSTALL_MODE:
-        raise ValueError(f"JobBench substrate must be 'oc' or 'cx', got {substrate!r}")
+        raise ValueError(f"JobBench substrate must be oc, cx, or ds, got {substrate!r}")
     return BenchSpec(
         name="jb",
         runs_root=config.RUNS / "jb",
@@ -632,13 +634,14 @@ class JobBenchAdapter:
     ):
         self.split_file = split_file
         self.spec = make_spec(substrate)
-        launcher = self._launch_opencode if substrate == "oc" else self._launch_codex
-        self.substrate = (
-            OpencodeSubstrate(launcher=launcher)
-            if substrate == "oc"
-            else CodexSubstrate(launcher=launcher)
-        )
-        self.timeout = int(timeout or _DEFAULT_TIMEOUT[substrate])
+        self.substrate = {
+            "oc": lambda: OpencodeSubstrate(launcher=self._launch_opencode),
+            "cx": lambda: CodexSubstrate(launcher=self._launch_codex),
+            "ds": lambda: DeepSeekSubstrate(launcher=self._launch_deepseek),
+        }[substrate]()
+        self.timeout = int(timeout or (
+            self.substrate.settings.wall_timeout if substrate == "ds" else _DEFAULT_TIMEOUT[substrate]
+        ))
         self.store = Path(store_root) if store_root else config.RUNS / "jb" / "dataset"
 
     def tasks(self, split: str = "all") -> list[str]:
@@ -721,6 +724,19 @@ class JobBenchAdapter:
         label = run_id.replace("/", "__")
         out = self._out_dir(task_id, label)
         mark = self._traj_dir(task_id, label)
+        if self.substrate.name == "ds":
+            if not RM.is_complete(mark, harness_dir=harness_dir) or not self.artifacts_intact(out):
+                reporting, own = self._details_candidates(task_id, label)
+                if reporting is not None:
+                    reporting.unlink(missing_ok=True)
+                if own.parent.is_dir():
+                    shutil.rmtree(own.parent)
+            result = DS.execute(
+                self, task_id, harness_dir, run_id, timeout=int(timeout or self.timeout),
+                evidence_dir=mark, output_dir=out,
+            )
+            _EXTRACT_CACHE.pop(str(out.resolve()), None)
+            return result
         if RM.is_complete(mark, harness_dir=harness_dir) and self.artifacts_intact(out):
             out.mkdir(parents=True, exist_ok=True)
             return out
@@ -762,6 +778,8 @@ class JobBenchAdapter:
     def artifacts_intact(self, run_dir: Path) -> bool:
         task_id, label = self._task_and_label(run_dir)
         trajectory_dir = self._traj_dir(task_id, label)
+        if self.substrate.name == "ds":
+            return DS.artifacts_intact(self, evidence_dir=trajectory_dir, output_dir=run_dir)
         marker = RM.read_mark(trajectory_dir) or {}
         return (
             "output_fingerprint" in marker
@@ -782,6 +800,19 @@ class JobBenchAdapter:
                 f"here); got {len(req.run_ids)} run ids"
             )
         return req.task_ref, req.run_ids[0].replace("/", "__"), int(req.timeout)
+
+    def _launch_deepseek(self, req: RunRequest, install: Install) -> list[Path]:
+        task_id, label, _ = self._launch_common(req)
+        return DS.launch(
+            self, req, install, evidence_dir=self._traj_dir(task_id, label),
+            source_name="task_folder",
+        )
+
+    def run_metrics(self, run_dir: Path) -> dict:
+        if self.substrate.name != "ds":
+            return {}
+        task_id, label = self._task_and_label(run_dir)
+        return DS.run_metrics(self._traj_dir(task_id, label))
 
     def _launch_opencode(self, req: RunRequest, install: Install) -> list[Path]:
         task_id, label, t = self._launch_common(req)
@@ -948,6 +979,14 @@ class JobBenchAdapter:
         return str(self._extract(d)["flat"]) if d.is_dir() else ""
 
     def base_harness(self) -> Path:
+        if self.substrate.name == "ds":
+            return DS.base_harness(
+                self,
+                "Complete the professional assignment using the source material in task_folder/. "
+                "Inventory inputs, perform calculations reproducibly, and write every requested "
+                "artifact to output/. Reopen the final files to verify their structure and content. "
+                "Do not alter source material or substitute chat prose for requested files.\n",
+            )
         base = OC_BASE_HARNESS if self.substrate.name == "oc" else CX_BASE_HARNESS
         if not HT.is_tree(self.substrate.surface(), base):
             raise FileNotFoundError(
@@ -959,6 +998,10 @@ class JobBenchAdapter:
 
     def validate_tree(self, tree: dict) -> None:
         """JobBench adds no environment invariant beyond the framework rules."""
+        if self.substrate.name == "ds":
+            from ..substrate.deepseek import validate_tree
+
+            validate_tree(tree)
         return None
 
     def preflight(self) -> None:
@@ -1146,6 +1189,9 @@ class JobBenchAdapter:
     def score(self, run_dir: Path, task_id: str) -> dict | None:
         """Judge one run. None means the judge FAILED, which is not a zero."""
         run_dir = Path(run_dir)
+        if self.substrate.name == "ds" and not self.artifacts_intact(run_dir):
+            print(f"  [jb-ds] refusing to judge incomplete or changed evidence: {run_dir}", flush=True)
+            return None
         label = run_dir.name
         reporting, own = self._details_candidates(task_id, label)
         for details in (reporting, own):

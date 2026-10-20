@@ -223,6 +223,10 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    if args.substrate == "ds":
+        identity["executor"] = adapter.substrate.settings.model
+        identity["endpoint"] = adapter.substrate.settings.base_url
+        identity["executor_runtime"] = adapter.substrate.runtime_identity()
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

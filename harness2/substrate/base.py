@@ -44,6 +44,14 @@ class RunRequest:
 Launcher = Callable[[RunRequest, Install], list[Path]]
 
 
+class ExecutionError(RuntimeError):
+    """An incomplete rollout with inspectable evidence, never a cacheable success."""
+
+    def __init__(self, message: str, *, run_dir: Path):
+        super().__init__(message)
+        self.run_dir = run_dir
+
+
 @runtime_checkable
 class Substrate(Protocol):
     """The full substrate interface; `core.spec.SubstrateLike` is the subset core needs."""
@@ -80,4 +88,4 @@ class Substrate(Protocol):
         command and never starts any part of the model chain."""
 
 
-__all__ = ["Install", "RunRequest", "Launcher", "Substrate"]
+__all__ = ["Install", "RunRequest", "Launcher", "Substrate", "ExecutionError"]
