@@ -336,17 +336,26 @@ def validate_models(
             judge_model = JUDGE_MODEL
         if judge_model:
             judge_ref = resolve_model(judge_model)
-            refs.append(judge_ref)
     vertex_needed = any(r.is_vertex for r in refs)
-    if judge_ref is not None and uses_vertex_credentials(judge_ref):
+    if (
+        judge_ref is not None
+        and uses_vertex_credentials(judge_ref)
+        and not env("HARNESS2_JUDGE_BASE_URL")
+    ):
         vertex_needed = True
     if vertex_needed and not VERTEX_PROJECT:
         raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
-    missing = list(
-        dict.fromkeys(
-            r.opencode_id for r in refs if r.is_openrouter and not env("OPENROUTER_API_KEY")
-        )
-    )
+    openrouter_missing = [
+        r.opencode_id for r in refs if r.is_openrouter and not env("OPENROUTER_API_KEY")
+    ]
+    if (
+        judge_ref is not None
+        and judge_ref.is_openrouter
+        and not env("HARNESS2_JUDGE_API_KEY")
+        and not env("OPENROUTER_API_KEY")
+    ):
+        openrouter_missing.append(judge_ref.opencode_id)
+    missing = list(dict.fromkeys(openrouter_missing))
     if missing:
         raise ConfigError(
             "OPENROUTER_API_KEY is required for OpenRouter model(s) "
@@ -380,7 +389,11 @@ def credential_requirements(
             judge_ref = resolve_model(value)
     return {
         "vertex": any(r.is_vertex for r in refs)
-        or (judge_ref is not None and uses_vertex_credentials(judge_ref)),
+        or (
+            judge_ref is not None
+            and uses_vertex_credentials(judge_ref)
+            and not env("HARNESS2_JUDGE_BASE_URL")
+        ),
         "openrouter": any(r.is_openrouter for r in refs)
         or (judge_ref is not None and judge_ref.is_openrouter),
     }

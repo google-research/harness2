@@ -41,23 +41,31 @@ def workbuddy_route_errors(repo, role: str) -> list[str]:
     return []
 
 
+def probe(
+    label,
+    cmd,
+    *,
+    cwd=None,
+    remedy="run harness2-setup for this benchmark",
+    errors,
+):
+    try:
+        r = subprocess.run(
+            [str(c) for c in cmd], cwd=cwd, capture_output=True, text=True, timeout=45
+        )
+        if r.returncode:
+            errors.append(f"{label} failed; {remedy}")
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        errors.append(f"{label}: {type(exc).__name__}; see README.md")
+        return False
+
+
 def check(adapter, *, judge=False) -> list[str]:
     missing = missing_runners()
     if missing:
         return [missing]
     errors = []
-
-    def probe(label, cmd, *, cwd=None, remedy="run harness2-setup for this benchmark"):
-        try:
-            r = subprocess.run(
-                [str(c) for c in cmd], cwd=cwd, capture_output=True, text=True, timeout=45
-            )
-            if r.returncode:
-                errors.append(f"{label} failed; {remedy}")
-            return r.returncode == 0
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            errors.append(f"{label}: {type(exc).__name__}; see README.md")
-            return False
 
     for validate in (
         lambda: config.validate_models(judge=judge),
@@ -88,6 +96,7 @@ def check(adapter, *, judge=False) -> list[str]:
         probe(
             f"{dependency} patch",
             ["git", "-C", target, "apply", "--reverse", "--check", patch],
+            errors=errors,
         )
     if not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
@@ -97,6 +106,7 @@ def check(adapter, *, judge=False) -> list[str]:
         probe(
             "Google Application Default Credentials",
             ["gcloud", "auth", "application-default", "print-access-token"],
+            errors=errors,
         )
     if bench == "lab":
         for binary in ("pandoc", "pdftoppm"):
@@ -106,6 +116,7 @@ def check(adapter, *, judge=False) -> list[str]:
             "LAB document and judge dependencies",
             [config.LAB_PYTHON, "-c", "import evaluation.scoring; import google.auth, anthropic"],
             cwd=repo,
+            errors=errors,
         )
     elif bench == "jb" and judge:
         probe(
@@ -115,6 +126,7 @@ def check(adapter, *, judge=False) -> list[str]:
                 "-c",
                 "import pandas, openpyxl, docx, mammoth, pdfplumber, pptx, openai",
             ],
+            errors=errors,
         )
         if not config.JB_JUDGE_API_BASE:
             errors.append(
@@ -133,12 +145,17 @@ def check(adapter, *, judge=False) -> list[str]:
                 "and HARNESS2_JUDGE_API_KEY"
             )
     elif bench == "wb":
-        probe("Docker daemon", ["docker", "info", "--format", "{{.ServerVersion}}"])
+        probe(
+            "Docker daemon",
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            errors=errors,
+        )
         if adapter.spec.name == "wb-office":
             probe(
                 "WorkBuddy document rendering",
                 [config.WB_RENDER_PY, "-c", "import openpyxl, pptx"],
                 remedy="install 'harness2[render]' in the main environment",
+                errors=errors,
             )
         probe(
             "WorkBuddy runtime",
@@ -149,6 +166,7 @@ def check(adapter, *, judge=False) -> list[str]:
                 "assert all(k in HARNESS_ADAPTERS for k in ('opencode', 'oc-harness', 'codex-harness'))",
             ],
             cwd=repo,
+            errors=errors,
         )
         for role in ("solver", "judge"):
             errors.extend(workbuddy_route_errors(repo, role))

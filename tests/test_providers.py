@@ -178,6 +178,49 @@ class ValidateModelsTests(unittest.TestCase):
                     judge_model="gemini-3.5-flash",
                 )
 
+    def test_explicit_judge_override_bypasses_vertex_project(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HARNESS2_SOLVER_MODEL": "openrouter/openai/gpt-5",
+                "HARNESS2_JUDGE_MODEL": "gemini-3.5-flash",
+                "HARNESS2_JUDGE_BASE_URL": "https://proxy.example/v1",
+                "HARNESS2_JUDGE_API_KEY": "explicit-key",
+                "OPENROUTER_API_KEY": "or-key",
+            },
+            clear=False,
+        ), patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.object(
+            config, "IMPROVER_MODEL", "openrouter/openai/gpt-5"
+        ), patch.object(
+            config, "JUDGE_MODEL", "gemini-3.5-flash"
+        ), patch.object(config, "VERTEX_PROJECT", ""):
+            config.validate_models(judge=True)
+            self.assertIs(config.credential_requirements(judge=True)["vertex"], False)
+
+    def test_missing_openrouter_key_is_reported(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HARNESS2_SOLVER_MODEL": "openrouter/openai/gpt-5",
+                "OPENROUTER_API_KEY": "",
+            },
+            clear=False,
+        ), patch.object(
+            config, "SOLVER_MODEL_OC", "openrouter/openai/gpt-5"
+        ), patch.object(config, "IMPROVER_MODEL", "openrouter/openai/gpt-5"):
+            with self.assertRaisesRegex(config.ConfigError, "OPENROUTER_API_KEY"):
+                config.validate_models()
+
+    def test_vertex_solver_requires_project(self):
+        with patch.object(config, "VERTEX_PROJECT", ""):
+            with self.assertRaisesRegex(config.ConfigError, "GOOGLE_CLOUD_PROJECT"):
+                config.validate_models(
+                    solver="google-vertex/gemini-3.5-flash",
+                    improver="google-vertex/gemini-3.5-flash",
+                )
+
 
 class CredentialRequirementTests(unittest.TestCase):
     def test_credential_requirements_only_include_configured_roles(self):
@@ -288,6 +331,19 @@ class WorkBuddyRouteTests(unittest.TestCase):
         self.assertEqual(env["HARNESS2_WB_SOLVER_KEY"], "or-key")
         self.assertEqual(env["HARNESS2_WB_JUDGE_KEY"], "or-key")
 
+    def test_route_env_names_are_produced_by_workbuddy_env(self):
+        from harness2 import install
+
+        solver = "openrouter/openai/gpt-5"
+        judge = "openrouter/anthropic/claude-sonnet-4"
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=False):
+            env = config.workbuddy_env(solver=solver, judge=judge)
+            for role, model in (("solver", solver), ("judge", judge)):
+                route = install.workbuddy_route(role, model=model)["model"]
+                self.assertIn(route["backend_url_env"], env)
+                if "backend_key_env" in route:
+                    self.assertIn(route["backend_key_env"], env)
+
     def test_bare_vertex_judge_id_still_builds_a_vertex_route(self):
         from harness2 import install
 
@@ -384,6 +440,65 @@ class WorkBuddyPreflightTests(unittest.TestCase):
             errors = preflight.workbuddy_route_errors(tmp, "solver")
             self.assertTrue(errors)
             self.assertIn("OPENROUTER_API_KEY", errors[0])
+
+
+class PreflightIntegrationTests(unittest.TestCase):
+    def _adapter(self):
+        class Adapter:
+            spec = types.SimpleNamespace(name="wb")
+
+            def tasks(self):
+                return []
+
+            def preflight(self):
+                pass
+
+        return Adapter()
+
+    def _check(self, *, models, vertex_project):
+        labels = []
+
+        def fake_probe(label, cmd, **kwargs):
+            labels.append(label)
+            return True
+
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "or-key", "HARNESS2_JUDGE_BASE_URL": ""},
+            clear=False,
+        ), patch.object(
+            config, "SOLVER_MODEL_OC", models
+        ), patch.object(
+            config, "IMPROVER_MODEL", models
+        ), patch.object(
+            config, "JUDGE_MODEL", models
+        ), patch.object(
+            config, "VERTEX_PROJECT", vertex_project
+        ), patch.object(
+            preflight, "missing_runners", lambda: ""
+        ), patch.object(
+            preflight, "probe", fake_probe
+        ), patch.object(
+            preflight.OpencodeSubstrate, "preflight", lambda self: None
+        ), patch.object(
+            preflight, "workbuddy_route_errors", lambda repo, role: []
+        ):
+            preflight.check(self._adapter(), judge=True)
+        return labels
+
+    def test_openrouter_roles_skip_adc(self):
+        labels = self._check(
+            models="openrouter/openai/gpt-5",
+            vertex_project="",
+        )
+        self.assertNotIn("Google Application Default Credentials", labels)
+
+    def test_vertex_roles_probe_adc(self):
+        labels = self._check(
+            models="google-vertex/gemini-3.5-flash",
+            vertex_project="proj",
+        )
+        self.assertIn("Google Application Default Credentials", labels)
 
 
 class JobBenchJudgeTokenTests(unittest.TestCase):

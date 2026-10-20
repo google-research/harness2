@@ -152,7 +152,9 @@ def workbuddy_route(role: str, *, model: str | None = None) -> dict:
     """The generated WorkBuddy route for one role, from the configured model."""
     if role not in ("solver", "judge"):
         raise ValueError(f"role must be 'solver' or 'judge', got {role!r}")
-    value = model or (config.SOLVER_MODEL_OC if role == "solver" else config.JUDGE_MODEL)
+    value = model if model is not None else (
+        config.SOLVER_MODEL_OC if role == "solver" else config.JUDGE_MODEL
+    )
     if not value:
         value = config.require(
             "HARNESS2_SOLVER_MODEL" if role == "solver" else "HARNESS2_JUDGE_MODEL",

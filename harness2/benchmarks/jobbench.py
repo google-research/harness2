@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -1092,7 +1093,7 @@ class JobBenchAdapter:
         if not token and judge_ref is not None and config.uses_vertex_credentials(judge_ref):
             try:
                 token = subprocess.run(
-                    ["gcloud", "auth", "application-default", "print-access-token"],
+                    shlex.split(config.GCLOUD_TOKEN_COMMAND),
                     capture_output=True,
                     text=True,
                     timeout=60,

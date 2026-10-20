@@ -100,13 +100,13 @@ takes one subset at a time.
 Setup installs the pinned Harbor-based runtime, applies the included adapter,
 mount, and credential/transport patches, copies the harness runners, creates
 solver and judge routes from `.env`, downloads the requested subset with the
-upstream fetch script, and builds the OpenCode harness image. The public Vertex
-setup uses a `google-vertex/gemini...` executor and a bare `gemini...` judge ID;
-no model YAML or account-specific proxy configuration needs to be copied from
-another checkout. Setup refuses to run unless `HARNESS2_SOLVER_MODEL` is a
-`google-vertex/gemini...` ID and `HARNESS2_JUDGE_MODEL` a bare `gemini...` one,
-with `GOOGLE_CLOUD_PROJECT` set; `--dry-run` reports the requirement and still
-prints the rest of the plan. The benchmark's job-local proxy refreshes ADC tokens
+upstream fetch script, and builds the OpenCode harness image. Setup accepts a
+`google-vertex/gemini...` or `openrouter/...` solver; for Vertex
+WorkBuddy routes both the solver and judge must be Gemini. Vertex configurations
+require `GOOGLE_CLOUD_PROJECT`, while OpenRouter configurations do not; no model
+YAML or account-specific proxy configuration needs to be copied from another
+checkout. `--dry-run` reports the requirement and still prints the rest of the
+plan. The benchmark's job-local proxy refreshes ADC tokens
 and preserves Gemini tool-call thought signatures.
 
 Setup patches the upstream fetch script to download with `curl` (then `wget`,
