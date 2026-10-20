@@ -85,17 +85,18 @@ than falling through to the Mistral path.
 `workbuddy_models()` writes both routes from `ModelRef`:
 
 - `model.name` = `api_model`
-- `backend_url_env` = `HARNESS2_WB_BASE_URL`
-- `backend_key_env` = `HARNESS2_WB_API_KEY`
+- `backend_url_env` = `HARNESS2_WB_SOLVER_URL` / `HARNESS2_WB_JUDGE_URL`
+- `backend_key_env` = `HARNESS2_WB_SOLVER_KEY` / `HARNESS2_WB_JUDGE_KEY`
 - Vertex keeps `backend_key_command` (gcloud token); OpenRouter uses a static
   key env.
 - `thought_signature_passback` is set only for Gemini.
 
 `workbuddy.py` passes the resolved URL/key in the subprocess `env` instead of
 `HARNESS2_WB_VERTEX_URL`. The web judge route uses the same resolution.
-`openrouter.ai` is added to allowed hosts. `preflight` validates generated
-routes structurally (provider, api model, backend env) instead of comparing
-`"google/" + model`.
+No container egress change is needed: the WorkBuddy proxy makes the upstream
+request from the host, not from the agent container. `preflight` validates
+generated routes structurally (provider, api model, backend env) instead of
+comparing `"google/" + model`.
 
 ### Codex bridge
 
@@ -107,9 +108,10 @@ routes structurally (provider, api model, backend env) instead of comparing
 
 It prints the same `HARNESS2_CODEX_*` settings. `HARNESS2_CODEX_MODEL` is the
 bridge alias so `configure_codex` and WorkBuddy's Codex env stay consistent.
-WorkBuddy's Codex `env_override` injects the OpenRouter key instead of
-`VERTEX_PROXY_KEY`. The bridge serves `/v1/responses`; unsupported
-provider/model combinations fail at startup with a message naming the model ID.
+The bridge process holds the OpenRouter credential; WorkBuddy's container still
+receives only the bridge key via `VERTEX_PROXY_KEY`. The bridge serves
+`/v1/responses`; unsupported provider/model combinations fail at startup with a
+message naming the model ID.
 
 ## Backward compatibility
 
@@ -117,6 +119,8 @@ provider/model combinations fail at startup with a message naming the model ID.
   and ADC checks.
 - Explicit `HARNESS2_JUDGE_*` overrides take precedence over provider inference.
 - Unprefixed model IDs keep today's OpenCode semantics.
+- The `claude_cli` proposer channel remains Anthropic/Vertex-only; OpenRouter
+  improvers use the default `opencode` channel.
 - Run identity and resume are unaffected; models are already recorded in run
   metadata.
 
