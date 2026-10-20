@@ -98,6 +98,15 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", VERTEX_REGION)
 
 GCLOUD_TOKEN_COMMAND = "gcloud auth application-default print-access-token"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_vertex_host = (
+    "aiplatform.googleapis.com"
+    if VERTEX_REGION == "global"
+    else f"{VERTEX_REGION}-aiplatform.googleapis.com"
+)
+VERTEX_OPENAI_URL = (
+    f"https://{_vertex_host}/v1/projects/{VERTEX_PROJECT}"
+    f"/locations/{VERTEX_REGION}/endpoints/openapi"
+)
 
 
 @dataclass(frozen=True)
@@ -117,7 +126,7 @@ class ModelRef:
         return self.provider == "openrouter"
 
 
-def resolve_model(model: str) -> ModelRef:
+def resolve_model(model: str | None) -> ModelRef:
     """Split an OpenCode provider/model id; never reject an unknown provider here."""
     value = (model or "").strip()
     provider, sep, rest = value.partition("/")
@@ -148,6 +157,7 @@ class Backend:
 
 
 def model_backend(model: str) -> Backend:
+    """The HTTP endpoint, API model name, and credentials one model talks to."""
     ref = resolve_model(model)
     if ref.is_openrouter:
         key = env("OPENROUTER_API_KEY", "")
@@ -173,6 +183,7 @@ def model_backend(model: str) -> Backend:
 
 
 def litellm_model(ref: ModelRef) -> str:
+    """The model name for a LiteLLM Responses API client."""
     if ref.is_vertex:
         return "vertex_ai/" + ref.api_model
     if ref.is_openrouter:
@@ -188,6 +199,7 @@ def _judge_value(model: str | None) -> str:
 
 
 def judge_api_base(model: str | None = None) -> str:
+    """The judge's OpenAI-compatible base URL, with explicit overrides first."""
     ref = resolve_model(_judge_value(model))
     explicit = env("HARNESS2_JUDGE_BASE_URL")
     if explicit:
@@ -198,6 +210,7 @@ def judge_api_base(model: str | None = None) -> str:
 
 
 def judge_api_key(model: str | None = None) -> str:
+    """The judge's API key, with explicit overrides first."""
     explicit = env("HARNESS2_JUDGE_API_KEY")
     if explicit:
         return explicit
@@ -206,6 +219,7 @@ def judge_api_key(model: str | None = None) -> str:
 
 
 def jobbench_judge_model(model: str | None = None) -> str:
+    """The job-bench judge model name, mapping Vertex shorthand to google/..."""
     value = _judge_value(model)
     ref = resolve_model(value)
     if ref.is_openrouter:
@@ -216,25 +230,22 @@ def jobbench_judge_model(model: str | None = None) -> str:
         and not env("HARNESS2_JUDGE_BASE_URL")
     ):
         return "google/" + ref.api_model
-    return value
+    return ref.opencode_id
 
 
 def lab_judge_model(model: str | None = None) -> str:
+    """The harvey-labs judge model name, mapping Vertex shorthand to vertex/..."""
     value = _judge_value(model)
     ref = resolve_model(value)
     if ref.is_openrouter:
         return value
     if uses_vertex_credentials(ref):
         return "vertex/" + ref.api_model
-    return value
+    return ref.opencode_id
 
 
 SOLVER_MODEL_OC = env("HARNESS2_SOLVER_MODEL", "")
-_SOLVER_REF = resolve_model(SOLVER_MODEL_OC) if SOLVER_MODEL_OC else None
-SOLVER_MODEL_CX = env(
-    "HARNESS2_CODEX_MODEL",
-    codex_alias(_SOLVER_REF) if _SOLVER_REF else "",
-)
+SOLVER_MODEL_CX = env("HARNESS2_CODEX_MODEL", codex_alias(resolve_model(SOLVER_MODEL_OC)))
 IMPROVER_MODEL = env("HARNESS2_IMPROVER_MODEL", SOLVER_MODEL_OC)
 JUDGE_MODEL = env("HARNESS2_JUDGE_MODEL", "")
 
@@ -271,15 +282,6 @@ LAB_JUDGE_MODEL = lab_judge_model() if JUDGE_MODEL else ""
 LAB_DELIV_CAP = 60000
 JB_JUDGE_PYTHON = jb_repo() / ".venv" / "bin" / "python"
 JB_JUDGE_MODEL = jobbench_judge_model() if JUDGE_MODEL else ""
-_vertex_host = (
-    "aiplatform.googleapis.com"
-    if VERTEX_REGION == "global"
-    else f"{VERTEX_REGION}-aiplatform.googleapis.com"
-)
-VERTEX_OPENAI_URL = (
-    f"https://{_vertex_host}/v1/projects/{VERTEX_PROJECT}"
-    f"/locations/{VERTEX_REGION}/endpoints/openapi"
-)
 JB_JUDGE_API_BASE = judge_api_base()
 JB_JUDGE_API_KEY = judge_api_key()
 JB_JUDGE_REASONING_EFFORT = "low"
@@ -316,24 +318,33 @@ def validate_models(
     improver: str | None = None,
     judge_model: str | None = None,
 ) -> None:
-    solver = SOLVER_MODEL_OC if solver is None else solver
+    if solver is None:
+        require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
+        solver = SOLVER_MODEL_OC
     improver = IMPROVER_MODEL if improver is None else improver
-    require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
     if "/" not in solver or "/" not in improver:
         raise ConfigError(
             "Executor and improver models must use OpenCode's provider/model syntax"
         )
     refs = [resolve_model(solver), resolve_model(improver)]
+    judge_ref = None
     if judge:
-        require("HARNESS2_JUDGE_MODEL", needed_by="benchmark judging")
-        value = JUDGE_MODEL if judge_model is None else judge_model
-        if value:
-            refs.append(resolve_model(value))
-    if any(r.is_vertex for r in refs) and not VERTEX_PROJECT:
+        if judge_model is None:
+            require("HARNESS2_JUDGE_MODEL", needed_by="benchmark judging")
+            judge_model = JUDGE_MODEL
+        if judge_model:
+            judge_ref = resolve_model(judge_model)
+            refs.append(judge_ref)
+    vertex_needed = any(r.is_vertex for r in refs)
+    if judge_ref is not None and uses_vertex_credentials(judge_ref):
+        vertex_needed = True
+    if vertex_needed and not VERTEX_PROJECT:
         raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
-    missing = [
-        r.opencode_id for r in refs if r.is_openrouter and not env("OPENROUTER_API_KEY")
-    ]
+    missing = list(
+        dict.fromkeys(
+            r.opencode_id for r in refs if r.is_openrouter and not env("OPENROUTER_API_KEY")
+        )
+    )
     if missing:
         raise ConfigError(
             "OPENROUTER_API_KEY is required for OpenRouter model(s) "

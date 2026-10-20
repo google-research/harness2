@@ -131,3 +131,42 @@ class JudgeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(config.ConfigError, "Unsupported Responses API provider"):
             config.litellm_model(config.resolve_model("openai/gpt-5"))
+
+
+class ValidationTests(unittest.TestCase):
+    def test_explicit_model_arguments_need_no_model_env(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HARNESS2_SOLVER_MODEL": "",
+                "HARNESS2_JUDGE_MODEL": "",
+                "OPENROUTER_API_KEY": "or-key",
+            },
+            clear=False,
+        ):
+            config.validate_models(
+                solver="openrouter/a/b",
+                improver="openrouter/a/b",
+                judge=True,
+                judge_model="openrouter/c/d",
+            )
+
+    def test_bare_gemini_judge_requires_vertex_project(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HARNESS2_SOLVER_MODEL": "",
+                "HARNESS2_JUDGE_MODEL": "",
+                "OPENROUTER_API_KEY": "or-key",
+                "GOOGLE_CLOUD_PROJECT": "",
+                "HARNESS2_VERTEX_PROJECT": "",
+            },
+            clear=False,
+        ), patch.object(config, "VERTEX_PROJECT", ""):
+            with self.assertRaisesRegex(config.ConfigError, "GOOGLE_CLOUD_PROJECT"):
+                config.validate_models(
+                    solver="openrouter/a/b",
+                    improver="openrouter/a/b",
+                    judge=True,
+                    judge_model="gemini-3.5-flash",
+                )
