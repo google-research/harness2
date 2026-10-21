@@ -1,0 +1,8 @@
+{
+  "id": "wi-authoring-standard",
+  "domain": "wi",
+  "prompt": "Author Work Instruction EOB-WI-AND-350 in eob_wi_and_350_sample_wi.md with standard header metadata (Code: EOB-WI-AND-350, Title, Version 1.0, Effective Date), a 4-column RACI table (A&D Manager, Domain Leader, Project/Product Owner, Project/Product Member) with exactly one Accountable ('A') role per row, and Module 239 revision history.",
+  "expected_files": [
+    "eob_wi_and_350_sample_wi.md"
+  ]
+}

@@ -1,0 +1,10 @@
+@startuml
+left to right direction
+
+rectangle "Ingestion" as Ingest
+rectangle "Processing" as Process
+rectangle "Archive" as Archive
+
+Ingest -> Process
+Process -> Archive
+@enduml

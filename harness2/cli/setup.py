@@ -25,7 +25,7 @@ from harness2 import config, install
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("benchmark", choices=("jb", "lab", "wb", "dams"))
+    p.add_argument("benchmark", choices=("jb", "lab", "wb", "dams", "bp"))
     p.add_argument(
         "--subset",
         choices=("office", "web", "code"),
@@ -56,6 +56,27 @@ def main(argv=None):
             p.exit(1, f"setup failed: No valid tasks found in {dams_tasks}\n")
         print(
             f"Verified DAMS tasks: {len(tasks)} task(s) found at {dams_tasks} "
+            f"({', '.join(sorted(tasks))})."
+        )
+        print(
+            "Setup plan complete."
+            if dry
+            else "Installation complete. Run harness2-check before an experiment."
+        )
+        return 0
+    if args.benchmark == "bp":
+        bp_tasks = config.DEPENDENCIES / "blueprint-tasks"
+        if not bp_tasks.is_dir():
+            p.exit(1, f"setup failed: Blueprint tasks directory missing at {bp_tasks}\n")
+        tasks = [
+            d.name
+            for d in bp_tasks.iterdir()
+            if d.is_dir() and (d / "task.json").is_file()
+        ]
+        if not tasks:
+            p.exit(1, f"setup failed: No valid tasks found in {bp_tasks}\n")
+        print(
+            f"Verified Blueprint tasks: {len(tasks)} task(s) found at {bp_tasks} "
             f"({', '.join(sorted(tasks))})."
         )
         print(

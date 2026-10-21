@@ -1,0 +1,8 @@
+{
+  "id": "plantuml-sync",
+  "domain": "diagrams",
+  "prompt": "Create PlantUML diagram with !theme plain, scale max 1050 width, and vertical layout in sample_workflow.puml.",
+  "expected_files": [
+    "sample_workflow.puml"
+  ]
+}

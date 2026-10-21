@@ -29,7 +29,7 @@ def check(adapter, *, judge=False) -> list[str]:
     bench = adapter.spec.name.split("-", 1)[0]
     errors = []
 
-    if bench == "dams":
+    if bench in ("dams", "bp"):
         for validate in (
             adapter.tasks,
             getattr(adapter, "preflight", lambda: None),

@@ -53,6 +53,10 @@ def discover(bench: str, subset: str | None = None) -> dict[str, str]:
         from .dams import TASK_DOMAINS
 
         tasks = dict(TASK_DOMAINS)
+    elif bench == "bp":
+        from .blueprint import TASK_DOMAINS
+
+        tasks = dict(TASK_DOMAINS)
     else:
         raise ValueError(f"Unknown benchmark/subset: {bench}/{subset}")
     if not tasks:

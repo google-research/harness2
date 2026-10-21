@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     modes = C.parse_modes(args.modes)
 
-    if args.bench != "dams":
+    if args.bench not in ("dams", "bp"):
         config.validate_models(judge=True)
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
     ns = C.summary_namespace(adapter, args.k, seed=args.seed)

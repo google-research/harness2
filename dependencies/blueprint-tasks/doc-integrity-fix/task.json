@@ -1,0 +1,8 @@
+{
+  "id": "doc-integrity-fix",
+  "domain": "integrity",
+  "prompt": "Fix forbidden namespace EOB-AND-WI-020 to EOB-WI-AND-020 and fix broken relative link in eob_roadmap_and_002_sample.md.",
+  "expected_files": [
+    "eob_roadmap_and_002_sample.md"
+  ]
+}
