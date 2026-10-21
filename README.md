@@ -44,8 +44,9 @@ harnesses, with gains of up to 11.5 points on WorkBuddy-Bench, 4.5 points on
 JobBench, and 11.8 percentage points on LAB's partial pass rate. Increasing the
 task-level recursion budget brings further gains.
 
-The release supports **parallel and sequential recursion**, **OpenCode and
-Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
+The release supports **parallel and sequential recursion**, **OpenCode, Codex,
+and [Claude Code](docs/CLAUDE_CODE.md) executors**, and **JobBench, LAB, and
+WorkBuddy-Bench**.
 
 ## Video overview
 
@@ -104,7 +105,9 @@ gcloud auth application-default login
 ```
 
 See the [setup guide](docs/SETUP.md) for model settings, authentication
-alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
+alternatives, and the [Codex executor](docs/SETUP.md#codex-executor). To run
+the executor, the improver, or both on Claude Code, with no OpenCode needed,
+see [Claude Code](docs/CLAUDE_CODE.md).
 
 ## Run a benchmark
 
@@ -157,6 +160,7 @@ through successive Propose–Probe–Compose steps.
 | `--k K --mode parallel` | Probe `K` general and `K` domain-specific candidates, then produce `K` compositions |
 | `--k K --mode sequential` | Refine the harness through `K` successive steps |
 | `--substrate cx` | Use Codex instead of the default OpenCode executor |
+| `--substrate cc` | Use Claude Code (`claude -p`) as the executor; JobBench and LAB ([guide](docs/CLAUDE_CODE.md)) |
 
 After each task, harnessing-level recursion retains the adopted harness and
 evidence-supported lessons to guide future refinement. See the

@@ -29,7 +29,7 @@ from ..core.spec import BenchmarkAdapter
 
 BENCHES = ("jb", "wb", "lab")
 WB_SUBSETS = ("office", "web", "code")
-SUBSTRATES = ("oc", "cx")
+SUBSTRATES = ("oc", "cx", "cc")
 
 MODES_DEFAULT = "parallel"
 MODES_HELP = (
@@ -51,6 +51,11 @@ def make_adapter(
     if substrate not in SUBSTRATES:
         raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
     if bench == "wb":
+        if substrate == "cc":
+            raise ValueError(
+                "--bench wb runs its executor inside Harbor containers and has no Claude Code "
+                "agent yet; use --substrate oc or cx for WorkBuddy-Bench"
+            )
         if subset not in WB_SUBSETS:
             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
         from ..benchmarks.workbuddy import WbAdapter
@@ -104,7 +109,7 @@ def add_cell_args(p: argparse._ActionsContainer) -> None:
         "--substrate",
         default="oc",
         choices=SUBSTRATES,
-        help="task-executor substrate: oc (opencode) | cx (codex)",
+        help="task-executor substrate: oc (opencode) | cx (codex) | cc (claude code)",
     )
 
 

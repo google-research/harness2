@@ -99,6 +99,19 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", VERTEX_REGION)
 SOLVER_MODEL_OC = env("HARNESS2_SOLVER_MODEL", "")
 SOLVER_MODEL_CX = env("HARNESS2_CODEX_MODEL", SOLVER_MODEL_OC.split("/", 1)[-1])
 IMPROVER_MODEL = env("HARNESS2_IMPROVER_MODEL", SOLVER_MODEL_OC)
+
+# Claude Code: executor (`--substrate cc`) and the `claude_cli` improver channel. Model ids
+# are bare Claude ids or aliases (e.g. "sonnet", "opus"); auth is whatever the `claude` CLI
+# already uses (ANTHROPIC_API_KEY, a logged-in subscription, or CLAUDE_CODE_USE_VERTEX /
+# CLAUDE_CODE_USE_BEDROCK with their own credentials).
+CLAUDE_BIN = env("HARNESS2_CLAUDE_BIN", "claude")
+SOLVER_MODEL_CC = env("HARNESS2_CLAUDE_MODEL", "")
+CLAUDE_IMPROVER_MODEL = env("HARNESS2_CLAUDE_IMPROVER_MODEL", SOLVER_MODEL_CC)
+CLAUDE_EFFORT = env("HARNESS2_CLAUDE_EFFORT", "high")
+CLAUDE_MAX_BUDGET_USD = env("HARNESS2_CLAUDE_MAX_BUDGET_USD", "")
+CLAUDE_MAX_OUTPUT_TOKENS = env("HARNESS2_CLAUDE_MAX_OUTPUT_TOKENS", "")
+# Route the claude_cli channel through Vertex AI (the upstream default) only when asked.
+CLAUDE_USE_VERTEX = env("HARNESS2_CLAUDE_USE_VERTEX", "") not in ("", "0", "false")
 JUDGE_MODEL = env("HARNESS2_JUDGE_MODEL", "")
 
 DEPENDENCY_PINS = {
@@ -171,18 +184,48 @@ WB_MAX_JOBS = {"oc": 1, "cx": 1}
 WB_MAX_TRIALS = {"oc": 2, "cx": 2}
 WB_MODEL_CONNECTION = "local_proxy"
 
-DEFAULT_PROPOSER_CHANNEL = "opencode"
-PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
+DEFAULT_PROPOSER_CHANNEL = env("HARNESS2_PROPOSER_CHANNEL", "opencode")
+PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": CLAUDE_IMPROVER_MODEL}
 PHASE_WIDTH = 2
 TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2
 
 
-def validate_models(*, judge: bool = False) -> None:
-    require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
-    if "/" not in SOLVER_MODEL_OC or "/" not in IMPROVER_MODEL:
-        raise ConfigError("Executor and improver models must use OpenCode's provider/model syntax")
-    if any(m.startswith("google-vertex") for m in (SOLVER_MODEL_OC, IMPROVER_MODEL)):
+def solver_model(substrate: str) -> str:
+    """The executor model id for one substrate, in that substrate's own syntax."""
+    return {"oc": SOLVER_MODEL_OC, "cx": SOLVER_MODEL_CX, "cc": SOLVER_MODEL_CC}[substrate]
+
+
+def uses_opencode(substrate: str) -> bool:
+    """Whether a (substrate, improver channel) cell needs the OpenCode checkout at all."""
+    return substrate == "oc" or DEFAULT_PROPOSER_CHANNEL == "opencode"
+
+
+def validate_models(*, judge: bool = False, substrate: str = "oc") -> None:
+    if substrate == "cc":
+        require("HARNESS2_CLAUDE_MODEL", needed_by="Claude Code executor rollouts")
+        if "/" in SOLVER_MODEL_CC:
+            raise ConfigError(
+                "HARNESS2_CLAUDE_MODEL takes a bare Claude model id or alias, not provider/model"
+            )
+    else:
+        require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
+        if "/" not in SOLVER_MODEL_OC:
+            raise ConfigError("The executor model must use OpenCode's provider/model syntax")
+    if DEFAULT_PROPOSER_CHANNEL == "claude_cli":
+        if not CLAUDE_IMPROVER_MODEL or "/" in CLAUDE_IMPROVER_MODEL:
+            raise ConfigError(
+                "The claude_cli improver channel needs HARNESS2_CLAUDE_IMPROVER_MODEL (or "
+                "HARNESS2_CLAUDE_MODEL) set to a bare Claude model id or alias"
+            )
+    elif "/" not in IMPROVER_MODEL:
+        raise ConfigError("The improver model must use OpenCode's provider/model syntax")
+    opencode_models = [IMPROVER_MODEL] if DEFAULT_PROPOSER_CHANNEL == "opencode" else []
+    if substrate != "cc":
+        opencode_models.append(SOLVER_MODEL_OC)
+    if any(m.startswith("google-vertex") for m in opencode_models) or (
+        DEFAULT_PROPOSER_CHANNEL == "claude_cli" and CLAUDE_USE_VERTEX
+    ):
         if not VERTEX_PROJECT:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:

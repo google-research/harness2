@@ -604,6 +604,35 @@ and you cite it in your notes. If you cannot name the moment, the edit is specul
 context for nothing."""
 
 
+def _claude_code_text(codex_text: str) -> str:
+    """A Codex surface block re-targeted at Claude Code. The two surfaces have the same
+    shape (one always-on file, on-demand skills, subagents, scripts, a hooks file), so the
+    Claude Code text is derived from the Codex text rather than kept as a drifting copy."""
+    out = codex_text.replace(
+        "`.codex/hooks.json` -- ONE JSON file, Claude-Code hook schema:",
+        "`.claude/hooks.json` -- ONE JSON file, Claude Code's own hook schema (the runner "
+        "installs it as the `hooks` key of `.claude/settings.json`):",
+    )
+    assert out != codex_text, "codex hooks paragraph moved; update _claude_code_text"
+    out, n = re.subn(
+        r"the runner installs each as\s+a\s+named\s+agent\s+role",
+        "the runner installs each as a Claude Code subagent that the agent delegates to with "
+        "the Task tool",
+        out,
+    )
+    assert n == 1, "codex sub_agents paragraph moved; update _claude_code_text"
+    out = (
+        out.replace(".codex/hooks.json", ".claude/hooks.json")
+        .replace(".agents/skills", ".claude/skills")
+        .replace("AGENTS.md", "CLAUDE.md")
+    )
+    return out
+
+
+_SURFACE_CLAUDE_CODE = _claude_code_text(_SURFACE_CODEX)
+_TTS_SURFACE_HEAD_CLAUDE_CODE = _claude_code_text(_TTS_SURFACE_HEAD_CODEX)
+
+
 @dataclass(frozen=True)
 class _SurfaceText:
     """The per-substrate prompt fragments, resolved once at module load."""
@@ -627,6 +656,13 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _TTS_SURFACE_HEAD_CODEX,
             _surface_part(_SURFACE_CODEX, "A skill only exists", "THE DELIVERABLE'S SHAPE"),
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
+    cc_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_CLAUDE_CODE,
+            _surface_part(_SURFACE_CLAUDE_CODE, "A skill only exists", "THE DELIVERABLE'S SHAPE"),
+            _surface_part(_SURFACE_CLAUDE_CODE, "# HOW TO MAKE A CHANGE"),
         ]
     )
     return {
@@ -657,6 +693,20 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "that trigger line in the same edit.",
             ),
             tts_surface=cx_tts,
+        ),
+        "claude_code": _SurfaceText(
+            surface_md=_SURFACE_CLAUDE_CODE,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__",
+                "hook in `.claude/hooks.json` -- for example, a `Stop` hook that blocks "
+                "finishing before a {deliverable} exists, with a corrective reason",
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "A skill exists only once its name appears in `CLAUDE.md` as a trigger: write "
+                "that trigger line in the same edit.",
+            ),
+            tts_surface=cc_tts,
         ),
     }
 

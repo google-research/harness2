@@ -22,7 +22,13 @@ import subprocess
 
 from . import config
 from .install import PATCHES, missing_runners
+from .substrate.claude_code import ClaudeCodeSubstrate
 from .substrate.opencode import OpencodeSubstrate
+
+
+def claude_cli() -> None:
+    """The Claude Code CLI is installed and runs; raises RuntimeError with the remedy."""
+    ClaudeCodeSubstrate().preflight()
 
 
 def check(adapter, *, judge=False) -> list[str]:
@@ -43,12 +49,15 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(f"{label}: {type(exc).__name__}; see README.md")
             return False
 
-    for validate in (
-        lambda: config.validate_models(judge=judge),
-        adapter.tasks,
-        OpencodeSubstrate().preflight,
-        adapter.preflight,
-    ):
+    substrate = adapter.substrate.name
+    need_opencode = config.uses_opencode(substrate)
+    validators = [lambda: config.validate_models(judge=judge, substrate=substrate), adapter.tasks]
+    if need_opencode:
+        validators.append(OpencodeSubstrate().preflight)
+    if config.DEFAULT_PROPOSER_CHANNEL == "claude_cli" and substrate != "cc":
+        validators.append(claude_cli)
+    validators.append(adapter.preflight)
+    for validate in validators:
         try:
             validate()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -57,7 +66,7 @@ def check(adapter, *, judge=False) -> list[str]:
     bench = adapter.spec.name.split("-", 1)[0]
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[bench]
     repo = config.DEPENDENCIES / name
-    for dependency in (name, "opencode"):
+    for dependency in (name, "opencode") if need_opencode else (name,):
         target = config.DEPENDENCIES / dependency
         if (target / ".git").exists():
             try:
@@ -73,12 +82,17 @@ def check(adapter, *, judge=False) -> list[str]:
             f"{dependency} patch",
             ["git", "-C", target, "apply", "--reverse", "--check", patch],
         )
-    if not (config.OPENCODE_DIR / "node_modules").is_dir():
+    if need_opencode and not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
-    if any(
-        m.startswith("google-vertex") for m in (config.SOLVER_MODEL_OC, config.IMPROVER_MODEL)
-    ) or (judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini")))):
+    vertex_models = []
+    if config.DEFAULT_PROPOSER_CHANNEL == "opencode":
+        vertex_models.append(config.IMPROVER_MODEL)
+    if substrate != "cc":
+        vertex_models.append(config.SOLVER_MODEL_OC)
+    if any(m.startswith("google-vertex") for m in vertex_models) or (
+        judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini")))
+    ):
         probe(
             "Google Application Default Credentials",
             ["gcloud", "auth", "application-default", "print-access-token"],

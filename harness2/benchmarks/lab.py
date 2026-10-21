@@ -36,6 +36,7 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..substrate.base import Install, RunRequest
+from ..substrate.claude_code import CLAUDE_CODE_SURFACE, ClaudeCodeSubstrate, install_tree
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
 from .tasks import discover, select
@@ -323,6 +324,21 @@ directly with shell tools such as `cat`.
 """
 
 
+# The Codex body names no Codex-specific mechanism, so Claude Code starts from the same text.
+CLAUDE_BASE_BODY = CODEX_BASE_BODY
+
+_INSTALL_MODE = {"oc": "workspace_config", "cx": "codex_root", "cc": "claude_root"}
+_RUNNER_REL = {
+    "cx": Path("external") / "adapt_runs_cx" / "run_codex_lab.py",
+    "cc": Path("external") / "adapt_runs_cc" / "run_claude_lab.py",
+}
+_SESSION_FILE = {
+    "oc": "opencode_session.jsonl",
+    "cx": "codex_session.jsonl",
+    "cc": "claude_session.jsonl",
+}
+
+
 _EXTRACT_SRC = r"""
 import json, sys
 from pathlib import Path
@@ -477,13 +493,13 @@ def _require_runtime_scripts() -> frozenset[str]:
 
 def lab_spec(substrate_name: str) -> BenchSpec:
     """The LAB BenchSpec for one substrate cell. A value, not a code path."""
-    if substrate_name not in ("oc", "cx"):
-        raise ValueError(f"substrate must be 'oc' or 'cx', got {substrate_name!r}")
+    if substrate_name not in _INSTALL_MODE:
+        raise ValueError(f"substrate must be 'oc', 'cx' or 'cc', got {substrate_name!r}")
     channel = resolve_channel_model(None, None, effort="high")
     return BenchSpec(
         name="lab",
         runs_root=config.RUNS / "lab",
-        install_mode="workspace_config" if substrate_name == "oc" else "codex_root",
+        install_mode=_INSTALL_MODE[substrate_name],
         prompts=LAB_BASE,
         channels={"proposer": channel, "selector": channel},
         domain_word="practice area",
@@ -522,11 +538,15 @@ class LabAdapter:
             self.substrate = OpencodeSubstrate(launcher=self._launch_oc)
             self.model = model or config.SOLVER_MODEL_OC
             self._results_root = config.RUNS / "lab" / "results" / "oc"
-        else:
+        elif substrate == "cx":
             self.substrate = CodexSubstrate(launcher=self._launch_cx)
             self.model = model or config.SOLVER_MODEL_CX
 
             self._results_root = config.RUNS / "lab" / "results" / "cx"
+        else:
+            self.substrate = ClaudeCodeSubstrate(launcher=self._launch_cc)
+            self.model = model or config.SOLVER_MODEL_CC
+            self._results_root = config.RUNS / "lab" / "results" / "cc"
         self.timeout = int(timeout or 3600)
         self.skill_mode = skill_mode
         self.solver_effort = solver_effort
@@ -734,6 +754,66 @@ class LabAdapter:
             dirs.append(self._run_dir(run_id))
         return dirs
 
+    def _launch_cc(self, req: RunRequest, install: Install) -> list[Path]:
+        runner = config.lab_repo() / _RUNNER_REL["cc"]
+        _require_runner(runner)
+        harness_dir = install.staging_dir
+        staged_base = None
+        if install.extras.get("harness") == "base":
+            # BASE is an editable tree; give it the same runtime layout a proposal gets.
+            staged_base = Path(tempfile.mkdtemp(prefix="adapt-cc-base-"))
+            install_tree(install.staging_dir, staged_base)
+            harness_dir = staged_base
+        dirs = []
+        try:
+            for run_id in req.run_ids:
+                cmd = [
+                    str(config.LAB_PYTHON),
+                    "-u",
+                    str(runner),
+                    "--task",
+                    req.task_ref,
+                    "--run-id",
+                    run_id,
+                    "--model",
+                    self.model,
+                    "--reasoning-effort",
+                    self.solver_effort,
+                    "--timeout",
+                    str(req.timeout),
+                    "--harness-dir",
+                    str(harness_dir),
+                ]
+                if config.CLAUDE_MAX_BUDGET_USD:
+                    cmd += ["--max-budget-usd", config.CLAUDE_MAX_BUDGET_USD]
+                env = {
+                    **_lab_env(),
+                    "PYTHONPATH": f"{config.lab_repo()}{os.pathsep}{config.PKG.parent}",
+                    "HARNESS2_ROOT": str(config.PKG.parent),
+                    "ADAPT_LABCC_RESULTS": str(self._results_root),
+                    "ADAPT_LABCC_SCRATCH": os.environ.get("ADAPT_LABCC_SCRATCH")
+                    or str(config.RUNS / "lab" / "scratch"),
+                }
+                try:
+                    run_detached(
+                        cmd,
+                        cwd=config.lab_repo(),
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=req.timeout + 900,
+                    )
+                except subprocess.TimeoutExpired:
+                    print(
+                        f"  [lab-cc] runner wall-timeout for {req.task_ref} @ {run_id}", flush=True
+                    )
+                dirs.append(self._run_dir(run_id))
+        finally:
+            if staged_base is not None:
+                shutil.rmtree(staged_base, ignore_errors=True)
+        return dirs
+
     def _safe_rmtree(self, d: Path) -> None:
         """rm -rf restricted to this cell's results root — a guard, not a convenience."""
         d = Path(d).resolve()
@@ -759,8 +839,7 @@ class LabAdapter:
 
     def trajectory(self, run_dir: Path, *, obs_trunc: int) -> str:
         """The substrate's ONE renderer over the raw session stream, effectively uncapped."""
-        name = "opencode_session.jsonl" if self.substrate.name == "oc" else "codex_session.jsonl"
-        stream = Path(run_dir) / name
+        stream = Path(run_dir) / _SESSION_FILE[self.substrate.name]
         if not stream.is_file():
             return f"(no trajectory recorded for {Path(run_dir).name})"
         return self.substrate.read_trajectory(stream, obs_trunc=obs_trunc, max_chars=10**9)
@@ -823,7 +902,7 @@ class LabAdapter:
         if self.substrate.name == "oc":
             d = self.spec.runs_root / f"_base_harness_{self.skill_mode}_{os.getpid()}"
         else:
-            d = self.spec.runs_root / f"_base_harness_cx_{os.getpid()}"
+            d = self.spec.runs_root / f"_base_harness_{self.substrate.name}_{os.getpid()}"
         with _BASE_LOCK:
             if d not in _BASE_DONE:
                 if self.substrate.name == "oc":
@@ -837,8 +916,10 @@ class LabAdapter:
                         },
                         d,
                     )
-                else:
+                elif self.substrate.name == "cx":
                     HT.write_tree(CODEX_SURFACE, {"AGENTS.md": CODEX_BASE_BODY}, d)
+                else:
+                    HT.write_tree(CLAUDE_CODE_SURFACE, {"CLAUDE.md": CLAUDE_BASE_BODY}, d)
                 _BASE_DONE.add(d)
         return d
 
@@ -848,7 +929,7 @@ class LabAdapter:
         if self.substrate.name == "oc":
             self._validate_oc(tree)
         else:
-            self._validate_cx(tree)
+            self._validate_root_body(tree)
 
     def _validate_oc(self, tree: dict[str, str]) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -883,22 +964,25 @@ class LabAdapter:
         if errs:
             raise ValueError(" | ".join(errs))
 
-    def _validate_cx(self, tree: dict[str, str]) -> None:
-        body = HT.always_on_text(CODEX_SURFACE, tree)
+    def _validate_root_body(self, tree: dict[str, str]) -> None:
+        """cx and cc: the one always-on file must carry both workspace rules."""
+        surface = self.substrate.surface()
+        body = HT.always_on_text(surface, tree)
+        f = surface.always_on[0]
         errs = []
         if "output/" not in body:
             errs.append(
-                "AGENTS.md must say deliverables go to `output/<filename>` "
-                "explicitly -- under codex nothing routes relative paths, and "
-                "anything left outside output/ is invisible to grading. Add the "
-                "output/ rule back to AGENTS.md."
+                f"{f} must say deliverables go to `output/<filename>` "
+                f"explicitly -- nothing routes relative paths, and "
+                f"anything left outside output/ is invisible to grading. Add the "
+                f"output/ rule back to {f}."
             )
         if "read_doc.py" not in body:
             errs.append(
-                "AGENTS.md must say .docx/.pdf/.pptx/.xlsx are readable only via "
-                "`python3 scripts/read_doc.py <path>` -- shell reads of binary "
-                "documents return noise, silently. Add the read_doc.py rule back "
-                "to AGENTS.md."
+                f"{f} must say .docx/.pdf/.pptx/.xlsx are readable only via "
+                f"`python3 scripts/read_doc.py <path>` -- shell reads of binary "
+                f"documents return noise, silently. Add the read_doc.py rule back "
+                f"to {f}."
             )
         if errs:
             raise ValueError(" | ".join(errs))
@@ -939,7 +1023,7 @@ class LabAdapter:
             _require_runner(config.lab_repo() / "opencode" / "run_opencode.py")
             _require_runtime_scripts()
         else:
-            _require_runner(config.lab_repo() / "external" / "adapt_runs_cx" / "run_codex_lab.py")
+            _require_runner(config.lab_repo() / _RUNNER_REL[self.substrate.name])
         try:
             r = subprocess.run(
                 [str(config.LAB_PYTHON), "-c", "import evaluation.scoring"],

@@ -140,6 +140,13 @@ changing either. `harness2-check` reports stale configuration until then.
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
 
+## Claude Code executor and improver
+
+Pass `--substrate cc` to run rollouts with Claude Code (`claude -p`), and set
+`HARNESS2_PROPOSER_CHANNEL=claude_cli` to run the improver on it too. Together
+they need neither OpenCode nor Vertex AI. See [Claude Code](CLAUDE_CODE.md) for
+configuration, the editable surface, and isolation.
+
 ## Network access during setup
 
 Setup downloads dependencies from the following hosts:

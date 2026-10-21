@@ -32,11 +32,14 @@ def main(argv=None):
         default=None,
         help="wb only: one subset to install; omitted installs office, web, and code",
     )
-    p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
+    p.add_argument("--substrate", choices=("oc", "cx", "cc"), default="oc")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
     if args.subset and args.benchmark != "wb":
         p.error("--subset only applies to wb")
+    if args.substrate == "cc" and args.benchmark == "wb":
+        p.error("--substrate cc is not available for wb (no Claude Code container agent)")
+    need_opencode = config.uses_opencode(args.substrate)
     dry = args.dry_run
     missing = install.missing_runners()
     if missing and not dry:
@@ -46,21 +49,29 @@ def main(argv=None):
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[args.benchmark]
     try:
         if not dry:
-            for binary in ("git", "uv", "npm") + (
-                ("docker", "curl") if args.benchmark == "wb" else ()
+            for binary in (
+                ("git", "uv")
+                + (("npm",) if need_opencode else ())
+                + (("docker", "curl") if args.benchmark == "wb" else ())
             ):
                 if not shutil.which(binary):
                     raise RuntimeError(f"Missing {binary}; see README.md")
-        install.clone("opencode", dry_run=dry)
-        install.patch("opencode", dry_run=dry)
-        install.run(
-            ["npm", "install", "--prefix", config.DEPENDENCIES / "tools", "bun@1.3.11"], dry_run=dry
-        )
-        install.run(
-            [config.BUN, "install", "--frozen-lockfile", "--ignore-scripts"],
-            cwd=config.OPENCODE_DIR,
-            dry_run=dry,
-        )
+        if args.substrate == "cc":
+            from .. import preflight
+
+            preflight.claude_cli()
+        if need_opencode:
+            install.clone("opencode", dry_run=dry)
+            install.patch("opencode", dry_run=dry)
+            install.run(
+                ["npm", "install", "--prefix", config.DEPENDENCIES / "tools", "bun@1.3.11"],
+                dry_run=dry,
+            )
+            install.run(
+                [config.BUN, "install", "--frozen-lockfile", "--ignore-scripts"],
+                cwd=config.OPENCODE_DIR,
+                dry_run=dry,
+            )
         install.clone(name, dry_run=dry)
         install.patch(name, dry_run=dry)
         install.overlays(name, dry_run=dry)

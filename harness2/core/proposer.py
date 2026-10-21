@@ -51,6 +51,9 @@ _DROP_ENV = (
     "CLAUDE_CODE_USE_BEDROCK",
 )
 
+# Set when harness2 itself runs inside a Claude Code session; a child CLI must not inherit them.
+_NESTED_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+
 
 def _obj(d: dict, key: str) -> dict:
     """`d[key]` when it is a dict, else {}."""
@@ -103,6 +106,12 @@ class Proposer:
             raise ValueError("Set HARNESS2_IMPROVER_MODEL before starting model sessions")
 
     def env(self) -> dict[str, str]:
+        if self.spec.kind == "claude_cli" and not config.CLAUDE_USE_VERTEX:
+            # Claude Code's own auth: ANTHROPIC_API_KEY, a logged-in CLI, or a provider the
+            # operator selected (CLAUDE_CODE_USE_VERTEX / _BEDROCK) -- all left as they are.
+            e = {k: v for k, v in os.environ.items() if k not in _NESTED_ENV}
+            e["ANTHROPIC_MODEL"] = self.spec.model
+            return e
         e = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
         if self.spec.kind == "claude_cli":
             e.update(
@@ -210,15 +219,23 @@ class Proposer:
     def _claude_cli(
         self, cwd: Path, mission: str, system: str, wall: int
     ) -> tuple[str, float, str]:
-        cli = shutil.which("claude") or "claude"
+        cli = shutil.which(config.CLAUDE_BIN) or config.CLAUDE_BIN
         cmd = [
             cli,
             "--dangerously-skip-permissions",
             "-p",
             "--output-format",
             "json",
+            "--model",
+            self.spec.model,
             "--effort",
             self.spec.effort,
+            # The operator's own CLAUDE.md, hooks, plugins and MCP servers stay out of the
+            # improver session: its instructions are the mission and the system text.
+            "--setting-sources",
+            "project",
+            "--strict-mcp-config",
+            "--no-session-persistence",
         ]
         stdin = mission
         if system:
