@@ -1,0 +1,69 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Harness: Check DAMS",
+      "type": "shell",
+      "command": "harness check dams",
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Harness: Check Blueprint",
+      "type": "shell",
+      "command": "harness check bp",
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Harness: Dry Run DAMS",
+      "type": "shell",
+      "command": "harness dry dams",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Harness: Dry Run Blueprint",
+      "type": "shell",
+      "command": "harness dry bp",
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "Harness: Run Sweep DAMS",
+      "type": "shell",
+      "command": "harness run dams",
+      "problemMatcher": []
+    },
+    {
+      "label": "Harness: Run Sweep Blueprint",
+      "type": "shell",
+      "command": "harness run bp",
+      "problemMatcher": []
+    },
+    {
+      "label": "Harness: Judge DAMS",
+      "type": "shell",
+      "command": "harness judge dams",
+      "problemMatcher": []
+    },
+    {
+      "label": "Harness: Judge Blueprint",
+      "type": "shell",
+      "command": "harness judge bp",
+      "problemMatcher": []
+    },
+    {
+      "label": "Harness: Report DAMS",
+      "type": "shell",
+      "command": "harness report dams",
+      "problemMatcher": []
+    },
+    {
+      "label": "Harness: Report Blueprint",
+      "type": "shell",
+      "command": "harness report bp",
+      "problemMatcher": []
+    }
+  ]
+}
