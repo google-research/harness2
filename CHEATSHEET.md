@@ -4,40 +4,42 @@ Panduan ringkas perintah operasional untuk benchmarking dan optimasi agen di **A
 
 ---
 
-## 1. Menggunakan Script Helper (`.\harness.ps1`)
+## 1. Menggunakan Perintah Global CLI (`harness`)
 
-Anda tidak perlu menghafal parameter CLI yang panjang. Cukup panggil `.\harness.ps1`:
+Perintah `harness` sudah terpasang di path eksekutabel sistem Anda. Anda dapat menjalankannya langsung dari terminal PowerShell/CMD di direktori proyek mana pun tanpa perlu `cd` ke `D:\Apps\harness2`:
 
 ```powershell
 # Menampilkan menu & panduan cepat
-.\harness.ps1
+harness
 
 # Cek kesiapan adapter
-.\harness.ps1 check dams
-.\harness.ps1 check bp
+harness check dams
+harness check bp
 
 # Preview urutan task (Zero Cost / Tanpa Panggil API)
-.\harness.ps1 dry dams
-.\harness.ps1 dry bp
+harness dry dams
+harness dry bp
 
 # Menjalankan eksperimen nyata LLM (Propose-Probe-Compose)
-.\harness.ps1 run dams
-.\harness.ps1 run bp
+harness run dams
+harness run bp
 
 # Menjalankan hanya 1 domain tertentu
-.\harness.ps1 run dams backend         # Khusus backend DAMS
-.\harness.ps1 run dams architecture    # Khusus arsitektur DAMS
-.\harness.ps1 run bp wi                # Khusus Work Instructions Blueprint
-.\harness.ps1 run bp integrity         # Khusus Doc Integrity Blueprint
+harness run dams backend         # Khusus backend DAMS
+harness run dams architecture    # Khusus arsitektur DAMS
+harness run bp wi                # Khusus Work Instructions Blueprint
+harness run bp integrity         # Khusus Doc Integrity Blueprint
 
 # Penilaian otomatis hasil deliverable
-.\harness.ps1 judge dams
-.\harness.ps1 judge bp
+harness judge dams
+harness judge bp
 
 # Menampilkan laporan akhir skor & biaya USD
-.\harness.ps1 report dams
-.\harness.ps1 report bp
+harness report dams
+harness report bp
 ```
+
+*(Catatan: Anda juga tetap bisa memanggil `.\harness.ps1` jika sedang berada di dalam direktori `D:\Apps\harness2`)*
 
 ---
 
