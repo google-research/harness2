@@ -26,10 +26,23 @@ from .substrate.opencode import OpencodeSubstrate
 
 
 def check(adapter, *, judge=False) -> list[str]:
+    bench = adapter.spec.name.split("-", 1)[0]
+    errors = []
+
+    if bench == "dams":
+        for validate in (
+            adapter.tasks,
+            getattr(adapter, "preflight", lambda: None),
+        ):
+            try:
+                validate()
+            except (OSError, RuntimeError, ValueError) as exc:
+                errors.append(str(exc))
+        return errors
+
     missing = missing_runners()
     if missing:
         return [missing]
-    errors = []
 
     def probe(label, cmd, *, cwd=None, remedy="run harness2-setup for this benchmark"):
         try:

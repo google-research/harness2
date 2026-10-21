@@ -1,0 +1,9 @@
+{
+  "id": "backend-kpi-endpoint",
+  "domain": "backend",
+  "prompt": "Create an API Controller endpoint for KPI Parameter P-04 in Modules/Monitoring. Implement ParameterKpiController with calculate() method that accepts parameter_id and period, validates input via FormRequest, and returns JSON response with status, value, and deviation. Ensure unit test ParameterKpiEndpointTest passes.",
+  "expected_files": [
+    "ParameterKpiController.php",
+    "ParameterKpiRequest.php"
+  ]
+}

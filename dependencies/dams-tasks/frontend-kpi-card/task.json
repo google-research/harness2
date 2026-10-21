@@ -1,0 +1,8 @@
+{
+  "id": "frontend-kpi-card",
+  "domain": "frontend",
+  "prompt": "Create a Vue 3 + Vuetify 3.10 Materio component (KpiParameterCard.vue) displaying a KPI parameter card with dynamic status badge (Normal=success, Warning=warning, Critical=error), title, current value, target, and formatted deviation percentage. Props must be strictly typed using TypeScript.",
+  "expected_files": [
+    "KpiParameterCard.vue"
+  ]
+}

@@ -25,7 +25,7 @@ from harness2 import config, install
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("benchmark", choices=("jb", "lab", "wb"))
+    p.add_argument("benchmark", choices=("jb", "lab", "wb", "dams"))
     p.add_argument(
         "--subset",
         choices=("office", "web", "code"),
@@ -43,6 +43,27 @@ def main(argv=None):
         p.exit(1, f"setup failed: {missing}\n")
     if missing:
         print(f"Note: {missing}")
+    if args.benchmark == "dams":
+        dams_tasks = config.DEPENDENCIES / "dams-tasks"
+        if not dams_tasks.is_dir():
+            p.exit(1, f"setup failed: DAMS tasks directory missing at {dams_tasks}\n")
+        tasks = [
+            d.name
+            for d in dams_tasks.iterdir()
+            if d.is_dir() and (d / "task.json").is_file()
+        ]
+        if not tasks:
+            p.exit(1, f"setup failed: No valid tasks found in {dams_tasks}\n")
+        print(
+            f"Verified DAMS tasks: {len(tasks)} task(s) found at {dams_tasks} "
+            f"({', '.join(sorted(tasks))})."
+        )
+        print(
+            "Setup plan complete."
+            if dry
+            else "Installation complete. Run harness2-check before an experiment."
+        )
+        return 0
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[args.benchmark]
     try:
         if not dry:

@@ -49,6 +49,10 @@ def discover(bench: str, subset: str | None = None) -> dict[str, str]:
             if not (p.parent / "instruction.md").is_file():
                 raise FileNotFoundError(f"Missing task instructions: {p.parent / 'instruction.md'}")
             tasks[p.parent.name] = domain.strip()
+    elif bench == "dams":
+        from .dams import TASK_DOMAINS
+
+        tasks = dict(TASK_DOMAINS)
     else:
         raise ValueError(f"Unknown benchmark/subset: {bench}/{subset}")
     if not tasks:

@@ -1,0 +1,9 @@
+{
+  "id": "deptrac-boundary-contract",
+  "domain": "architecture",
+  "prompt": "Fix illegal architectural coupling in HelpdeskService.php: Helpdesk module is directly importing Employee model from Modules/Employee/Entities/Employee. Refactor it to use EmployeeContractInterface in Modules/Core/Contracts to satisfy Deptrac MOD-003 boundary rules.",
+  "expected_files": [
+    "HelpdeskService.php",
+    "EmployeeContractInterface.php"
+  ]
+}

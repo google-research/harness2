@@ -1,0 +1,29 @@
+deptrac:
+  paths:
+    - ./source
+    - ./Modules
+  layers:
+    - name: Core
+      collectors:
+        - type: directory
+          value: .*(Core|Contracts).*
+        - type: classNameRegex
+          value: ^Modules\\Core\\.*
+    - name: Helpdesk
+      collectors:
+        - type: directory
+          value: .*Helpdesk.*
+        - type: classNameRegex
+          value: ^Modules\\Helpdesk\\.*
+    - name: Employee
+      collectors:
+        - type: directory
+          value: .*Employee.*
+        - type: classNameRegex
+          value: ^Modules\\Employee\\.*
+  ruleset:
+    Helpdesk:
+      - Core
+    Employee:
+      - Core
+    Core: []
