@@ -40,6 +40,11 @@ Changing the judge model changes the measurement. Outputs are under
 
 ## JobBench
 
+The experimental Qwen Code executor supports this benchmark with
+`--substrate qw` on setup, check, run, judge and report commands. It still uses
+OpenCode for improvement; see [Qwen setup](SETUP.md#qwen-code-executor-experimental)
+for the independent model configuration and validation limits.
+
 Upstream: [Job-Bench/job-bench-eval](https://github.com/Job-Bench/job-bench-eval).
 Data: [JobBench/job-bench](https://huggingface.co/datasets/JobBench/job-bench).
 Professional tasks, with the library grouped by the dataset's occupation

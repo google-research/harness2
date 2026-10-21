@@ -614,6 +614,37 @@ class _SurfaceText:
     tts_surface: str
 
 
+_SURFACE_QWEN = """# QWEN CODE HARNESS EDIT CONTRACT
+
+Edit only these source components in context/harness/:
+- systemprompt.md: supplemental instructions appended to the built-in Qwen prompt.
+- guardrails.md, LongTermMEMORY.md, tool_descriptions/tool_guidance.md: always-on
+  rules, durable memory and tool guidance, compiled into QWEN.md in that order.
+  The four always-on files together may contain at most 24,000 characters.
+- .qwen/skills/<name>/SKILL.md: on-demand workflows with YAML frontmatter consisting
+  ONLY of name: <directory-name> and description: <trigger>. Name the skill's trigger
+  in guardrails.md in the same edit. Use the skill tool to load it. Skill helpers
+  live in .qwen/skills/<name>/scripts/. Native skill invocation expands $SKILL_DIR
+  to the skill directory; use that path when invoking its helpers.
+- scripts/<name>.py: deterministic helpers invoked with python3 scripts/<name>.py.
+- .qwen/hooks.json: ONLY a top-level hooks object. Supported events are PreToolUse
+  and PostToolUse. Each event contains a list of entries with matcher and hooks.
+  Hooks allow ONLY type: command, command, and an optional timeout of 1..60 seconds
+  (default 10). Match actual tools such as write_file or run_shell_command.
+  PreToolUse can deny with hookSpecificOutput.hookEventName=PreToolUse,
+  permissionDecision=deny, permissionDecisionReason=<reason>. PostToolUse can return
+  hookSpecificOutput.hookEventName=PostToolUse and additionalContext=<hint>.
+  Put helper logic in scripts/ shipped in this harness. No async, HTTP, prompt hooks.
+
+Do not emit QWEN.md, .qwen/settings.json or .harness2/*: they are generated.
+Do not emit sub_agents, agents or OpenCode plugins: delegation is unavailable.
+Do not change models, credentials, tool policy or time limits.
+Prefer on-demand skills and deterministic scripts to extra always-on prose.
+Use evidence from the provided task executions to choose changes. Edit only the
+files whose behavior needs changing; omitted components are inherited.
+"""
+
+
 def _build_surface_texts() -> dict[str, _SurfaceText]:
     oc_tts = "\n\n".join(
         [
@@ -630,6 +661,18 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
         ]
     )
     return {
+        "qwen": _SurfaceText(
+            surface_md=_SURFACE_QWEN,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__",
+                "command hook in `.qwen/hooks.json` before or after a tool call",
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "Name each new skill and its trigger in guardrails.md in the same edit.",
+            ),
+            tts_surface=_SURFACE_QWEN,
+        ),
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
             inv=_INV_TEMPLATE.replace(

@@ -43,6 +43,7 @@ class SubprocessEnvTests(unittest.TestCase):
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
             "HARNESS2_BRIDGE_KEY": "secret-bridge",
             "HARNESS2_CODEX_API_KEY": "secret-codex",
+            "HARNESS2_QWEN_API_KEY": "secret-qwen",
             "OPENAI_API_KEY": "sk-judge",
             "ANTHROPIC_API_KEY": "sk-ant",
             "ANTHROPIC_AUTH_TOKEN": "tok-ant",
@@ -74,6 +75,7 @@ class SubprocessEnvTests(unittest.TestCase):
                         "HARNESS2_JUDGE_API_KEY",
                         "HARNESS2_BRIDGE_KEY",
                         "HARNESS2_CODEX_API_KEY",
+                        "HARNESS2_QWEN_API_KEY",
                         "OPENAI_API_KEY",
                         "ANTHROPIC_API_KEY",
                         "ANTHROPIC_AUTH_TOKEN",
@@ -110,6 +112,7 @@ class SubprocessEnvTests(unittest.TestCase):
                 )
                 demo_env = demo_run.call_args.kwargs["env"]
                 self.assertNotIn("HARNESS2_JUDGE_API_KEY", set(demo_env))
+                self.assertNotIn("HARNESS2_QWEN_API_KEY", set(demo_env))
                 self.assertNotIn("GITHUB_TOKEN", set(demo_env))
 
             jb = jobbench.JobBenchAdapter.__new__(jobbench.JobBenchAdapter)
@@ -125,6 +128,7 @@ class SubprocessEnvTests(unittest.TestCase):
                     Install(staging_dir=self.root, fingerprint="fp"),
                 )
             self.assertNotIn("HARNESS2_JUDGE_API_KEY", set(captured))
+            self.assertNotIn("HARNESS2_QWEN_API_KEY", set(captured))
             self.assertNotIn("GITHUB_TOKEN", set(captured))
 
             jb_repo_dir = self.root / "jb_repo"
@@ -138,6 +142,7 @@ class SubprocessEnvTests(unittest.TestCase):
                 jb._extract(self.root / "jb_deliverable")
                 extract_env = jb_extract_run.call_args.kwargs["env"]
                 self.assertNotIn("HARNESS2_JUDGE_API_KEY", set(extract_env))
+                self.assertNotIn("HARNESS2_QWEN_API_KEY", set(extract_env))
                 self.assertNotIn("GITHUB_TOKEN", set(extract_env))
 
             (self.root / "RUBRICS.json").write_text("{}\n")
@@ -155,6 +160,7 @@ class SubprocessEnvTests(unittest.TestCase):
                 jb_judge_env = jb_judge_run.call_args.kwargs["env"]
                 self.assertEqual(jb_judge_env["JUDGE_API_KEY"], "secret-judge")
                 self.assertNotIn("HARNESS2_JUDGE_API_KEY", set(jb_judge_env))
+                self.assertNotIn("HARNESS2_QWEN_API_KEY", set(jb_judge_env))
                 self.assertNotIn("GITHUB_TOKEN", set(jb_judge_env))
 
             wb_jobs = self.root / "wb_repo" / "configs" / "jobs"
@@ -181,6 +187,7 @@ class SubprocessEnvTests(unittest.TestCase):
                 )
                 wb_env = popen.call_args.kwargs["env"]
                 self.assertNotIn("HARNESS2_JUDGE_API_KEY", set(wb_env))
+                self.assertNotIn("HARNESS2_QWEN_API_KEY", set(wb_env))
                 self.assertNotIn("GITHUB_TOKEN", set(wb_env))
 
     def test_lab_launchers_keep_only_their_own_keys(self):
@@ -192,6 +199,7 @@ class SubprocessEnvTests(unittest.TestCase):
             "ANTHROPIC_API_KEY": "sk-ant",
             "ANTHROPIC_BASE_URL": "https://proxy.example/v1",
             "HARNESS2_CODEX_API_KEY": "secret-codex",
+            "HARNESS2_QWEN_API_KEY": "secret-qwen",
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
             "GITHUB_TOKEN": "ghp_secret",
         }
@@ -265,6 +273,7 @@ class SubprocessEnvTests(unittest.TestCase):
             "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
             "GITHUB_TOKEN": "ghp_secret",
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
+            "HARNESS2_QWEN_API_KEY": "secret-qwen",
         }
         cases = {
             "openai/gpt-test": {"OPENAI_API_KEY"},

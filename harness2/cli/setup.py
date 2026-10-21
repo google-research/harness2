@@ -21,6 +21,7 @@ import shutil
 import subprocess
 
 from harness2 import config, install
+from harness2.cli._common import SUBSTRATES, validate_cell
 
 
 def main(argv=None):
@@ -32,9 +33,13 @@ def main(argv=None):
         default=None,
         help="wb only: one subset to install; omitted installs office, web, and code",
     )
-    p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
+    p.add_argument("--substrate", choices=SUBSTRATES, default="oc")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
+    try:
+        validate_cell(args.benchmark, args.substrate)
+    except ValueError as exc:
+        p.error(str(exc))
     if args.subset and args.benchmark != "wb":
         p.error("--subset only applies to wb")
     dry = args.dry_run
@@ -106,6 +111,8 @@ def main(argv=None):
                 )
         if args.substrate == "cx":
             install.codex(dry_run=dry)
+        elif args.substrate == "qw":
+            install.qwen(dry_run=dry)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
         p.exit(1, f"setup failed: {exc}\n")
     print(
