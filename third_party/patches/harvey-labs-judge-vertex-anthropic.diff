@@ -1,12 +1,16 @@
+diff --git a/evaluation/judge.py b/evaluation/judge.py
+index ffad89d..ed98d84 100644
 --- a/evaluation/judge.py
 +++ b/evaluation/judge.py
-@@ -28,8 +28,12 @@
+@@ -28,8 +28,14 @@ _VERDICT_SCHEMA = {
  }
  
  def _detect_provider(model: str) -> str:
 -    """Return 'anthropic', 'google', 'openai', or 'mistral' from the model name."""
-+    """Return 'vertex-anthropic', 'anthropic', 'google', 'openai', or 'mistral'."""
++    """Return 'vertex-anthropic', 'anthropic', 'google', 'openai', 'openai-compatible', or 'mistral'."""
      name = model.lower()
++    if name.startswith("openai-compatible/") or name.startswith("openai-compatible:"):
++        return "openai-compatible"
 +    if name.startswith("vertex/gemini"):
 +        return "vertex-google"
 +    if name.startswith("vertex/"):
@@ -14,7 +18,24 @@
      if name.startswith("claude"):
          return "anthropic"
      if name.startswith("gemini"):
-@@ -50,9 +54,24 @@
+@@ -40,6 +46,16 @@ def _detect_provider(model: str) -> str:
+         return "mistral"
+     raise ValueError(f"Unknown judge provider for model: {model!r}")
+ 
++
++def _strip_openai_compatible_prefix(model: str) -> str:
++    """Return the bare model id after an openai-compatible/ or openai-compatible: prefix."""
++    lower = model.lower()
++    if lower.startswith("openai-compatible/"):
++        return model[len("openai-compatible/") :]
++    if lower.startswith("openai-compatible:"):
++        return model[len("openai-compatible:") :]
++    return model
++
+ class Judge:
+     """LLM-as-judge that evaluates agent outputs against rubric criteria."""
+ 
+@@ -50,12 +66,48 @@ class Judge:
              model: Model ID (e.g. 'claude-sonnet-4-6', 'gemini-3-flash-preview',
                  'gpt-5.4', 'mistral-medium-3.5').
          """
@@ -23,7 +44,12 @@
 -        if self.provider == "anthropic":
 +        # 'vertex/claude-opus-4-8' -> API model id 'claude-opus-4-8'. The bare
 +        # id is what lands in scores_<model>.json filenames, so keep it clean.
-+        self.model = model.split("/", 1)[1] if self.provider.startswith("vertex-") else model
++        if self.provider.startswith("vertex-"):
++            self.model = model.split("/", 1)[1]
++        elif self.provider == "openai-compatible":
++            self.model = _strip_openai_compatible_prefix(model)
++        else:
++            self.model = model
 +        if self.provider == "vertex-anthropic":
 +            # Claude on Vertex via ADC — no API key. Anthropic models on
 +            # Vertex are served from the global endpoint.
@@ -41,7 +67,26 @@
              self.client = anthropic.Anthropic(max_retries=1)
          elif self.provider == "google":
              self.client = genai.Client()
-@@ -65,7 +84,13 @@
++        elif self.provider == "openai-compatible":
++            # Chat Completions against a self-hosted / third-party OpenAI-compatible
++            # endpoint. HARNESS2_JUDGE_* is the harness2 wiring; OPENAI_* is the
++            # OpenAI SDK default so a deployer can use either.
++            base_url = os.environ.get("HARNESS2_JUDGE_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
++            api_key = (
++                os.environ.get("HARNESS2_JUDGE_API_KEY")
++                or os.environ.get("OPENAI_API_KEY")
++                or "EMPTY"
++            )
++            if not base_url:
++                raise ValueError(
++                    "openai-compatible judge requires HARNESS2_JUDGE_BASE_URL "
++                    "(or OPENAI_BASE_URL)"
++                )
++            self.client = openai.OpenAI(base_url=base_url, api_key=api_key)
+         elif self.provider == "openai":
+             self.client = openai.OpenAI()
+         else:  # mistral
+@@ -65,7 +117,13 @@ class Judge:
              )
  
      def evaluate(
@@ -56,7 +101,7 @@
      ) -> dict:
          """Send a formatted prompt to the judge and parse the JSON response.
  
-@@ -78,13 +103,78 @@
+@@ -78,14 +136,81 @@ class Judge:
              Parsed JSON dict from the judge's response.
          """
          prompt = prompt_template.format(**variables)
@@ -67,10 +112,12 @@
 -        if self.provider == "google":
 +        if self.provider in ("google", "vertex-google"):
              return self._evaluate_google(prompt, temperature, _retries)
++        if self.provider == "openai-compatible":
++            return self._evaluate_openai_compatible(prompt, temperature, _retries)
          if self.provider == "openai":
              return self._evaluate_openai(prompt, temperature, _retries)
          return self._evaluate_mistral(prompt, temperature, _retries)
-+
+ 
 +    # System steer replaces the structured-output constraint we can't use on
 +    # Vertex (see _evaluate_anthropic_vertex). The rubric prompt already asks
 +    # for a fenced JSON object, and _parse_json strips the fences.
@@ -133,10 +180,51 @@
 +        raise ValueError(
 +            f"Judge returned unparseable response after {_retries} attempts: {last_err}"
 +        )
- 
++
      def _evaluate_anthropic(self, prompt: str, temperature: float, _retries: int) -> dict:
          last_err: Exception | None = None
-@@ -236,11 +326,21 @@
+         for attempt in range(_retries):
+@@ -158,6 +283,39 @@ class Judge:
+             f"Judge returned unparseable response after {_retries} attempts: {last_err}"
+         )
+ 
++    def _evaluate_openai_compatible(self, prompt: str, temperature: float, _retries: int) -> dict:
++        """Chat Completions for OpenAI-compatible gateways (DeepSeek, vLLM, Ollama, …).
++
++        The native `openai` provider still uses the Responses API. Compatible
++        servers typically expose only `/v1/chat/completions`, so this path uses
++        that and asks for a JSON object on early attempts (dropped on the last,
++        matching the other branches' unstructured fallback).
++        """
++        last_err: Exception | None = None
++        for attempt in range(_retries):
++            kwargs = {
++                "model": self.model,
++                "messages": [{"role": "user", "content": prompt}],
++                "temperature": temperature,
++                "max_tokens": 16384,
++            }
++            if attempt < _retries - 1:
++                kwargs["response_format"] = {"type": "json_object"}
++            try:
++                response = self.client.chat.completions.create(**kwargs)
++            except Exception as e:
++                last_err = e
++                continue
++            message = response.choices[0].message if response.choices else None
++            text = (getattr(message, "content", None) or "") if message else ""
++            try:
++                return self._parse_json(text)
++            except (ValueError, json.JSONDecodeError) as e:
++                last_err = e
++        raise ValueError(
++            f"Judge returned unparseable response after {_retries} attempts: {last_err}"
++        )
++
+     def _evaluate_openai(self, prompt: str, temperature: float, _retries: int) -> dict:
+         last_err: Exception | None = None
+         for attempt in range(_retries):
+@@ -236,11 +394,21 @@ class Judge:
          match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
          if match:
              try:
@@ -160,7 +248,7 @@
          for i, ch in enumerate(text):
              if ch == '{':
                  depth = 0
-@@ -251,9 +351,61 @@
+@@ -251,9 +419,61 @@ class Judge:
                          depth -= 1
                      if depth == 0:
                          try:

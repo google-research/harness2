@@ -92,6 +92,14 @@ def check(adapter, *, judge=False) -> list[str]:
             [config.LAB_PYTHON, "-c", "import evaluation.scoring; import google.auth, anthropic"],
             cwd=repo,
         )
+        if judge and config.JUDGE_MODEL.lower().startswith("openai-compatible"):
+            if not (
+                config.env("HARNESS2_JUDGE_BASE_URL") or config.env("OPENAI_BASE_URL")
+            ):
+                errors.append(
+                    "LAB openai-compatible judge requires HARNESS2_JUDGE_BASE_URL "
+                    "(or OPENAI_BASE_URL)"
+                )
     elif bench == "jb" and judge:
         probe(
             "JobBench document and judge dependencies",

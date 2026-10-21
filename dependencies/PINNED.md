@@ -19,7 +19,8 @@ checkout at another revision.
 - `job-bench-eval-judge.diff`: passes reasoning effort, raises the judge output
   cap, and rejects empty completions.
 - `harvey-labs-judge-vertex-anthropic.diff`: adds Claude and Gemini Vertex judges
-  using ADC and improves malformed/ambiguous response handling.
+  using ADC, an `openai-compatible/<model>` Chat Completions path for third-party
+  OpenAI-compatible endpoints, and improves malformed/ambiguous response handling.
 - `workbuddy-bench-runtime.diff`: registers the release's executor adapters,
   preserves declared harness mounts, refreshes short-lived credentials, and
   preserves Gemini thought signatures across tool calls. It also fixes an

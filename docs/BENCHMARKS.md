@@ -35,7 +35,12 @@ The judge reads outputs only after selection. Reports use Partial (fraction of
 criteria passed) and All-pass (all criteria passed). A failed judge remains
 unscored and writes its output to `judge.log` in the run directory; a Vertex
 `429 RESOURCE_EXHAUSTED` there means quota, so rerun `harness2-judge` later.
-Changing the judge model changes the measurement. Outputs are under
+Changing the judge model changes the measurement. For a third-party or
+self-hosted OpenAI-compatible judge, set
+`HARNESS2_JUDGE_MODEL=openai-compatible/<model>` plus
+`HARNESS2_JUDGE_BASE_URL` and `HARNESS2_JUDGE_API_KEY` (or the OpenAI SDK's
+`OPENAI_BASE_URL` / `OPENAI_API_KEY`). That path uses Chat Completions; bare
+`gpt-*` / `o*` ids still use the native Responses API. Outputs are under
 `runs/lab/`.
 
 ## JobBench

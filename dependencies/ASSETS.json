@@ -27,7 +27,7 @@
   "third_party/licenses/job-bench-eval.LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
   "third_party/licenses/opencode.LICENSE": "625f0f619133f89bbbb2abe37369613dfa1885eba1e50d02170deb62bb42cb6b",
   "third_party/licenses/workbuddy-bench.LICENSE": "b466fc7a63acc5cac4275fc4b0f1e22f332ad188ea600b217076ea3a8e040956",
-  "third_party/patches/harvey-labs-judge-vertex-anthropic.diff": "7fc4385025916054be504b98f063e2a161515b8b4dc3bcc5cd6f4272b707ed6d",
+  "third_party/patches/harvey-labs-judge-vertex-anthropic.diff": "b1e8af815ea1292325b122bf3ed2bda44add72709401eb803df61502d3a1759d",
   "third_party/patches/job-bench-eval-judge.diff": "b5878bce91f6322c9fd1fa777b3a5dd3866922f704173a658d007c62456c5728",
   "third_party/patches/opencode-compat.diff": "c9a8a0e826d48f3fcfc7d818321d128c28e1f7f7c594954c19453dfca4946dc8",
   "third_party/patches/workbuddy-bench-runtime.diff": "1d581ee0c23a9a5574ce0f9317d0bda17f6c3a2556898c89b34ccbdbd5b87b3f",
