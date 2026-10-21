@@ -56,7 +56,7 @@ def main(argv=None):
             ):
                 if not shutil.which(binary):
                     raise RuntimeError(f"Missing {binary}; see README.md")
-        if args.substrate == "cc":
+        if args.substrate == "cc" and not dry:
             from .. import preflight
 
             preflight.claude_cli()

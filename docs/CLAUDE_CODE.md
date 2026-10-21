@@ -37,6 +37,7 @@ HARNESS2_CLAUDE_MAX_BUDGET_USD=5           # per-rollout `claude --max-budget-us
 HARNESS2_CLAUDE_MAX_OUTPUT_TOKENS=         # CLAUDE_CODE_MAX_OUTPUT_TOKENS for rollouts
 HARNESS2_CLAUDE_BIN=claude                 # path to the CLI
 HARNESS2_CLAUDE_USE_VERTEX=                # 1: route the improver through Vertex AI (upstream behaviour)
+HARNESS2_CLAUDE_SETTING_SOURCES=project    # add ",user" if your auth/provider config lives in ~/.claude/settings.json
 
 # Judges are unchanged; see SETUP.md.
 HARNESS2_JUDGE_MODEL=...
@@ -45,7 +46,11 @@ HARNESS2_JUDGE_MODEL=...
 The executor uses whatever credentials the `claude` CLI already has: a
 subscription login, `ANTHROPIC_API_KEY`, or a provider you selected with
 `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_USE_BEDROCK` and its own credentials.
-The improver behaves the same way unless `HARNESS2_CLAUDE_USE_VERTEX=1`. In
+Credentials kept in user settings (an `env` block or `apiKeyHelper` in
+`~/.claude/settings.json`) are not read by default, because rollouts load only
+project settings; set `HARNESS2_CLAUDE_SETTING_SOURCES=project,user` in that
+case, at the cost of your user hooks and plugins also loading. The improver
+behaves the same way unless `HARNESS2_CLAUDE_USE_VERTEX=1`. In
 that case it uses the upstream Vertex wiring (`GOOGLE_CLOUD_PROJECT`,
 `GOOGLE_CLOUD_LOCATION`) and ignores any Anthropic API key.
 
@@ -80,7 +85,8 @@ triggers work the same way as on the other executors.
 
 A proposal can add hooks, but it can't change permissions, environment
 variables, or the model: `.claude/settings.json` is always generated from
-`.claude/hooks.json` alone. The accepted hook events are `PreToolUse`,
+`.claude/hooks.json` alone. Hooks may be `command`, `prompt`, or `agent` hooks.
+The accepted hook events are `PreToolUse`,
 `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Notification`,
 `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Stop`, `SubagentStart`,
 `SubagentStop`, and `PreCompact`.
@@ -95,7 +101,14 @@ claude -p <task prompt> --output-format stream-json --verbose --include-hook-eve
   --no-session-persistence --add-dir <workspace> --model <model> [--effort ...]
 ```
 
-The working directory is the staged workspace. `--setting-sources project` and
+The working directory is the staged workspace. A JobBench task gets a second
+attempt when the first leaves no deliverable, except when it stopped on the
+`--max-budget-usd` cap, so the cap holds per task.
+
+The improver sessions also exclude the harness they are editing: they run with
+`--disable-slash-commands` and a `claudeMdExcludes` setting, so the candidate's
+`CLAUDE.md` and skills under `context/` are read as files, never loaded as
+instructions. `--setting-sources project` and
 `--strict-mcp-config` keep your own `~/.claude` settings, `CLAUDE.md`, hooks,
 plugins, and MCP servers out of the rollout, so the harness being evaluated is
 the only harness present. Claude Code's built-in tools, skills, and agents are

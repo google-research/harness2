@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -33,7 +31,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from harness2.benchmarks.jb_opencode_runner import PROMPT, TRAJ_DIR_NAME  # noqa: E402
-from harness2.substrate.claude_code import ClaudeCodeSubstrate, summarize  # noqa: E402
+from harness2.substrate.claude_code import (  # noqa: E402
+    ClaudeCodeSubstrate,
+    run_in_group,
+    summarize,
+)
 
 TEMP_BASE = Path(tempfile.gettempdir()) / "hevo_ws_cc"
 HARNESS_ENTRIES = ("CLAUDE.md", ".claude", "scripts")
@@ -115,32 +117,6 @@ def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
             shutil.copy2(src, workspace / entry)
 
 
-def _run(cmd: list[str], *, cwd: Path, env: dict, stdout, stderr, timeout: int) -> int:
-    """Run in its own process group; on timeout kill the group and return 124 like timeout(1)."""
-    proc = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=stdout,
-        stderr=stderr,
-        start_new_session=True,
-    )
-    try:
-        return proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=30)
-        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.wait()
-        return 124
-
-
 def _attempt(cfg: Settings, workspace: Path, traj_file: Path, log_file: Path) -> int:
     """Run Claude Code once; its stream-json events land in `traj_file`, stderr in the log."""
     substrate = ClaudeCodeSubstrate()
@@ -153,7 +129,7 @@ def _attempt(cfg: Settings, workspace: Path, traj_file: Path, log_file: Path) ->
         prompt, workspace, cfg.model_id, effort=cfg.effort, max_budget_usd=cfg.max_budget_usd
     )
     with traj_file.open("w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        return _run(
+        return run_in_group(
             cmd,
             cwd=workspace,
             env=substrate.exec_env(os.environ),
@@ -197,6 +173,10 @@ def run_one(cfg: Settings, task_id: str) -> bool:
             f"turns={s['turns']} tools={s['tool_calls']} cost_usd={s['cost_usd']:.4f}",
         )
         if _nonempty(output_dir):
+            break
+        if str(s["subtype"]).startswith("error_max_budget"):
+            # A retry would start from scratch and spend the whole cap a second time.
+            _log(log_file, f"[{_hms()}] BUDGET SPENT {task_id}; not retrying")
             break
         if code == 124:
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")

@@ -54,6 +54,7 @@ class SurfaceSpec:
     plugin_dir: str | None
     hooks_file: str | None
     hook_events: frozenset[str] = frozenset()
+    hook_types: frozenset[str] = frozenset({"command"})
     compile_skill_scripts: bool = False
     reject_empty_always_on: bool = False
 
@@ -242,13 +243,22 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
                 errs.append(f"{hf}: {event}[{i}] needs a `hooks` list")
                 continue
             for h in entry["hooks"]:
-                if not isinstance(h, dict) or h.get("type") != "command":
-                    errs.append(
-                        f'{hf}: {event}[{i}] hook type must be "command" — '
-                        f"async/prompt/agent hooks are skipped as 'not supported yet'"
-                    )
-                elif not str(h.get("command", "")).strip():
+                htype = h.get("type") if isinstance(h, dict) else None
+                if htype not in surface.hook_types:
+                    if surface.hook_types == {"command"}:
+                        errs.append(
+                            f'{hf}: {event}[{i}] hook type must be "command" — '
+                            f"async/prompt/agent hooks are skipped as 'not supported yet'"
+                        )
+                    else:
+                        errs.append(
+                            f"{hf}: {event}[{i}] hook type must be one of "
+                            f"{', '.join(sorted(surface.hook_types))}, got {htype!r}"
+                        )
+                elif htype == "command" and not str(h.get("command", "")).strip():
                     errs.append(f"{hf}: {event}[{i}] has an empty `command`")
+                elif htype in ("prompt", "agent") and not str(h.get("prompt", "")).strip():
+                    errs.append(f"{hf}: {event}[{i}] {htype} hook has an empty `prompt`")
 
 
 def _py_compiles(rel: str, src: str, errs: list[str]) -> None:

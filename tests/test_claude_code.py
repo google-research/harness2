@@ -138,6 +138,13 @@ class ClaudeCodeTests(unittest.TestCase):
             tree.validate(S, bad)
         with self.assertRaisesRegex(ValueError, "empty"):
             tree.validate(S, dict(TREE, **{"CLAUDE.md": ""}))
+        prompt_hook = {"hooks": {"Stop": [{"hooks": [{"type": "prompt", "prompt": "Done?"}]}]}}
+        tree.validate(S, dict(TREE, **{".claude/hooks.json": json.dumps(prompt_hook)}))
+        from harness2.substrate.codex import CODEX_SURFACE
+
+        cx = {"AGENTS.md": "x", ".codex/hooks.json": json.dumps(prompt_hook)}
+        with self.assertRaisesRegex(ValueError, 'must be "command"'):
+            tree.validate(CODEX_SURFACE, cx)
 
     def test_materialise_produces_claude_code_layout(self):
         src = tree.write_tree(S, TREE, self.root / "tree")
@@ -243,6 +250,35 @@ class ClaudeCodeTests(unittest.TestCase):
             self.assertEqual((ch.kind, ch.model), ("claude_cli", "opus"))
         with self.assertRaises(ValueError):
             resolve_channel_model("claude_cli", "anthropic/opus")
+
+    def test_claude_cli_session_excludes_edited_harness(self):
+        class Done:
+            returncode = 0
+            stdout = json.dumps({"result": "<notes>ok</notes>", "subtype": "success"})
+            stderr = ""
+
+        with patch("harness2.core.proposer.subprocess.run", return_value=Done()) as run:
+            text, _, err = Proposer(ChannelSpec("claude_cli", "sonnet"))._claude_cli(
+                self.root, "mission", "", 60
+            )
+        argv = run.call_args.args[0]
+        self.assertEqual((text, err), ("<notes>ok</notes>", ""))
+        self.assertIn("--disable-slash-commands", argv)
+        settings = json.loads(argv[argv.index("--settings") + 1])
+        self.assertIn("**/context/**", settings["claudeMdExcludes"])
+        with (
+            patch.dict(os.environ, {"CLAUDECODE": "1"}),
+            patch.object(config, "CLAUDE_USE_VERTEX", True),
+        ):
+            self.assertNotIn("CLAUDECODE", Proposer(ChannelSpec("claude_cli", "sonnet")).env())
+
+    def test_lab_cc_uses_claude_effort(self):
+        from harness2.benchmarks.lab import LabAdapter
+
+        with patch.object(config, "CLAUDE_EFFORT", "medium"):
+            self.assertEqual(LabAdapter(substrate="cc").solver_effort, "medium")
+            self.assertEqual(LabAdapter(substrate="cc", solver_effort="low").solver_effort, "low")
+            self.assertEqual(LabAdapter(substrate="oc").solver_effort, "high")
 
     def test_validate_models_for_claude_code_cell(self):
         with (

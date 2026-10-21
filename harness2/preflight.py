@@ -90,8 +90,11 @@ def check(adapter, *, judge=False) -> list[str]:
         vertex_models.append(config.IMPROVER_MODEL)
     if substrate != "cc":
         vertex_models.append(config.SOLVER_MODEL_OC)
-    if any(m.startswith("google-vertex") for m in vertex_models) or (
-        judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini")))
+    claude_vertex = config.DEFAULT_PROPOSER_CHANNEL == "claude_cli" and config.CLAUDE_USE_VERTEX
+    if (
+        claude_vertex
+        or any(m.startswith("google-vertex") for m in vertex_models)
+        or (judge and (bench == "wb" or config.JUDGE_MODEL.startswith(("claude", "gemini"))))
     ):
         probe(
             "Google Application Default Credentials",

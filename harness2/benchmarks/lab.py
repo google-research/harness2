@@ -36,7 +36,7 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..substrate.base import Install, RunRequest
-from ..substrate.claude_code import CLAUDE_CODE_SURFACE, ClaudeCodeSubstrate, install_tree
+from ..substrate.claude_code import CLAUDE_CODE_SURFACE, ClaudeCodeSubstrate
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
 from .tasks import discover, select
@@ -547,6 +547,8 @@ class LabAdapter:
             self.substrate = ClaudeCodeSubstrate(launcher=self._launch_cc)
             self.model = model or config.SOLVER_MODEL_CC
             self._results_root = config.RUNS / "lab" / "results" / "cc"
+            if solver_effort == "high":  # the signature default: defer to the cc knob
+                solver_effort = config.CLAUDE_EFFORT
         self.timeout = int(timeout or 3600)
         self.skill_mode = skill_mode
         self.solver_effort = solver_effort
@@ -645,7 +647,15 @@ class LabAdapter:
 
     def _install(self, harness_dir: Path | None) -> Install:
         """BASE (harness_dir=None) is a value: fingerprint 'base', and the launcher decides
-        what 'base' means on its substrate."""
+        what 'base' means on its substrate. On cc the base tree still needs its runtime
+        layout, so it is materialised like a proposal and keeps the 'base' fingerprint."""
+        if harness_dir is None and self.substrate.name == "cc":
+            inst = self.substrate.materialise(self.base_harness(), self.spec, {})
+            return Install(
+                staging_dir=inst.staging_dir,
+                fingerprint="base",
+                extras={**inst.extras, "harness": "staged"},
+            )
         if harness_dir is None:
             return Install(
                 staging_dir=self.base_harness(), fingerprint="base", extras={"harness": "base"}
@@ -757,61 +767,47 @@ class LabAdapter:
     def _launch_cc(self, req: RunRequest, install: Install) -> list[Path]:
         runner = config.lab_repo() / _RUNNER_REL["cc"]
         _require_runner(runner)
-        harness_dir = install.staging_dir
-        staged_base = None
-        if install.extras.get("harness") == "base":
-            # BASE is an editable tree; give it the same runtime layout a proposal gets.
-            staged_base = Path(tempfile.mkdtemp(prefix="adapt-cc-base-"))
-            install_tree(install.staging_dir, staged_base)
-            harness_dir = staged_base
         dirs = []
-        try:
-            for run_id in req.run_ids:
-                cmd = [
-                    str(config.LAB_PYTHON),
-                    "-u",
-                    str(runner),
-                    "--task",
-                    req.task_ref,
-                    "--run-id",
-                    run_id,
-                    "--model",
-                    self.model,
-                    "--reasoning-effort",
-                    self.solver_effort,
-                    "--timeout",
-                    str(req.timeout),
-                    "--harness-dir",
-                    str(harness_dir),
-                ]
-                if config.CLAUDE_MAX_BUDGET_USD:
-                    cmd += ["--max-budget-usd", config.CLAUDE_MAX_BUDGET_USD]
-                env = {
-                    **_lab_env(),
-                    "PYTHONPATH": f"{config.lab_repo()}{os.pathsep}{config.PKG.parent}",
-                    "HARNESS2_ROOT": str(config.PKG.parent),
-                    "ADAPT_LABCC_RESULTS": str(self._results_root),
-                    "ADAPT_LABCC_SCRATCH": os.environ.get("ADAPT_LABCC_SCRATCH")
-                    or str(config.RUNS / "lab" / "scratch"),
-                }
-                try:
-                    run_detached(
-                        cmd,
-                        cwd=config.lab_repo(),
-                        env=env,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=req.timeout + 900,
-                    )
-                except subprocess.TimeoutExpired:
-                    print(
-                        f"  [lab-cc] runner wall-timeout for {req.task_ref} @ {run_id}", flush=True
-                    )
-                dirs.append(self._run_dir(run_id))
-        finally:
-            if staged_base is not None:
-                shutil.rmtree(staged_base, ignore_errors=True)
+        for run_id in req.run_ids:
+            cmd = [
+                str(config.LAB_PYTHON),
+                "-u",
+                str(runner),
+                "--task",
+                req.task_ref,
+                "--run-id",
+                run_id,
+                "--model",
+                self.model,
+                "--reasoning-effort",
+                self.solver_effort,
+                "--timeout",
+                str(req.timeout),
+                "--harness-dir",
+                str(install.staging_dir),
+            ]
+            if config.CLAUDE_MAX_BUDGET_USD:
+                cmd += ["--max-budget-usd", config.CLAUDE_MAX_BUDGET_USD]
+            env = {
+                **_lab_env(),
+                "HARNESS2_ROOT": str(config.PKG.parent),
+                "ADAPT_LABCC_RESULTS": str(self._results_root),
+                "ADAPT_LABCC_SCRATCH": os.environ.get("ADAPT_LABCC_SCRATCH")
+                or str(config.RUNS / "lab" / "scratch"),
+            }
+            try:
+                run_detached(
+                    cmd,
+                    cwd=config.lab_repo(),
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=req.timeout + 900,
+                )
+            except subprocess.TimeoutExpired:
+                print(f"  [lab-cc] runner wall-timeout for {req.task_ref} @ {run_id}", flush=True)
+            dirs.append(self._run_dir(run_id))
         return dirs
 
     def _safe_rmtree(self, d: Path) -> None:

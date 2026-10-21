@@ -23,12 +23,19 @@ from pathlib import Path
 
 RUNNER_DIR = Path(__file__).resolve().parent
 REPO = RUNNER_DIR.parents[1]
-for p in (str(REPO), os.environ.get("HARNESS2_ROOT", "")):
-    if p and p not in sys.path:
-        sys.path.insert(0, p)
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+# Appended, not prepended: HARNESS2_ROOT may be a whole site-packages directory, whose
+# packages must never shadow the LAB interpreter's own.
+if os.environ.get("HARNESS2_ROOT") and os.environ["HARNESS2_ROOT"] not in sys.path:
+    sys.path.append(os.environ["HARNESS2_ROOT"])
 
 from external.tts_lab import config as C  # noqa: E402
-from harness2.substrate.claude_code import ClaudeCodeSubstrate, summarize  # noqa: E402
+from harness2.substrate.claude_code import (  # noqa: E402
+    ClaudeCodeSubstrate,
+    run_in_group,
+    summarize,
+)
 
 SCRATCH_BASE = Path(os.environ.get("ADAPT_LABCC_SCRATCH") or (RUNNER_DIR / "scratch"))
 RESULTS_ROOT = Path(os.environ.get("ADAPT_LABCC_RESULTS", str(RUNNER_DIR / "results")))
@@ -141,24 +148,6 @@ def reap(hours: float) -> int:
     return n
 
 
-def _run(cmd, *, cwd: Path, env: dict, stdout, stderr, timeout: int) -> int:
-    """Run in its own process group; on timeout kill the group and return 124 like timeout(1)."""
-    proc = subprocess.Popen(cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-                            stdout=stdout, stderr=stderr, start_new_session=True)
-    try:
-        return proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=30)
-        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
-            proc.wait()
-        return 124
-
 
 def main(args) -> int:
     if args.reap_hours is not None:
@@ -224,7 +213,7 @@ def main(args) -> int:
         session_path = run_dir / "claude_session.jsonl"
         with open(session_path, "w", encoding="utf-8") as out, \
              open(run_dir / "claude_stderr.log", "w", encoding="utf-8") as err:
-            rc = _run(cmd, cwd=ws, env=env, stdout=out, stderr=err,
+            rc = run_in_group(cmd, cwd=ws, env=env, stdout=out, stderr=err,
                       timeout=int(max(60, args.timeout)))
         wall = time.time() - t0
 

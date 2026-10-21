@@ -29,8 +29,10 @@ never touch permissions, env or the model.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
@@ -61,6 +63,7 @@ CLAUDE_CODE_SURFACE = SurfaceSpec(
     subagent_requires_mode=False,
     plugin_dir=None,
     hooks_file=".claude/hooks.json",
+    hook_types=frozenset({"command", "prompt", "agent"}),
     hook_events=frozenset(
         {
             "PreToolUse",
@@ -254,7 +257,7 @@ class ClaudeCodeSubstrate:
             "--include-hook-events",
             "--dangerously-skip-permissions",
             "--setting-sources",
-            "project",
+            config.CLAUDE_SETTING_SOURCES,
             "--strict-mcp-config",
             "--no-session-persistence",
             "--add-dir",
@@ -274,7 +277,7 @@ class ClaudeCodeSubstrate:
         """The `claude -p` environment: provider selection comes from the operator's env
         (ANTHROPIC_API_KEY, a logged-in CLI, or CLAUDE_CODE_USE_VERTEX / _BEDROCK)."""
         env = dict(base_env)
-        for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"):
+        for k in config.CLAUDE_NESTED_ENV:
             env.pop(k, None)
         env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
         env.setdefault("DISABLE_AUTOUPDATER", "1")
@@ -317,6 +320,33 @@ class ClaudeCodeSubstrate:
             raise RuntimeError(f"`{binary} --version` failed: {exc}") from exc
         if r.returncode != 0:
             raise RuntimeError(f"`{binary} --version` exited {r.returncode}: {r.stderr[-300:]}")
+
+
+def run_in_group(cmd: list[str], *, cwd: Path, env: dict, stdout, stderr, timeout: int) -> int:
+    """Run `cmd` in its own process group with stdin closed; on timeout, TERM then KILL the
+    whole group and return 124 like timeout(1), so a hung CLI never outlives its budget."""
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+    )
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=30)
+        except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+            proc.wait()
+        return 124
 
 
 _TRUNC_FMT = "…(+{n} chars — render truncation)"
@@ -510,6 +540,7 @@ __all__ = [
     "CLAUDE_CODE_SURFACE",
     "ClaudeCodeSubstrate",
     "install_tree",
+    "run_in_group",
     "render_events",
     "summarize",
     "final_message",

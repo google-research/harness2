@@ -51,8 +51,9 @@ _DROP_ENV = (
     "CLAUDE_CODE_USE_BEDROCK",
 )
 
-# Set when harness2 itself runs inside a Claude Code session; a child CLI must not inherit them.
-_NESTED_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+# The harness under edit lives in context/; Claude Code would otherwise load its CLAUDE.md
+# files as instructions whenever the session reads a file there.
+_CLAUDE_PROPOSER_SETTINGS = json.dumps({"claudeMdExcludes": ["**/context/**"]})
 
 
 def _obj(d: dict, key: str) -> dict:
@@ -109,10 +110,11 @@ class Proposer:
         if self.spec.kind == "claude_cli" and not config.CLAUDE_USE_VERTEX:
             # Claude Code's own auth: ANTHROPIC_API_KEY, a logged-in CLI, or a provider the
             # operator selected (CLAUDE_CODE_USE_VERTEX / _BEDROCK) -- all left as they are.
-            e = {k: v for k, v in os.environ.items() if k not in _NESTED_ENV}
+            e = {k: v for k, v in os.environ.items() if k not in config.CLAUDE_NESTED_ENV}
             e["ANTHROPIC_MODEL"] = self.spec.model
             return e
-        e = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
+        drop = _DROP_ENV + (config.CLAUDE_NESTED_ENV if self.spec.kind == "claude_cli" else ())
+        e = {k: v for k, v in os.environ.items() if k not in drop}
         if self.spec.kind == "claude_cli":
             e.update(
                 {
@@ -231,9 +233,13 @@ class Proposer:
             "--effort",
             self.spec.effort,
             # The operator's own CLAUDE.md, hooks, plugins and MCP servers stay out of the
-            # improver session: its instructions are the mission and the system text.
+            # improver session, and so do the CLAUDE.md files and skills of the harness it
+            # is editing: its instructions are the mission and the system text.
             "--setting-sources",
-            "project",
+            config.CLAUDE_SETTING_SOURCES,
+            "--settings",
+            _CLAUDE_PROPOSER_SETTINGS,
+            "--disable-slash-commands",
             "--strict-mcp-config",
             "--no-session-persistence",
         ]

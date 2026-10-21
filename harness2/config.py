@@ -112,6 +112,11 @@ CLAUDE_MAX_BUDGET_USD = env("HARNESS2_CLAUDE_MAX_BUDGET_USD", "")
 CLAUDE_MAX_OUTPUT_TOKENS = env("HARNESS2_CLAUDE_MAX_OUTPUT_TOKENS", "")
 # Route the claude_cli channel through Vertex AI (the upstream default) only when asked.
 CLAUDE_USE_VERTEX = env("HARNESS2_CLAUDE_USE_VERTEX", "") not in ("", "0", "false")
+# Settings sources for rollouts. "project" keeps the operator's ~/.claude out of the run; add
+# "user" when provider or auth config (env block, apiKeyHelper) lives in user settings.
+CLAUDE_SETTING_SOURCES = env("HARNESS2_CLAUDE_SETTING_SOURCES", "project")
+# Set when harness2 itself runs inside a Claude Code session; a child CLI must not inherit them.
+CLAUDE_NESTED_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
 JUDGE_MODEL = env("HARNESS2_JUDGE_MODEL", "")
 
 DEPENDENCY_PINS = {
