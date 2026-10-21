@@ -84,14 +84,20 @@ class DamsAdapter:
             else config.DEPENDENCIES / "dams-tasks"
         )
         self.substrate = OpencodeSubstrate()
+        channel_kind = config.env("HARNESS2_PROPOSER_CHANNEL")
+        channel_model = config.env("HARNESS2_IMPROVER_MODEL")
+        if not channel_kind and shutil.which("claude"):
+            channel_kind = "claude_cli"
+            channel_model = config.env("HARNESS2_CLAUDE_MODEL", channel_model or "claude-opus-5-5")
+        resolved_channel = resolve_channel_model(channel_kind, channel_model)
         self.spec = BenchSpec(
             name="dams",
             runs_root=self.root / "runs" if root is not None else config.RUNS / "dams",
             install_mode="workspace_config",
             prompts=DAMS_PROMPTS,
             channels={
-                "proposer": resolve_channel_model(None, None),
-                "selector": resolve_channel_model(None, None),
+                "proposer": resolved_channel,
+                "selector": resolved_channel,
             },
         )
 
