@@ -37,6 +37,7 @@ class Scored:
     label: str
     run_id: str
     chosen_is_base: bool
+    chosen_tree_is_base: bool | None = None
     n_passed: int | None = None
     n_criteria: int | None = None
     all_pass: bool = False
@@ -68,9 +69,16 @@ def judge_one(
     run_dir: Path,
     *,
     chosen_is_base: bool = False,
+    chosen_tree_is_base: bool | None = None,
 ) -> Scored:
     s = Scored(
-        task_id=task_id, mode=mode, k=k, label=label, run_id=run_id, chosen_is_base=chosen_is_base
+        task_id=task_id,
+        mode=mode,
+        k=k,
+        label=label,
+        run_id=run_id,
+        chosen_is_base=chosen_is_base,
+        chosen_tree_is_base=chosen_tree_is_base,
     )
     try:
         got = adapter.score(run_dir, task_id)
@@ -107,6 +115,7 @@ def judge_selections(
                         label=sel.get("chosen_label", ""),
                         run_id=sel.get("chosen_run_id", ""),
                         chosen_is_base=bool(sel.get("chosen_is_base")),
+                        chosen_tree_is_base=sel.get("chosen_tree_is_base"),
                         error="selection did not complete successfully",
                     )
                 )
@@ -122,6 +131,7 @@ def judge_selections(
                     sel.get("chosen_run_id", ""),
                     Path(rd),
                     chosen_is_base=bool(sel.get("chosen_is_base")),
+                    chosen_tree_is_base=sel.get("chosen_tree_is_base"),
                 )
             ] = sel
         for f in as_completed(futs):
@@ -137,6 +147,7 @@ def judge_selections(
                         label=sel.get("chosen_label", ""),
                         run_id=sel.get("chosen_run_id", ""),
                         chosen_is_base=bool(sel.get("chosen_is_base")),
+                        chosen_tree_is_base=sel.get("chosen_tree_is_base"),
                         error=f"{type(exc).__name__}: {exc}",
                     )
                 )

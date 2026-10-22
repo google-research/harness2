@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from harness2 import config
-from harness2.core import context, judge, recursion, schedule, tree
+from harness2.core import context, judge, recursion, report, schedule, tree
 from harness2.core.library import Library
 from harness2.core.proposer import Proposer, ProposerError, Reply
 from harness2.core.spec import resolve_channel_model
@@ -223,6 +223,42 @@ class WorkflowTests(unittest.TestCase):
         )
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
+
+    def test_unchanged_harness_is_credited_to_base_in_the_report(self):
+        """A composition that edits nothing keeps the base harness, and the report must say so.
+
+        The adopted label is a composed final (`agg1`/`c1`), never `base*`, so a label-prefix
+        test reports `base 0`; only the recorded tree diff can see that nothing changed.
+        """
+
+        class KeepBase(DemoProposer):
+            def call(self, mission, context_dir, label, **kwargs):
+                if label.startswith(("select.", "experience.")):
+                    return super().call(mission, context_dir, label, **kwargs)
+                return Reply(
+                    label,
+                    "<notes>KEEP_BASE: no edit is supported by the evidence.</notes>",
+                    True,
+                    attempts=1,
+                    workspace=Path(context_dir) / "harness",
+                )
+
+        self.run_stream(k=1, proposer=KeepBase(self.proposer.spec))
+        summary = json.loads(
+            (self.adapter.spec.runs_root / "demo-oc-agg1" / "ledger-1" / "summary.json").read_text()
+        )
+        selections = list(summary["selections"].values())
+        self.assertEqual(len(selections), 2)
+        self.assertTrue(all(sel["ok"] for sel in selections))
+        self.assertTrue(all(sel["chosen_tree_is_base"] for sel in selections))
+        self.assertFalse(any(sel["chosen_is_base"] for sel in selections))
+
+        self.adapter.score = Mock(return_value={"n_passed": 1, "n_criteria": 2})
+        summaries = report.summarise(judge.judge_selections(self.adapter, selections))
+        self.assertEqual(
+            [(s.mode, s.n, s.kept_base) for s in summaries], [("agg", 1, 1), ("seq", 1, 1)]
+        )
+        self.assertIn("identical to the base harness", report.render(summaries))
 
 
 if __name__ == "__main__":

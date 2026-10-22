@@ -542,8 +542,9 @@ def _run_one_mode(
     )
 
     chosen_tree = r.trees.get(sel.chosen_label, base_tree)
-    chosen_tree_is_base = _tree_is_base(surface, base_tree, chosen_tree)
-    d["chosen_tree_is_base"] = chosen_tree_is_base
+    d["chosen_tree_is_base"] = (
+        _tree_is_base(surface, base_tree, chosen_tree) if sel.chosen_label in r.trees else None
+    )
     if sel.chosen_label:
         d["harness_fingerprint"] = runmark.fingerprint(work_dir / "harnesses" / sel.chosen_label)
     res.selections[mode] = d

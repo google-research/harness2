@@ -77,6 +77,19 @@ def _kind(r: Scored) -> str:
     return "candidate"
 
 
+def _kept_base(r: Scored) -> bool:
+    """Whether the adopted harness is byte-identical to the base harness.
+
+    The tree diff is the answer, and the method records it beside every selection; the label
+    test is only a fallback for `judged.json` written before that diff was carried through.
+    The two disagree in practice: a composition that changes nothing keeps the base harness
+    while still being a composed final, so its label carries no `base` prefix.
+    """
+    if r.chosen_tree_is_base is not None:
+        return bool(r.chosen_tree_is_base)
+    return r.chosen_is_base
+
+
 def summarise(
     rows: Sequence[Scored],
     *,
@@ -97,7 +110,7 @@ def summarise(
             k=k,
             n=len(good),
             n_ungraded=len(group) - len(good),
-            kept_base=sum(1 for r in good if r.chosen_is_base),
+            kept_base=sum(1 for r in good if _kept_base(r)),
             chose_final=sum(1 for r in good if _kind(r) == "final"),
             chose_candidate=sum(1 for r in good if _kind(r) == "candidate"),
             fell_back=(fell_back or {}).get((mode, k), 0),
@@ -142,8 +155,9 @@ def render(summaries: Sequence[Summary], *, title: str = "", bench: str = "") ->
     for s in warn:
         lines += [
             "",
-            f"  WARNING  {s.name}: selection chose a reference output on "
-            f"{s.kept_base}/{s.n} tasks, outside the published pool of composed outputs.",
+            f"  WARNING  {s.name}: the adopted harness was identical to the base harness on "
+            f"{s.kept_base}/{s.n} tasks. The refinement produced no surviving edit there, so "
+            f"those picks cannot be credited to it.",
         ]
     fb = [s for s in summaries if s.fell_back]
     for s in fb:
