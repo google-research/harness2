@@ -20,6 +20,7 @@ selection and reflection are recorded outside this ledger.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 
@@ -93,8 +94,8 @@ class Ledger:
         want_r, want_p = expected_rollouts(self.k), expected_sessions(self.k)
         rl, sl = self.labels("rollout"), self.labels("session")
         dupes = sorted(
-            {label for label in rl if rl.count(label) > 1}
-            | {label for label in sl if sl.count(label) > 1}
+            {label for label, count in Counter(rl).items() if count > 1}
+            | {label for label, count in Counter(sl).items() if count > 1}
         )
         if not dupes and self.R == want_r and self.P == want_p:
             return
