@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <a href="README.md">English</a> | <a href="README.ko.md">한국어</a>
+</p>
+
+<p align="center">
   <a href="docs/BENCHMARKS.md#jobbench">
     <img src="assets/harness2-setup.gif" alt="Install, set up, and run JobBench: uv pip install -e '.[render]', harness2-setup jb, then harness2 --bench jb --k 1 --mode parallel. Click for prerequisites and commands." width="640">
   </a>
