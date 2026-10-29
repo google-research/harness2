@@ -266,6 +266,11 @@ run_task() {
         echo "Harness render dir: ${HARNESS_RENDER_DIR}" | tee -a "$log_file"
     fi
 
+    # Inject and read back the final installed AGENTS.md before starting the model.
+    if [[ -n "${HARNESS2_PINNED_POLICY:-}" ]]; then
+        "${HARNESS2_POLICY_PYTHON:?}" "${HARNESS2_POLICY_MODULE:?}" "$temp_workspace" || return 1
+    fi
+
     # Make sure TASK_INSTRUCTIONS.txt exists
     local instructions_file="${temp_task_folder}/TASK_INSTRUCTIONS.txt"
     if [[ ! -f "$instructions_file" ]]; then

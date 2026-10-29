@@ -147,6 +147,47 @@ def overlays(name: str, *, dry_run=False):
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "PROVENANCE.md"),
             )
 
+    policy_dest = {
+        "harvey-labs": repo / "opencode" / "pinned_policy.py",
+        "workbuddy-bench": repo / "src" / "workbuddy_bench" / "agents" / "pinned_policy.py",
+    }.get(name)
+    if policy_dest is not None:
+        source = Path(__file__).parent / "core" / "policy.py"
+        print(f"Copy policy runtime: {source} -> {policy_dest}", flush=True)
+        if not dry_run:
+            policy_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, policy_dest)
+
+
+def require_policy_runtime(name: str, substrate: str) -> None:
+    """Refuse configured policies when an isolated checkout still has old runners."""
+    repo = config.DEPENDENCIES / name
+    if name == "harvey-labs":
+        pairs = [(Path(__file__).parent / "core/policy.py", repo / "opencode/pinned_policy.py")]
+        files = (
+            ("opencode/render.py", "opencode/run_opencode.py")
+            if substrate == "oc"
+            else ("adapt_runs_cx/run_codex_lab.py",)
+        )
+        for rel in files:
+            dest = repo / rel if rel.startswith("opencode/") else repo / "external" / rel
+            pairs.append((config.THIRD_PARTY / "lab_runner" / rel, dest))
+        setup = "lab"
+    else:
+        agents = repo / "src/workbuddy_bench/agents"
+        filename = "oc_agent.py" if substrate == "oc" else "codex_harness_agent.py"
+        pairs = [
+            (Path(__file__).parent / "core/policy.py", agents / "pinned_policy.py"),
+            (config.THIRD_PARTY / "wb_runner/agents" / filename, agents / filename),
+        ]
+        setup = "wb"
+    for source, dest in pairs:
+        if not dest.is_file() or source.read_bytes() != dest.read_bytes():
+            raise RuntimeError(
+                f"pinned-policy runtime is missing or outdated: {dest}; "
+                f"rerun harness2-setup {setup} --substrate {substrate}"
+            )
+
 
 def workbuddy_models(*, dry_run=False):
     """Generate the two Vertex routes from the user's model IDs, never credentials."""

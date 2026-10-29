@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import shlex
 import tarfile
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
 from workbuddy_bench.agents.codex_agent import CodexAgent
+from workbuddy_bench.agents import pinned_policy as pinned
 
 _HARNESS_ENTRIES = ("AGENTS.md", ".agents", "scripts", ".codex")
 
@@ -19,6 +21,7 @@ class CodexHarnessAgent(CodexAgent):
     """Codex CLI + a harness workspace installed (and committed) at /workspace."""
 
     def __init__(self, logs_dir: Path, *args, **kwargs):
+        self._pinned_policy = kwargs.pop(pinned.ENV, "")
         ws = kwargs.pop("WB_HARNESS_WS", None)
         self._harness_ws: Path | None = Path(ws) if ws else None
         super().__init__(logs_dir, *args, **kwargs)
@@ -30,7 +33,7 @@ class CodexHarnessAgent(CodexAgent):
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
-        if self._harness_ws is not None:
+        if self._harness_ws is not None or pinned.block(self._pinned_policy):
             await self._materialize_harness(environment)
         await super().run(instruction, environment, context)
 
@@ -41,6 +44,8 @@ class CodexHarnessAgent(CodexAgent):
         n = 0
         with tarfile.open(fileobj=payload, mode="w:gz") as tar:
             for entry in _HARNESS_ENTRIES:
+                if ws is None:
+                    continue
                 src = ws / entry
                 if src.is_file():
                     tar.add(src, arcname=entry)
@@ -58,16 +63,25 @@ class CodexHarnessAgent(CodexAgent):
         The commit is conditional on staged changes, so a no-op harness is not a failure.
         """
         ws = self._harness_ws
-        if ws is None or not ws.is_dir():
-            return
+        if ws is not None and not ws.is_dir():
+            raise ValueError(f"harness workspace missing: {ws}")
         blob_bytes, n = self._harness_payload()
-        if n == 0:
+        if n == 0 and not pinned.block(self._pinned_policy):
             return
-        blob = base64.b64encode(blob_bytes).decode()
-        cmd = (
-            f"cd /workspace && "
-            f"echo {blob} | base64 -d | tar -xzf - -C /workspace && "
-            # Neutralize the install in the diff capture; skip when this is not a git repo.
+        commands = ["cd /workspace"]
+        if n:
+            blob = base64.b64encode(blob_bytes).decode()
+            commands.append(f"echo {blob} | base64 -d | tar -xzf - -C /workspace")
+        if pinned.block(self._pinned_policy):
+            # Run the shared verifier inside the container after installation. For BASE,
+            # prepend to any AGENTS.md supplied by the task image rather than replacing it.
+            runtime = base64.b64encode(Path(pinned.__file__).read_bytes()).decode()
+            commands.append(
+                f"echo {runtime} | base64 -d | "
+                f"{pinned.ENV}={shlex.quote(self._pinned_policy)} python3 - /workspace"
+            )
+        # Neutralize the install in diff capture; skip when this is not a git repo.
+        commands.append(
             "if git rev-parse --git-dir >/dev/null 2>&1; then "
             "git add -A && "
             "{ git diff --cached --quiet || "
@@ -75,7 +89,10 @@ class CodexHarnessAgent(CodexAgent):
             'commit -q -m "harness install (pre-agent)"; }; '
             "fi"
         )
-        await self.exec_as_agent(environment, command=cmd)
+        cmd = " && ".join(commands)
+        result = await self.exec_as_agent(environment, command=cmd)
+        if result.return_code != 0:
+            raise RuntimeError("Codex harness installation or pinned policy verification failed")
         log = getattr(self, "logger", None)
         if log is not None:
             log.info("materialized + committed %d harness file(s) from %s", n, ws)

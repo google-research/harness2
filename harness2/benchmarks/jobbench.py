@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+from ..core import policy
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
@@ -454,7 +455,9 @@ def _ensure_mode_subagent(text: str) -> str:
     return "---\nmode: subagent\ndescription: delegated subagent\n---\n\n" + text
 
 
-def render_opencode_tree(staged: Path, render_dir: Path, ctx: dict) -> None:
+def render_opencode_tree(
+    staged: Path, render_dir: Path, ctx: dict, *, pinned_policy: str = ""
+) -> None:
     """Materialise the staged tree into OpenCode-loadable artifacts under render_dir:
     AGENTS.md, .opencode/skills/<n>/, .opencode/agent/<sub>.md, scripts/, plugin/.
     Skill directories are copied whole, so skills/<n>/scripts/*.py survive."""
@@ -464,7 +467,9 @@ def render_opencode_tree(staged: Path, render_dir: Path, ctx: dict) -> None:
     (rd / ".opencode" / "agent").mkdir(parents=True)
     (rd / ".opencode" / "skills").mkdir(parents=True)
 
-    body = compose_agent_body(staged, ctx)
+    body = policy.prepend(
+        compose_agent_body(staged, ctx), pinned_policy, max_chars=policy.OPENCODE_MAX_CHARS
+    )
     if body.strip():
         (rd / "AGENTS.md").write_text(body, encoding="utf-8")
 
@@ -714,6 +719,10 @@ class JobBenchAdapter:
                     raise
         return dst
 
+    @property
+    def _policy_salt(self) -> str:
+        return policy.digest(self.spec.pinned_policy)
+
     def execute(
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
@@ -721,11 +730,13 @@ class JobBenchAdapter:
         label = run_id.replace("/", "__")
         out = self._out_dir(task_id, label)
         mark = self._traj_dir(task_id, label)
-        if RM.is_complete(mark, harness_dir=harness_dir) and self.artifacts_intact(out):
+        if RM.is_complete(
+            mark, harness_dir=harness_dir, salt=self._policy_salt
+        ) and self.artifacts_intact(out):
             out.mkdir(parents=True, exist_ok=True)
             return out
         if out.is_dir() or mark.is_dir():
-            reason = RM.why_not(mark, harness_dir=harness_dir)
+            reason = RM.why_not(mark, harness_dir=harness_dir, salt=self._policy_salt)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -752,6 +763,7 @@ class JobBenchAdapter:
             mark,
             run_id=run_id,
             harness_dir=harness_dir,
+            salt=self._policy_salt,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return dirs[0]
@@ -786,23 +798,31 @@ class JobBenchAdapter:
     def _launch_opencode(self, req: RunRequest, install: Install) -> list[Path]:
         task_id, label, t = self._launch_common(req)
         self.substrate.preflight()
-        render_dir = Path(tempfile.mkdtemp(prefix=f"hrender_{label}_"))
-        render_opencode_tree(install.staging_dir, render_dir, _render_ctx(self.domain_of(task_id)))
-        env = {
-            **os.environ,
-            "TASK_IDS": task_id,
-            "LABEL": label,
-            "HARNESS_RENDER_DIR": str(render_dir),
-            "AGENT_NAME": "",
-            "TASKS_BASE_DIR": str(self.store),
-            "OPENCODE_DIR": str(config.OPENCODE_DIR),
-            "MODEL_ID": config.SOLVER_MODEL_OC,
-            "TIMEOUT_PER_TASK": str(t),
-            "MAX_RETRIES": "2",
-            "MAX_CONCURRENT": "1",
-            "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
-        }
-        self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
+        with tempfile.TemporaryDirectory(prefix=f"hrender_{label}_") as temporary:
+            render_dir = Path(temporary)
+            render_opencode_tree(
+                install.staging_dir,
+                render_dir,
+                _render_ctx(self.domain_of(task_id)),
+                pinned_policy=install.extras.get("pinned_policy", ""),
+            )
+            env = {
+                **os.environ,
+                "TASK_IDS": task_id,
+                "LABEL": label,
+                "HARNESS_RENDER_DIR": str(render_dir),
+                policy.ENV: install.extras.get("pinned_policy", ""),
+                "HARNESS2_POLICY_MODULE": str(Path(policy.__file__).resolve()),
+                "AGENT_NAME": "",
+                "TASKS_BASE_DIR": str(self.store),
+                "OPENCODE_DIR": str(config.OPENCODE_DIR),
+                "MODEL_ID": config.SOLVER_MODEL_OC,
+                "TIMEOUT_PER_TASK": str(t),
+                "MAX_RETRIES": "2",
+                "MAX_CONCURRENT": "1",
+                "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
+            }
+            self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
 
     def _launch_codex(self, req: RunRequest, install: Install) -> list[Path]:
@@ -819,6 +839,9 @@ class JobBenchAdapter:
                 "TASK_IDS": task_id,
                 "LABEL": label,
                 "HARNESS_RENDER_DIR": str(install.staging_dir),
+                policy.ENV: install.extras.get("pinned_policy", ""),
+                "HARNESS2_POLICY_MODULE": str(Path(policy.__file__).resolve()),
+                "HARNESS2_POLICY_PYTHON": sys.executable,
                 "TASKS_BASE_DIR": str(self.store),
                 "BENCHMARK_MODELS": config.SOLVER_MODEL_CX,
                 "MAX_CONCURRENT_PER_MODEL": "1",

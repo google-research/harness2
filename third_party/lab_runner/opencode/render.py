@@ -460,3 +460,20 @@ def render_tree(
         plugins=plugins,
         plugin_tools=[t for t in plugin_tools if not (t in seen or seen.add(t))],
     )
+
+
+def apply_pinned_policy(workspace: Path, rendered: RenderResult, policy: str) -> None:
+    """Apply literal policy after rendering, preserving the baseline's components."""
+    from opencode import pinned_policy as pinned
+
+    if not pinned.block(policy):
+        return
+    rendered.prompt = pinned.prepend(rendered.prompt, policy, max_chars=pinned.OPENCODE_MAX_CHARS)
+    _write_prompt(workspace, rendered.prompt, "replace" if rendered.agent else "append",
+                  rendered.agent or AGENT_NAME)
+    if rendered.agent:
+        target = workspace / ".opencode" / "agent" / f"{rendered.agent}.md"
+        actual = target.read_bytes().decode("utf-8").split("---\n\n", 1)[1]
+        pinned.verify_prompt(actual, policy, max_chars=pinned.OPENCODE_MAX_CHARS)
+    else:
+        pinned.verify_file(workspace / "AGENTS.md", policy, max_chars=pinned.OPENCODE_MAX_CHARS)

@@ -130,6 +130,10 @@ def install_harness(ws: Path, harness_dir: Path | None) -> list[str]:
         raise SystemExit(f"runtime document reader missing: {READ_DOC} -- without it every "
                          f"binary document 'read' silently returns noise")
     shutil.copy2(READ_DOC, ws / "scripts" / "read_doc.py")   # LAST: runtime wins
+    from opencode import pinned_policy as pinned
+
+    pinned.inject_file(ws / "AGENTS.md", os.environ.get(pinned.ENV, ""),
+                       max_chars=pinned.CODEX_MAX_CHARS, max_bytes=pinned.CODEX_MAX_BYTES)
     return installed
 
 

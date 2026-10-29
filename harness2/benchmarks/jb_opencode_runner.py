@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -175,6 +176,13 @@ def _attempt(
     cfg: Settings, workspace: Path, traj_file: Path, log_file: Path, task_name: str, attempt: int
 ) -> int:
     """Run OpenCode once; its event stream lands in `traj_file`, everything else in the log."""
+    if os.environ.get("HARNESS2_PINNED_POLICY", "").strip():
+        runtime = runpy.run_path(os.environ["HARNESS2_POLICY_MODULE"])
+        runtime["verify_file"](
+            workspace / "AGENTS.md",
+            os.environ["HARNESS2_PINNED_POLICY"],
+            max_chars=runtime["OPENCODE_MAX_CHARS"],
+        )
     if cfg.agent_steps and not (workspace / "opencode.json").is_file():
         (workspace / "opencode.json").write_text(
             json.dumps(

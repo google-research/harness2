@@ -38,16 +38,19 @@ def _ignored(p: Path) -> bool:
     return "__pycache__" in p.parts or p.suffix == ".pyc" or p.name == ".DS_Store"
 
 
-def fingerprint(harness_dir: Path | None) -> str:
+def fingerprint(harness_dir: Path | None, salt: str = "") -> str:
     """A stable digest of the harness tree that produced a rollout; `None` means a base
-    rollout on the inherited harness and digests to the shared value "base".
+    rollout on the inherited harness and digests to the shared value "base". A non-empty
+    `salt` (the pinned-policy digest) changes the identity; "" leaves it unchanged.
     """
     if harness_dir is None:
-        return "base"
+        return f"base-{salt}" if salt else "base"
     root = Path(harness_dir)
     if not root.is_dir():
         return "absent"
     h = hashlib.sha1()
+    if salt:
+        h.update(b"policy\0" + salt.encode() + b"\0")
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.name == MARK or _ignored(p):
             continue
@@ -62,7 +65,12 @@ def fingerprint(harness_dir: Path | None) -> str:
 
 
 def mark_complete(
-    where: Path, *, run_id: str, harness_dir: Path | None = None, extra: dict | None = None
+    where: Path,
+    *,
+    run_id: str,
+    harness_dir: Path | None = None,
+    extra: dict | None = None,
+    salt: str = "",
 ) -> Path:
     """Record that `run_id` finished. Call only after the runner returned normally."""
     d = Path(where)
@@ -71,7 +79,7 @@ def mark_complete(
         "version": VERSION,
         "run_id": run_id,
         "at": time.time(),
-        "harness": fingerprint(harness_dir),
+        "harness": fingerprint(harness_dir, salt),
         **(extra or {}),
     }
     tmp = d / f"{MARK}.{os.getpid()}.tmp"
@@ -89,7 +97,7 @@ def read_mark(where: Path) -> dict | None:
 
 
 def is_complete(
-    where: Path, *, harness_dir: Path | None = None, match_harness: bool = True
+    where: Path, *, harness_dir: Path | None = None, match_harness: bool = True, salt: str = ""
 ) -> bool:
     """Whether the artifacts at `where` may be reused: a current marker naming the same
     harness, unless `match_harness` is off.
@@ -99,17 +107,17 @@ def is_complete(
         return False
     if not match_harness:
         return True
-    return m.get("harness") == fingerprint(harness_dir)
+    return m.get("harness") == fingerprint(harness_dir, salt)
 
 
-def why_not(where: Path, *, harness_dir: Path | None = None) -> str:
+def why_not(where: Path, *, harness_dir: Path | None = None, salt: str = "") -> str:
     """A sentence for a log line explaining why `where` is or is not reusable."""
     m = read_mark(where)
     if not m:
         return f"no {MARK} -- never finished, or finished before completion was recorded"
     if m.get("version") != VERSION:
         return f"marker version {m.get('version')} != {VERSION}"
-    want, got = fingerprint(harness_dir), m.get("harness")
+    want, got = fingerprint(harness_dir, salt), m.get("harness")
     if want != got:
         return f"harness fingerprint {got} != {want} -- produced by a different configuration"
     return "reusable"

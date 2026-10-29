@@ -25,7 +25,11 @@ from ..core.tree import SurfaceSpec
 
 @dataclass(frozen=True)
 class Install:
-    """A materialised harness ready for a launcher; `fingerprint` digests the SOURCE tree."""
+    """A staged editable harness; fingerprint identifies source plus pinned policy.
+
+    extras["pinned_policy"] is trusted deployer text. Launchers must prepend it after
+    their final rendering/installation step and verify the actual execution input.
+    """
 
     staging_dir: Path
     fingerprint: str

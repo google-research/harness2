@@ -25,7 +25,7 @@ from pathlib import Path
 from harness.run import BENCH_ROOT, DEFAULT_SKILLS, _load_env, load_task
 from harness.tools import get_all_tool_definitions
 from opencode import session as oc_session
-from opencode.render import RenderResult, render_tree
+from opencode.render import RenderResult, apply_pinned_policy, render_tree
 from utils.stdio import force_utf8_stdio
 
 DEFAULT_OPENCODE_DIR = Path(os.environ.get("OPENCODE_DIR", ""))
@@ -219,6 +219,7 @@ def main(args) -> None:
         sys.exit(f"harness defines subagents {rendered.subagents} but --allow-subagents was not "
                  f"passed; `task` has no native-harness equivalent, so the run would not be "
                  f"tool-matched to the baselines")
+    apply_pinned_policy(workspace, rendered, os.environ.get("HARNESS2_PINNED_POLICY", ""))
     prompt, agent = rendered.prompt, rendered.agent
     components = harness_inventory(rendered)
     tools = tool_map(args.tool_mode, args.skill_mode,

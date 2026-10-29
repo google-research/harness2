@@ -72,6 +72,9 @@ guardrails, memory, tool guidance, subagents, skills, scripts, and plugins**.
 They control context construction, the tool interface, delegation, and behavior
 inside the tool loop.
 
+Deployers can supply a [pinned policy](docs/PINNED_POLICY.md) outside the editable
+tree; runners inject and verify it at the final execution input.
+
 <p align="center">
   <a href="assets/components.png">
     <img src="assets/components.png" alt="Eight harness components grouped by runtime role: system prompt, guardrails, memory, and skills construct context; tool guidance and scripts define the tool interface; subagents orchestrate delegated work; plugins control middleware." width="100%">

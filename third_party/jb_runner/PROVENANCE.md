@@ -23,5 +23,8 @@ with upstream. It has been replaced by the first-party Python module
 which the adapter launches as a subprocess in its place. That module is release
 code, not a vendored asset, so it is not listed in `ASSETS.json`.
 
+The Codex launcher invokes the first-party policy runtime after workspace
+installation to inject and verify the final `AGENTS.md` before execution.
+
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.

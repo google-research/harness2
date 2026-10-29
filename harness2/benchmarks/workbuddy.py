@@ -36,10 +36,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from .. import config
+from ..core import policy
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.selection import order_graded_first
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
+from ..install import require_policy_runtime
 from ..substrate import opencode as OC
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
@@ -498,6 +500,8 @@ def _job_yaml(
     ws: Path | None,
     k: int,
     jobs_dir_abs: Path,
+    *,
+    pinned_policy: str = "",
 ) -> str:
     sel = "\n".join(f"    - {t}" for t in tasks)
     if substrate == "oc":
@@ -508,6 +512,8 @@ def _job_yaml(
             composed = ws / "_composed" / "prompt.j2"
             if composed.is_file():
                 hp["prompt_template_path"] = str(composed.resolve())
+        if policy.block(pinned_policy):
+            hp[policy.ENV] = pinned_policy
         hp_lines = "\n".join(f"  {key}: {json.dumps(val)}" for key, val in sorted(hp.items()))
         extra = f"harness_params_override:\n{hp_lines}\n"
     else:
@@ -515,6 +521,8 @@ def _job_yaml(
         hp = {"CODEX_MODEL": config.SOLVER_MODEL_CX}
         if ws is not None:
             hp["WB_HARNESS_WS"] = str(ws.resolve())
+        if policy.block(pinned_policy):
+            hp[policy.ENV] = pinned_policy
         hp_block = ""
         if hp:
             hp_lines = "\n".join(f"  {key}: {json.dumps(val)}" for key, val in sorted(hp.items()))
@@ -590,6 +598,7 @@ def run_batch(
     done,
     need=None,
     timeout_s: int | None = None,
+    pinned_policy: str = "",
 ) -> list[Path]:
     """Roll `tasks` k times each under harness workspace `ws`, returning the run dirs THIS
     invocation created. `done(task_id)` is the caller's skip predicate; `need(task_id)` is
@@ -613,7 +622,10 @@ def run_batch(
         yaml_path = config.wb_repo() / "configs" / "jobs" / f"{slug}.yaml"
         label_dir.mkdir(parents=True, exist_ok=True)
         yaml_path.write_text(
-            _job_yaml(subset, substrate, label, todo, ws, k, label_dir), encoding="utf-8"
+            _job_yaml(
+                subset, substrate, label, todo, ws, k, label_dir, pinned_policy=pinned_policy
+            ),
+            encoding="utf-8",
         )
 
         timeout_s = timeout_s or int((len(todo) * k / _conc(substrate)) * 3600 * 1.2 + 900)
@@ -750,29 +762,37 @@ class WbAdapter:
         m = RM.read_mark(Path(trial)) or {}
         return all(m.get(key) == val for key, val in self._cell_identity().items())
 
+    @property
+    def _policy_salt(self) -> str:
+        return policy.digest(self.spec.pinned_policy)
+
     def _reusable(self, trial: Path, harness_dir: Path | None) -> bool:
         return (
             _trial_finished(trial)
-            and RM.is_complete(trial, harness_dir=harness_dir)
+            and RM.is_complete(trial, harness_dir=harness_dir, salt=self._policy_salt)
             and self._identity_matches(trial)
         )
 
     def _install(self, harness_dir: Path | None) -> Install:
         if harness_dir is None:
             return Install(
-                staging_dir=self.spec.runs_root, fingerprint="base", extras={"install_mode": "none"}
+                staging_dir=self.spec.runs_root,
+                fingerprint=RM.fingerprint(None, self._policy_salt),
+                extras={"install_mode": "none", "pinned_policy": self.spec.pinned_policy},
             )
         return self.substrate.materialise(Path(harness_dir), self.spec, {})
 
     @staticmethod
     def _drop_staging(install: Install) -> None:
-        if install.fingerprint != "base":
+        if install.extras.get("install_mode") != "none":
             shutil.rmtree(install.staging_dir, ignore_errors=True)
 
     def _launch(self, req: RunRequest, install: Install) -> list[Path]:
         """The benchmark-supplied launcher body: the finished trials among the run dirs
         this invocation created, ranked; the adapter trims and marks them."""
-        ws = None if install.fingerprint == "base" else install.staging_dir
+        if policy.block(install.extras.get("pinned_policy", "")):
+            require_policy_runtime("workbuddy-bench", self.substrate.name)
+        ws = None if install.extras.get("install_mode") == "none" else install.staging_dir
         k = len(req.run_ids)
         label = self._label(req.run_ids[0], k)
         if self.substrate.name == "cx":
@@ -798,6 +818,7 @@ class WbAdapter:
             done=lambda tid: _have(tid) >= k,
             need=lambda tid: k - _have(tid),
             timeout_s=req.timeout or None,
+            pinned_policy=install.extras.get("pinned_policy", ""),
         )
         fresh = [t for t in _trials_in(new_dirs, req.task_ref, self.subset) if _trial_finished(t)]
         return self._rank(fresh)
@@ -819,7 +840,11 @@ class WbAdapter:
             raise RuntimeError(f"Harbor produced no finished trial for {label} / {task_id}")
         chosen = fresh[0]
         RM.mark_complete(
-            chosen, run_id=run_id, harness_dir=harness_dir, extra=self._cell_identity()
+            chosen,
+            run_id=run_id,
+            harness_dir=harness_dir,
+            salt=self._policy_salt,
+            extra=self._cell_identity(),
         )
         return chosen
 
@@ -851,7 +876,11 @@ class WbAdapter:
             for t in fresh:
                 if not RM.read_mark(t):
                     RM.mark_complete(
-                        t, run_id=run_ids[0], harness_dir=harness_dir, extra=self._cell_identity()
+                        t,
+                        run_id=run_ids[0],
+                        harness_dir=harness_dir,
+                        salt=self._policy_salt,
+                        extra=self._cell_identity(),
                     )
             mine = _mine()
         return self._rank(mine)[:k]

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .. import config
-from . import context, prompts
+from . import context, policy, prompts
 from . import tree as harness_tree
 from .ledger import Ledger
 from .proposer import Proposer, ProposerError
@@ -113,7 +113,8 @@ def _accept_tree(
     label: str,
 ) -> tuple[bool, str]:
     """Repair then validate a proposed tree: (kept_base, "") if accepted, else the error."""
-    triggered = harness_tree.autotrigger(surface, new)
+    cap = surface.always_on_max - policy.reserved_chars(adapter.spec.pinned_policy)
+    triggered = harness_tree.autotrigger(surface, new, always_on_max=cap)
     if triggered:
         print(f"  [{label}] auto-triggered skill(s): {', '.join(triggered)}", flush=True)
     changed = harness_tree.diff_summary(surface, fallback, new)
@@ -123,6 +124,7 @@ def _accept_tree(
             surface,
             new,
             allow_subagents=adapter.spec.allow_subagents,
+            always_on_max=cap,
             reserved_scripts=harness_tree.RESERVED_SCRIPTS | adapter.spec.reserved_scripts,
         )
         adapter.validate_tree(new)

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .. import config
+from ..core import policy as POLICY
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.tree import SurfaceSpec
@@ -39,7 +40,7 @@ from .base import Install, Launcher, RunRequest
 CODEX_SURFACE = SurfaceSpec(
     name="codex",
     always_on=("AGENTS.md",),
-    always_on_max=8_000,
+    always_on_max=POLICY.CODEX_MAX_CHARS,
     always_on_cap_reason=(
         "AGENTS.md is injected whole into EVERY turn, and codex additionally "
         "truncates it silently at 32,768 bytes"
@@ -129,20 +130,26 @@ class CodexSubstrate:
         if not HT.is_tree(CODEX_SURFACE, tree_dir):
             raise ValueError(f"{tree_dir} is not a codex harness tree (no AGENTS.md)")
         staged = Path(tempfile.mkdtemp(prefix="adapt-cx-root-"))
-        for entry in CODEX_ROOT_ENTRIES:
-            src = tree_dir / entry
-            if not src.exists():
-                continue
-            if src.is_dir():
-                shutil.copytree(src, staged / entry)
-            else:
-                shutil.copy2(src, staged / entry)
+        try:
+            for entry in CODEX_ROOT_ENTRIES:
+                src = tree_dir / entry
+                if not src.exists():
+                    continue
+                if src.is_dir():
+                    shutil.copytree(src, staged / entry)
+                else:
+                    shutil.copy2(src, staged / entry)
+            POLICY.validate_tree(CODEX_SURFACE, staged, spec.pinned_policy)
+        except BaseException:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         return Install(
             staging_dir=staged,
-            fingerprint=RM.fingerprint(tree_dir),
+            fingerprint=RM.fingerprint(tree_dir, POLICY.digest(spec.pinned_policy)),
             extras={
                 "install_mode": "codex_root",
                 **{k: v for k, v in ctx.items() if not k.startswith("file:")},
+                "pinned_policy": spec.pinned_policy,
             },
         )
 

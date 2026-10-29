@@ -20,6 +20,7 @@ from harbor.models.trajectories.tool_call import ToolCall
 from harbor.models.trajectories.trajectory import Trajectory
 
 from workbuddy_bench.agents._agent_user import ensure_agent_user
+from workbuddy_bench.agents import pinned_policy as pinned
 
 _OUTPUT_FILENAME = "oc-output.txt"
 
@@ -34,6 +35,7 @@ class OcAgent(BaseInstalledAgent):
     SUPPORTS_ATIF: bool = True
 
     def __init__(self, logs_dir: Path, *args, **kwargs):
+        self._pinned_policy = kwargs.pop(pinned.ENV, "")
         self._oc_version: str | None = kwargs.pop("OPENCODE_VERSION", None)
         # OpenCode has no --max-turns; the cap is advisory and recorded only, since the
         # real bound is the per-trial timeout.
@@ -149,6 +151,12 @@ class OcAgent(BaseInstalledAgent):
             ),
         )
         await ensure_agent_user(self, environment)
+
+    def render_instruction(self, instruction: str) -> str:
+        rendered = super().render_instruction(instruction)
+        # The task instruction is not part of the editable always-on budget.
+        return pinned.prepend(rendered, self._pinned_policy,
+                              max_chars=pinned.OPENCODE_MAX_CHARS + len(instruction))
 
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext

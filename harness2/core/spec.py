@@ -141,6 +141,8 @@ class BenchSpec:
     domain_word: str = "domain"
     leak_globs: tuple[str, ...] = ()
     allow_subagents: bool = False
+    # Literal deployer text, outside editable trees; runners inject it after rendering.
+    pinned_policy: str = ""
 
     reserved_scripts: frozenset[str] = frozenset()
     proposer_deliverables: str = "contents"

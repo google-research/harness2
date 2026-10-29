@@ -32,9 +32,11 @@ from functools import cache
 from pathlib import Path
 
 from .. import config
+from ..core import policy
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
+from ..install import require_policy_runtime
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
@@ -589,11 +591,13 @@ class LabAdapter:
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
         out = self._run_dir(run_id)
-        if RM.is_complete(out, harness_dir=harness_dir) and self.artifacts_intact(out):
+        if RM.is_complete(
+            out, harness_dir=harness_dir, salt=self._policy_salt
+        ) and self.artifacts_intact(out):
             self._check_tool_gate(out)
             return out
         if out.is_dir() and any(out.iterdir()):
-            reason = RM.why_not(out, harness_dir=harness_dir)
+            reason = RM.why_not(out, harness_dir=harness_dir, salt=self._policy_salt)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -619,16 +623,23 @@ class LabAdapter:
             out,
             run_id=run_id,
             harness_dir=harness_dir,
+            salt=self._policy_salt,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return out
+
+    @property
+    def _policy_salt(self) -> str:
+        return policy.digest(self.spec.pinned_policy)
 
     def _install(self, harness_dir: Path | None) -> Install:
         """BASE (harness_dir=None) is a value: fingerprint 'base', and the launcher decides
         what 'base' means on its substrate."""
         if harness_dir is None:
             return Install(
-                staging_dir=self.base_harness(), fingerprint="base", extras={"harness": "base"}
+                staging_dir=self.base_harness(),
+                fingerprint=RM.fingerprint(None, self._policy_salt),
+                extras={"harness": "base", "pinned_policy": self.spec.pinned_policy},
             )
         inst = self.substrate.materialise(Path(harness_dir), self.spec, {})
         return Install(
@@ -638,6 +649,8 @@ class LabAdapter:
         )
 
     def _launch_oc(self, req: RunRequest, install: Install) -> list[Path]:
+        if policy.block(install.extras.get("pinned_policy", "")):
+            require_policy_runtime("harvey-labs", "oc")
         runner = config.lab_repo() / "opencode" / "run_opencode.py"
         _require_runner(runner)
         dirs = []
@@ -673,7 +686,7 @@ class LabAdapter:
                 run_detached(
                     cmd,
                     cwd=config.lab_repo(),
-                    env=_lab_env(),
+                    env={**_lab_env(), policy.ENV: install.extras.get("pinned_policy", "")},
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -685,6 +698,8 @@ class LabAdapter:
         return dirs
 
     def _launch_cx(self, req: RunRequest, install: Install) -> list[Path]:
+        if policy.block(install.extras.get("pinned_policy", "")):
+            require_policy_runtime("harvey-labs", "cx")
         runner = config.lab_repo() / "external" / "adapt_runs_cx" / "run_codex_lab.py"
         _require_runner(runner)
         dirs = []
@@ -709,6 +724,7 @@ class LabAdapter:
 
             env = {
                 **_lab_env(),
+                policy.ENV: install.extras.get("pinned_policy", ""),
                 "ADAPT_LABCX_CODEX_BIN": str(Path(config.CODEX_DIST) / "codex"),
                 "ADAPT_LABCX_RESULTS": str(self._results_root),
                 "ADAPT_LABCX_SCRATCH": os.environ.get("ADAPT_LABCX_SCRATCH")

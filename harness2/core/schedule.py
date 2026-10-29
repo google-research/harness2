@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from . import library as library_store
-from . import recursion, runmark, selection
+from . import policy, recursion, runmark, selection
 from . import tree as harness_tree
 from .proposer import Proposer
 from .spec import BenchmarkAdapter, RunView
@@ -242,6 +242,7 @@ class TaskResult:
     domain: str
     k: int
     seed: int | None = None
+    policy_digest: str = ""
     status: str = "running"
     modes: dict = field(default_factory=dict)
     selections: dict = field(default_factory=dict)
@@ -254,6 +255,7 @@ class TaskResult:
             "domain": self.domain,
             "k": self.k,
             "seed": self.seed,
+            "policy_digest": self.policy_digest,
             "status": self.status,
             "base": self.base,
             "modes": self.modes,
@@ -300,6 +302,8 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             merged = res.to_dict()
             if summary_path.is_file():
                 old = _load_old(summary_path)
+                if old.get("policy_digest", "") != res.policy_digest:
+                    old = {}
                 for key in ("modes", "selections"):
                     prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
                     prev.update(merged.get(key) or {})
@@ -367,6 +371,8 @@ def _resume(
             f"  [{task_id}] unreadable summary.json ({type(exc).__name__}: {exc}); re-running",
             flush=True,
         )
+        return False
+    if got.get("policy_digest", "") != policy.digest(adapter.spec.pinned_policy):
         return False
     if got.get("status") != "ok":
         return False
@@ -602,7 +608,13 @@ def run_task(
     bench, sub = adapter.spec.name, adapter.substrate.name
 
     domain = adapter.domain_of(task_id)
-    res = TaskResult(task_id=task_id, domain=domain, k=k, seed=seed)
+    res = TaskResult(
+        task_id=task_id,
+        domain=domain,
+        k=k,
+        seed=seed,
+        policy_digest=policy.digest(adapter.spec.pinned_policy),
+    )
     base_ns = Namespace(bench, sub, "agg", k, seed, tag)
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
