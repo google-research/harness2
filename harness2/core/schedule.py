@@ -32,9 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from . import context
+from . import context, recursion, runmark, selection
 from . import library as library_store
-from . import recursion, runmark, selection
 from . import tree as harness_tree
 from .proposer import Proposer
 from .spec import BenchmarkAdapter, RunView

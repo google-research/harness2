@@ -27,6 +27,7 @@ from harness2.core.library import Library
 from harness2.core.proposer import Proposer, ProposerError, Reply
 from harness2.core.spec import RunView, resolve_channel_model
 from harness2.demo import BASE_SCRIPT, DemoAdapter, DemoProposer
+from harness2.substrate import codex, opencode
 
 
 class WorkflowTests(unittest.TestCase):
@@ -230,10 +231,13 @@ class WorkflowTests(unittest.TestCase):
         run_dir = self.adapter.execute("ledger-1", None, "sentinel-check")
         (run_dir / "answer.txt").write_text("", encoding="utf-8")
 
-        for sentinel in (
-            "(no parseable events in trajectory)",
-            "(failed to read trajectory: OSError)",
-        ):
+        garbled = self.root / "garbled.jsonl"
+        garbled.write_text("not json\n", encoding="utf-8")
+        sentinels = (
+            opencode.render_events(garbled, obs_trunc=10_000, max_chars=10_000),
+            codex.render_events(self.root / "missing.jsonl", obs_trunc=10_000, max_chars=10_000),
+        )
+        for sentinel in sentinels:
             with self.subTest(sentinel=sentinel):
                 (run_dir / "trajectory.md").write_text(sentinel, encoding="utf-8")
                 rv = RunView(
@@ -267,9 +271,7 @@ class WorkflowTests(unittest.TestCase):
         chosen_run_dir = Path(summary["selections"]["agg"]["chosen_run_dir"])
         summary["selections"]["agg"]["evidence"] = "trajectory"
         summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        (chosen_run_dir / "trajectory.md").write_text(
-            "(no parseable events in trajectory)", encoding="utf-8"
-        )
+        (chosen_run_dir / "trajectory.md").write_text(sentinels[0], encoding="utf-8")
         repaired = self.run_stream(k=1)
         self.assertEqual([row["status"] for row in repaired["tasks"]], ["ok", "skipped"])
 
