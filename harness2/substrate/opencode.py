@@ -36,6 +36,7 @@ from typing import Mapping, Sequence
 from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
+from ..core.proposer import opencode_usage
 from ..core.tree import SurfaceSpec
 from .base import Install, Launcher, RunRequest
 
@@ -320,7 +321,7 @@ class OpencodeSubstrate:
             except OSError:
                 continue
             seen = True
-            cost, used = _step_usage(raw)
+            cost, used = opencode_usage(raw)
             total += cost
             tokens += used
         if not seen or (total <= 0 and tokens > 0):
@@ -341,32 +342,6 @@ class OpencodeSubstrate:
                 f"bun not found at {config.BUN}: install bun on PATH or at ~/.bun/bin/bun "
                 f"(the upstream OpenCode is run from source through bun)."
             )
-
-
-def _step_usage(raw: str) -> tuple[float, int]:
-    """(USD, tokens) summed over the step_finish events of one `--format json` stream."""
-    cost, tokens = 0.0, 0
-    for ln in raw.splitlines():
-        ln = ln.strip()
-        if not ln.startswith("{"):
-            continue
-        try:
-            ev = json.loads(ln)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(ev, dict):
-            continue
-        part = ev.get("part") if isinstance(ev.get("part"), dict) else ev
-        if part.get("type", ev.get("type")) not in ("step-finish", "step_finish"):
-            continue
-        if isinstance(part.get("cost"), (int, float)):
-            cost += float(part["cost"])
-        used = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
-        cache = used.get("cache") if isinstance(used.get("cache"), dict) else {}
-        for n in (used.get("input"), used.get("output"), used.get("reasoning"), *cache.values()):
-            if isinstance(n, (int, float)) and n > 0:
-                tokens += int(n)
-    return cost, tokens
 
 
 _TRUNC_FMT = "…(+{n} chars — render truncation)"
