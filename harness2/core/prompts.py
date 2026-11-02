@@ -954,7 +954,7 @@ def aggregate(bp: BenchPrompts, surface: SurfaceSpec | str, *, k: int = 1, index
                 "In your single `<notes>` block, one line per decision, in this exact shape:\n\n"
                 "    kept|revised|dropped -> <which edit> -> <the trajectory moment or base-set "
                 "pattern that decided it, with counts where sets are involved, e.g. 'failed in "
-                f"{max(k - 1, 2)}/{k} base rollouts'>\n\n"
+                f"{min(max(k - 1, 2), k)}/{k} base rollouts'>\n\n"
                 "A decision without evidence attached is a decision the next reader cannot audit.",
             ]
         )
