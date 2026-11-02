@@ -85,6 +85,29 @@ class StreamCostTests(unittest.TestCase):
         self.assertEqual(oc.stream_cost([self.root / "missing.jsonl"]), None)
         self.assertEqual(oc.stream_cost([]), None)
 
+    def test_opencode_tokens_without_a_price_are_unpriced_not_free(self):
+        def step(cost, tokens):
+            return json.dumps(
+                {"type": "step_finish", "part": {"type": "step-finish", "cost": cost, **tokens}}
+            )
+
+        used = {"tokens": {"input": 1200, "output": 300, "reasoning": 0, "cache": {"read": 50}}}
+        oc = OpencodeSubstrate()
+        cases = {
+            "unregistered model": ([step(0, used), step(0, used)], None),
+            "no tokens used": ([step(0, {"tokens": {"input": 0, "output": 0}})], 0.0),
+            "priced": ([step(0.02, used), step(0.01, used)], 0.03),
+        }
+        for name, (lines, want) in cases.items():
+            with self.subTest(name):
+                stream = self.root / f"{name}.jsonl"
+                stream.write_text("\n".join(lines), encoding="utf-8")
+                got = oc.stream_cost([stream])
+                if want is None:
+                    self.assertIsNone(got)
+                else:
+                    self.assertAlmostEqual(got, want)
+
     def test_codex_and_unpriced_substrates_report_no_cost(self):
         stream = self.root / "codex.jsonl"
         stream.write_text(_step(1.0), encoding="utf-8")
