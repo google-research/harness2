@@ -241,6 +241,9 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
             if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
                 errs.append(f"{hf}: {event}[{i}] needs a `hooks` list")
                 continue
+            matcher = entry.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                errs.append(f"{hf}: {event}[{i}] `matcher` must be a string or null")
             for h in entry["hooks"]:
                 if not isinstance(h, dict) or h.get("type") != "command":
                     errs.append(
