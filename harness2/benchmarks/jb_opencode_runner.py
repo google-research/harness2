@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -123,10 +124,36 @@ def _permission(workspace: Path) -> str:
                 "/tmp/*": "allow",
                 "/tmp/**": "allow",
                 f"{TEMP_BASE}/*": "allow",
+                f"{TEMP_BASE}/**": "deny",
+                f"{_sandbox(workspace)}/**": "allow",
                 f"{workspace}/**": "allow",
             }
         }
     )
+
+
+def _sandbox(workspace: Path) -> Path:
+    """This rollout's npm prefix, Python user base and temp dir; short for AF_UNIX socket paths."""
+    return workspace.parent / f"sb-{hashlib.sha1(workspace.name.encode()).hexdigest()[:12]}"
+
+
+def _stage_sandbox(workspace: Path) -> None:
+    sandbox = _sandbox(workspace)
+    shutil.rmtree(sandbox, ignore_errors=True)
+    for name in ("npm-global", "python-user", "tmp"):
+        (sandbox / name).mkdir(parents=True)
+
+
+def _isolation_env(workspace: Path, path: str) -> dict[str, str]:
+    """Send `npm install -g`, `pip install --user` and temp files to this rollout's sandbox."""
+    sandbox = _sandbox(workspace)
+    npm, user = sandbox / "npm-global", sandbox / "python-user"
+    return {
+        "NPM_CONFIG_PREFIX": str(npm),
+        "PYTHONUSERBASE": str(user),
+        "TMPDIR": str(sandbox / "tmp"),
+        "PATH": ":".join(p for p in (str(npm / "bin"), str(user / "bin"), path) if p),
+    }
 
 
 def _reset_task(task_dir: Path, workspace: Path) -> None:
@@ -196,7 +223,11 @@ def _attempt(
         code = subprocess.run(
             _command(cfg, workspace, prompt, title),
             cwd=cfg.opencode_dir,
-            env={**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
+            env={
+                **os.environ,
+                **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
+                "OPENCODE_PERMISSION": _permission(workspace),
+            },
             stdout=out,
             stderr=err,
         ).returncode
@@ -235,10 +266,12 @@ def run_one(cfg: Settings, task_id: str) -> bool:
     workspace = TEMP_BASE / f"{task_name}_{cfg.label}_{os.getpid()}"
     output_dir = workspace / "output"
     _stage(task_dir, cfg.render_dir, workspace)
+    _stage_sandbox(workspace)
 
     for attempt in range(1, cfg.max_retries + 1):
         if attempt > 1:
             _reset_task(task_dir, workspace)
+            _stage_sandbox(workspace)
         traj_file = traj_dir / f"{task_name}_{cfg.label}_attempt{attempt}_{_stamp()}.jsonl"
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
@@ -257,6 +290,7 @@ def run_one(cfg: Settings, task_id: str) -> bool:
     else:
         _log(log_file, f"[{_hms()}] NO OUTPUT for {task_id} ({cfg.label})")
     shutil.rmtree(workspace, ignore_errors=True)
+    shutil.rmtree(_sandbox(workspace), ignore_errors=True)
     return delivered and _nonempty(final_output_dir)
 
 
