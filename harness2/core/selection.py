@@ -114,10 +114,19 @@ def selection_pool(
 def _render_pool(
     candidates: dict[str, RunView], adapter: BenchmarkAdapter, sel: Selection
 ) -> tuple[dict[str, RunView], dict[str, str]]:
-    """Drop non-answers before anonymising, recording each drop and its cause in `dropped`."""
+    """Drop non-answers before anonymising, recording each drop and its cause in `dropped`.
+
+    An output whose execution carries the task's answer key is dropped too: it cannot be shown
+    to the selector, and it must not become the measured output.
+    """
     pool: dict[str, RunView] = {}
     artifacts: dict[str, str] = {}
+    key = context.answer_key_for(adapter, sel.task_id)
+    withheld = context.answer_key_runs(adapter, list(candidates.values()), key)
     for lbl, rv in candidates.items():
+        if rv.label in withheld:
+            sel.dropped.append(f"{lbl} (withheld: {withheld[rv.label]})"[:200])
+            continue
         if not (rv.ok and rv.delivered):
             sel.dropped.append(lbl)
             continue
@@ -133,7 +142,7 @@ def _render_pool(
         artifacts[lbl] = rendered
     if not pool and candidates and adapter.spec.state_deliverable:
         for lbl, rv in candidates.items():
-            if not rv.ok:
+            if not rv.ok or rv.label in withheld:
                 continue
             try:
                 body = adapter.trajectory(rv.run_dir, obs_trunc=adapter.spec.obs_trunc)
@@ -328,6 +337,7 @@ def run_selection(
     )
 
     context.assert_no_grader_verdicts(root)
+    context.assert_no_answer_key_text(root, context.answer_key_for(adapter, task_id))
 
     try:
         reply = prop.call(mission, root, f"select.{mode}{k}")

@@ -672,6 +672,25 @@ class JobBenchAdapter:
         d = self._dataset_task(task_id) / "task_folder"
         return d if d.is_dir() else None
 
+    def answer_key(self, task_id: str) -> dict[str, str]:
+        """RUBRICS.json's questions and criteria: the text a rollout must never see. Read for
+        the answer-key tripwire only; the rubric is public on Hugging Face."""
+        rp = self._dataset_task(task_id) / "RUBRICS.json"
+        try:
+            rubrics = json.loads(rp.read_text(encoding="utf-8")).get("rubrics") or []
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return {}
+        out: dict[str, str] = {}
+        for i, r in enumerate(rubrics, 1):
+            if not isinstance(r, dict):
+                continue
+            crit = r.get("criterion", [])
+            crit = [crit] if isinstance(crit, str) else list(crit or [])
+            out[f"RUBRICS.json rubric {i}"] = "\n".join(
+                str(x) for x in [r.get("rubric") or "", *crit]
+            )
+        return out
+
     def _dataset_task(self, task_id: str) -> Path:
         if "/" not in task_id or ".." in task_id or task_id.startswith("/"):
             raise ValueError(

@@ -168,7 +168,9 @@ reproducibility, and baseline comparisons.
 Executor network access is unrestricted, and Codex runs with its sandbox
 disabled. Public benchmark rubrics may be accessible online. Before evaluation,
 configure [network restrictions](docs/EXPERIMENTS.md#web-access) to prevent
-access to benchmark answers and grading criteria.
+access to benchmark answers and grading criteria. On JobBench and LAB, an
+execution that carries its task's grading text is never shown to a model, and
+`harness2-audit` checks earlier runs for it.
 
 ## Results and resume
 

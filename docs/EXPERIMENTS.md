@@ -108,6 +108,39 @@ with its sandbox disabled, so apply restrictions at the network level, such as
 an egress firewall or DNS policy on the executor host, rather than relying on a
 tool setting. Report the restrictions used alongside results.
 
+A fetched answer key does not stay in the rollout that fetched it. The
+trajectory is evidence for the improver, so without a guard the criteria can
+shape the adopted harness and the domain library that every later task in the
+domain reads. On JobBench and LAB, Harness² checks each execution for its own
+task's grading text before any model reads it:
+
+- A reference execution that carries it stops the task with status
+  `contaminated`, before any improver session. Restrict egress and re-run with
+  a new `HARNESS2_RUNS_DIR`, since completed executions are reused.
+- A candidate or final execution that carries it is withheld from every
+  evidence tree and dropped from the selection pool, so it is never shown and
+  never measured.
+- Grading text that reaches a context by any other route raises, like the
+  existing answer-key path and grader-verdict tripwires.
+
+The check matches verbatim passages of ten or more words from at least half of
+a task's criteria, after removing text the agent was given. A fetched rubric
+carries all of them; paraphrases and leaks of a few criteria are not caught.
+WorkBuddy-Bench does not supply an answer key yet.
+
+To check sweeps made without this guard, run the offline audit with the same
+arguments as `harness2-report`:
+
+```bash
+harness2-audit --bench jb --k 1 --mode parallel,sequential
+```
+
+It reports, per task, whether its own grading text appeared in an execution, a
+model's context or an adopted harness, and which later tasks read a library
+entry from such a task. It also lists URLs on the hosts above. Results go to
+`answer_key_audit.json` next to the task summaries, and `harness2-report` warns
+when that file names tasks. The command exits 1 when any task is flagged.
+
 ## Results and resume
 
 The default output roots are `runs/lab/`, `runs/jb/`, and

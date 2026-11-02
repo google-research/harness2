@@ -599,6 +599,33 @@ class LabAdapter:
         d = config.lab_repo() / "tasks" / task_id / "documents"
         return d if d.is_dir() else None
 
+    def answer_key(self, task_id: str) -> dict[str, str]:
+        """task.json `criteria`, one entry per criterion, for the answer-key tripwire only.
+
+        The one read of `criteria` outside the judge: `_task_json` stays the only read that
+        feeds a prompt.
+        """
+        p = config.lab_repo() / "tasks" / task_id / "task.json"
+        try:
+            criteria = json.loads(p.read_text(encoding="utf-8")).get("criteria") or []
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return {}
+        if isinstance(criteria, dict):
+            criteria = list(criteria.values())
+
+        def strings(x) -> list[str]:
+            if isinstance(x, str):
+                return [x]
+            if isinstance(x, dict):
+                return [s for v in x.values() for s in strings(v)]
+            if isinstance(x, list):
+                return [s for v in x for s in strings(v)]
+            return []
+
+        return {
+            f"task.json criterion {i}": "\n".join(strings(c)) for i, c in enumerate(criteria, 1)
+        }
+
     def _run_dir(self, run_id: str) -> Path:
         return self._results_root / run_id
 

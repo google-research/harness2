@@ -27,6 +27,7 @@ bridge = ["litellm[proxy]==1.95.0", "fastapi==0.139.2", "google-auth==2.56.3"]
 harness2 = "harness2.cli.run_sweep:main"
 harness2-judge = "harness2.cli.judge:main"
 harness2-report = "harness2.cli.report:main"
+harness2-audit = "harness2.cli.audit:main"
 harness2-setup = "harness2.cli.setup:main"
 harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"

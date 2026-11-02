@@ -28,6 +28,7 @@ import json
 import sys
 from pathlib import Path
 
+from ..core import audit as AUDIT
 from ..core import report as R
 from ..core import schedule as SCHED
 from . import _common as C
@@ -55,6 +56,27 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
     return fell_back, usd
 
 
+def _audit_warning(ns_dir: Path, k: int) -> list[str]:
+    """WARNING lines from harness2-audit's record for this namespace, if it was run."""
+    try:
+        got = json.loads((ns_dir / AUDIT.FILENAME).read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    bad = [
+        t["task_id"]
+        for t in got.get("tasks") or []
+        if t.get("verdict") in ("contaminated", "inherits")
+    ]
+    if not bad:
+        return []
+    shown = ", ".join(bad[:5]) + (" ..." if len(bad) > 5 else "")
+    return [
+        f"  WARNING  k={k}: harness2-audit found answer-key text in or upstream of {len(bad)} "
+        f"task(s) ({shown}). Their scores may reflect the grading criteria; see "
+        f"{ns_dir / AUDIT.FILENAME}."
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="harness2.cli.report", description=__doc__, formatter_class=C.HelpFormatter
@@ -79,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--k named no scale")
 
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
-    rows, fell_back, usd = [], {}, {}
+    rows, fell_back, usd, audit_lines = [], {}, {}, []
     for k in ks:
         ns_dir = C.runs_root_for(adapter) / C.summary_namespace(adapter, k, seed=args.seed)
         judged = ns_dir / "judged.json"
@@ -91,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         fb, sp = _spend_and_fallbacks(ns_dir, modes, k)
         fell_back.update(fb)
         usd.update(sp)
+        audit_lines += _audit_warning(ns_dir, k)
     if not rows:
         raise SystemExit("nothing to report")
 
@@ -101,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     summaries = R.summarise(rows, fell_back=fell_back, usd=usd)
     print(R.render(summaries, title=title, bench=adapter.spec.name))
+    if audit_lines:
+        print("\n" + "\n".join(audit_lines))
     spend = sum(s.usd for s in summaries)
     if spend:
         print(

@@ -33,9 +33,10 @@ import fnmatch
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 
 from . import tree as harness_tree
+from .answer_key import AnswerKey, Hit
 from .spec import BenchmarkAdapter, RunView
 
 
@@ -51,6 +52,7 @@ class ContextTree:
     library: bool
     pool: list[str]
     failed: list[str] = field(default_factory=list)
+    withheld: list[str] = field(default_factory=list)
 
     deliverables_mode: str = "contents"
     source_files: int = 0
@@ -94,6 +96,11 @@ class ContextTree:
                 f"context/pool/                   {len(self.pool)} candidates, each "
                 f"with its harness and its rollout"
             )
+        if self.withheld:
+            lines.append(
+                f"                                rollouts withheld: {', '.join(self.withheld)} "
+                f"-- not evidence either way"
+            )
         if self.library:
             lines.append(
                 "context/library/                earlier tasks in this "
@@ -127,6 +134,10 @@ def build(
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     trunc = obs_trunc if obs_trunc is not None else adapter.spec.obs_trunc
+    key = answer_key_for(adapter, task_id)
+    withheld = answer_key_runs(
+        adapter, [*rollouts, *(roll for _label, _dir, roll in pool if roll is not None)], key
+    )
 
     (dest / "task.md").write_text(adapter.task_prompt(task_id), encoding="utf-8")
     source_files = copy_source(adapter, task_id, dest)
@@ -143,6 +154,11 @@ def build(
         (dest / "deliverables").mkdir(exist_ok=True)
     names_only = adapter.spec.proposer_deliverables == "names"
     for r in rollouts:
+        if r.label in withheld:
+            for d in ("rollouts", "deliverables"):
+                (dest / d / f"{r.label}.md").write_text(_WITHHELD_RUN, encoding="utf-8")
+            failed_r.append(f"{r.label}: withheld, its {withheld[r.label]}")
+            continue
         failure = _write_rollout(dest, r, adapter, trunc, names_only)
         if failure:
             failed_r.append(failure)
@@ -155,7 +171,7 @@ def build(
         assert_no_leak_paths(harness_dir, adapter.spec.leak_globs)
         n_h = _copy_tree(Path(harness_dir), dest / "harness")
 
-    got_p = _write_pool(dest, pool, adapter, trunc, names_only)
+    got_p = _write_pool(dest, pool, adapter, trunc, names_only, withheld)
 
     lib = False
     if library_dir and Path(library_dir).is_dir() and any(Path(library_dir).iterdir()):
@@ -167,6 +183,8 @@ def build(
     assert_no_leak_paths(dest, adapter.spec.leak_globs)
 
     assert_no_grader_verdicts(dest)
+
+    assert_no_answer_key_text(dest, key)
 
     if rollouts and not got_r:
         raise RuntimeError(
@@ -182,22 +200,22 @@ def build(
         library=lib,
         pool=got_p,
         failed=failed_r,
+        withheld=sorted(withheld),
         deliverables_mode=("names" if names_only else "contents"),
         source_files=source_files,
         decisions=len(decisions or {}),
     )
 
 
-def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
-    """Copy the task's source material under `root`, minus answer-key paths."""
+def _source_files(adapter: BenchmarkAdapter, task_id: str) -> list[tuple[str, Path]]:
+    """(rel, path) for each source file the agent may see: answer-key paths are left out."""
     src_fn = getattr(adapter, "task_files", None)
     if not callable(src_fn):
-        return 0
+        return []
     src = src_fn(task_id)
     if not src or not Path(src).is_dir():
-        return 0
-    dst = root / "source"
-    src_n = 0
+        return []
+    out = []
     for f in sorted(Path(src).rglob("*")):
         if not f.is_file() or "__pycache__" in f.parts:
             continue
@@ -207,6 +225,15 @@ def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
             for g in adapter.spec.leak_globs
         ):
             continue
+        out.append((rel, f))
+    return out
+
+
+def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
+    """Copy the task's source material under `root`, minus answer-key paths."""
+    dst = root / "source"
+    src_n = 0
+    for rel, f in _source_files(adapter, task_id):
         t = dst / rel
         t.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(f, t)
@@ -293,6 +320,7 @@ def _write_pool(
     adapter,
     trunc: int,
     names_only: bool,
+    withheld: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Write each pool candidate's harness and rollout; return the labels written."""
     got: list[str] = []
@@ -316,7 +344,10 @@ def _write_pool(
                 )
             )
             (d / "harness.diff").write_text(diff, encoding="utf-8")
-        if roll is not None:
+        if roll is not None and roll.label in (withheld or {}):
+            for name in ("rollout.md", "produced.md"):
+                (d / name).write_text(_WITHHELD_RUN, encoding="utf-8")
+        elif roll is not None:
             try:
                 (d / "rollout.md").write_text(
                     adapter.trajectory(roll.run_dir, obs_trunc=trunc), encoding="utf-8"
@@ -516,6 +547,94 @@ def assert_tree_has_no_grader_verdicts(
                     f"that string -- files carrying it cannot be served as evidence to later "
                     f"tasks"
                 )
+
+
+_SOURCE_TEXT_MAX = 8_000_000
+
+_WITHHELD_RUN = (
+    "(withheld: this execution read material from outside the task, so neither its trajectory "
+    "nor its output is evidence. Draw no conclusion from their absence.)\n"
+)
+
+
+def answer_key_for(adapter: BenchmarkAdapter, task_id: str) -> AnswerKey:
+    """The task's grading text minus what the agent was given; empty when the adapter
+    implements no `answer_key(task_id) -> {name: text}`.
+    """
+    fn = getattr(adapter, "answer_key", None)
+    items = fn(task_id) if callable(fn) else None
+    if not items:
+        return AnswerKey(task_id)
+
+    def visible():
+        yield adapter.task_prompt(task_id)
+        for _rel, f in _source_files(adapter, task_id):
+            if f.suffix.lower() in _MARKER_SCAN_SUFFIXES and f.stat().st_size <= _SOURCE_TEXT_MAX:
+                yield f.read_text(encoding="utf-8", errors="replace")
+
+    return AnswerKey.build(task_id, items, visible())
+
+
+def assert_no_answer_key_text(root: Path | str, key: AnswerKey) -> None:
+    """Refuse a context tree that carries the task's own grading text, by content.
+
+    Executions that carry it are withheld before this runs, so a hit here came by another
+    route (a harness, the library, the source copy): like the verdict tripwire, find the read
+    path. The message names the file and the key passage, never the matched words, because
+    stage errors are themselves served to later stages as decision notes.
+    """
+    for rel, hit in answer_key_hits(root, key):
+        raise ValueError(
+            f"answer-key text would enter model context: {rel!r} carries {hit.describe()}. "
+            f"Executions that carry it are withheld, so this arrived by another route -- find "
+            f"the read path that produced it."
+        )
+
+
+def answer_key_hits(root: Path | str, key: AnswerKey) -> Iterator[tuple[str, Hit]]:
+    """(rel, hit) for each text file under `root` that carries `key`, in path order."""
+    root = Path(root)
+    if not key or not root.is_dir():
+        return
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in _MARKER_SCAN_SUFFIXES:
+            continue
+        try:
+            body = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        hit = key.find(body)
+        if hit:
+            yield p.relative_to(root).as_posix(), hit
+
+
+def answer_key_runs(
+    adapter: BenchmarkAdapter, runs: Sequence[RunView], key: AnswerKey
+) -> dict[str, str]:
+    """label -> where its trajectory or deliverable carries `key`, for each run that does.
+
+    The executor's network is open, so this is the expected route for a key: such a run is
+    withheld from every evidence tree and from the selection pool, never shown and never
+    measured. A base that carries one stops its task in `schedule.run_task`.
+    """
+    out: dict[str, str] = {}
+    if not key:
+        return out
+    for r in runs:
+        if not r.ok:
+            continue
+        for what, read in (
+            ("trajectory", lambda: adapter.trajectory(r.run_dir, obs_trunc=adapter.spec.obs_trunc)),
+            ("deliverable", lambda: adapter.deliverable_text(r.run_dir)),
+        ):
+            try:
+                hit = key.find(read() or "")
+            except Exception:
+                continue
+            if hit:
+                out[r.label] = f"{what} carries {hit.describe()}"
+                break
+    return out
 
 
 def mission(tree: ContextTree, *, job: str) -> str:
