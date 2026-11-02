@@ -96,7 +96,18 @@ def judge_one(
     s.raw = dict(got)
     s.n_passed = got.get("n_passed")
     s.n_criteria = got.get("n_criteria")
-    s.all_pass = bool(got.get("all_pass", s.graded and s.n_passed == s.n_criteria))
+    if s.graded and s.n_passed is None:
+        # A criterion count without a passed count is a partial payload, not a grade: the
+        # module contract is that a judge failure is None and a None leaves the denominator.
+        s.n_criteria = None
+        s.error = "judge payload omitted n_passed"
+        return s
+    # dict.get only applies its default when the key is absent; adapters that spell the key
+    # out forward an upstream null, so an explicit None must mean the same as "not sent".
+    all_pass = got.get("all_pass")
+    s.all_pass = (
+        bool(all_pass) if all_pass is not None else (s.graded and s.n_passed == s.n_criteria)
+    )
     return s
 
 
