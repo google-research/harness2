@@ -168,5 +168,7 @@ see [web access during evaluation](EXPERIMENTS.md#web-access).
 
 A wheel ships the `harness2` package only. The task partitioner,
 `python scripts/split_tasks.py`, requires this source tree. For a wheel
-installation, work from a dedicated directory: `.env`, `dependencies/`, and
-`runs/` are resolved there.
+installation, work from a dedicated directory: `.env`, `dependencies/`,
+`third_party/`, and `runs/` are resolved there. Copy `third_party/` from a
+source checkout, or run setup from the checkout itself; without it, setup
+reports the runners and patches as missing.

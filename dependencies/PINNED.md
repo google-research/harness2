@@ -26,8 +26,8 @@ checkout at another revision.
   undefined constant in the upstream Anthropic route support.
 
 Patches are checked before applying and skipped if already applied. Derived runner
-files belong in `harness2/third_party/{jb,lab,wb}_runner/`, which this copy does not
-include; setup copies the LAB and WorkBuddy overlays into the upstream checkouts.
+files belong in `third_party/{jb,lab,wb}_runner/`; setup copies the LAB and
+WorkBuddy overlays into the upstream checkouts.
 
 The upstream dependency locks are used for Python installations. OpenCode uses
 Bun 1.3.11 and the patched lock. Codex uses the version in `config.CODEX_VERSION`.

@@ -1,8 +1,11 @@
 # Bundled third-party code
 
 This package contains the derived benchmark runners, compatibility patches, and
-upstream license notices distributed with Harness². It is included in wheels
-so setup works outside a source checkout.
+upstream license notices distributed with Harness². The tree is part of a source
+checkout. A wheel ships the `harness2` package without it, and `config.py`
+resolves `third_party/` from the working directory, so a wheel installation
+looks for this tree in the directory it is run from; see
+[wheel installations](../docs/SETUP.md#wheel-installations).
 
 | Directory | Source |
 |---|---|
