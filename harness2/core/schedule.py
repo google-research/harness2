@@ -452,7 +452,7 @@ def _roll_bases(
                     run_dir=rd,
                     ok=exists,
                     delivered=exists and adapter.delivered(rd),
-                    cost_usd=rollout_cost(adapter, rd) if exists else 0.0,
+                    cost_usd=rollout_cost(adapter, rd) if exists else None,
                     error="" if exists else "adapter returned a missing run directory",
                 )
         except Exception as exc:

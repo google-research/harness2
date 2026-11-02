@@ -39,6 +39,20 @@ class PricedDemoAdapter(DemoAdapter):
         return self.PRICE
 
 
+class FreeDemoAdapter(DemoAdapter):
+    """A priced executor whose model costs nothing: $0, but not unpriced."""
+
+    def rollout_cost(self, run_dir: Path) -> float | None:
+        return 0.0
+
+
+class UnpricedDemoAdapter(DemoAdapter):
+    """Like Codex: the stream carries tokens, never a price."""
+
+    def rollout_cost(self, run_dir: Path) -> float | None:
+        return None
+
+
 class BrokenCostAdapter(DemoAdapter):
     def rollout_cost(self, run_dir: Path) -> float | None:
         raise OSError("stream vanished")
@@ -89,7 +103,7 @@ class StreamCostTests(unittest.TestCase):
         self.assertAlmostEqual(adapter.rollout_cost(run_dir), 1.0)
         self.assertEqual(rollout_cost(adapter, run_dir), 1.0)
 
-    def test_rollout_cost_never_fails_and_clamps_non_prices(self):
+    def test_rollout_cost_keeps_unpriced_apart_from_free(self):
         class Returns:
             def __init__(self, value):
                 self.value = value
@@ -97,10 +111,12 @@ class StreamCostTests(unittest.TestCase):
             def rollout_cost(self, run_dir):
                 return self.value
 
-        for value in (None, -1.0, "0.5", float("nan")):
+        for value in (None, -1.0, "0.5", float("nan"), float("inf"), True):
             with self.subTest(value=value):
-                self.assertEqual(rollout_cost(Returns(value), self.root), 0.0)
-        self.assertEqual(rollout_cost(object(), self.root), 0.0)
+                self.assertIsNone(rollout_cost(Returns(value), self.root))
+        self.assertIsNone(rollout_cost(object(), self.root))
+        self.assertIsNone(rollout_cost(BrokenCostAdapter.__new__(BrokenCostAdapter), self.root))
+        self.assertEqual(rollout_cost(Returns(0), self.root), 0.0)
         self.assertEqual(rollout_cost(Returns(2), self.root), 2.0)
 
 
@@ -137,17 +153,26 @@ class LedgerRolloutSpendTests(unittest.TestCase):
                 self.assertEqual((result["done"], result["failed"]), (2, 0))
                 for ledger in self._ledgers(adapter, k):
                     self.assertEqual(ledger["R"], 4 * k)
+                    self.assertEqual(ledger["unpriced_rollouts"], 0)
                     self.assertAlmostEqual(ledger["rollout_usd"], 4 * k * adapter.PRICE)
                     self.assertAlmostEqual(
                         ledger["usd"], ledger["rollout_usd"] + ledger["session_usd"]
                     )
 
-    def test_a_failing_cost_hook_does_not_fail_the_task(self):
-        adapter = BrokenCostAdapter(self.root)
-        result = self._run(adapter, 1)
-        self.assertEqual((result["done"], result["failed"]), (2, 0))
-        for ledger in self._ledgers(adapter, 1):
-            self.assertEqual(ledger["rollout_usd"], 0.0)
+    def test_free_unpriced_and_failing_hooks_are_told_apart(self):
+        for name, cls, unpriced in (
+            ("free", FreeDemoAdapter, 0),
+            ("unpriced", UnpricedDemoAdapter, 4),
+            ("broken", BrokenCostAdapter, 4),
+            ("no hook", DemoAdapter, 4),
+        ):
+            with self.subTest(adapter=name):
+                adapter = cls(self.root / name)
+                result = self._run(adapter, 1)
+                self.assertEqual((result["done"], result["failed"]), (2, 0))
+                for ledger in self._ledgers(adapter, 1):
+                    self.assertEqual(ledger["rollout_usd"], 0.0)
+                    self.assertEqual(ledger["unpriced_rollouts"], unpriced)
 
 
 if __name__ == "__main__":

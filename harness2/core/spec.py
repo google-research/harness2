@@ -21,6 +21,7 @@ adapter). `ChannelSpec` describes the proposer/selector channel, which is indepe
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -175,14 +176,18 @@ class BenchSpec:
 
 @dataclass
 class RunView:
-    """What the method knows about one finished rollout. Never carries a score."""
+    """What the method knows about one finished rollout. Never carries a score.
+
+    `cost_usd` is None when the rollout has no price (the substrate reports none, the adapter
+    has no cost hook, or the rollout died), which is not the same as a priced $0.
+    """
 
     label: str
     run_id: str
     run_dir: Path
     ok: bool
     delivered: bool
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
     wall_s: float = 0.0
     error: str = ""
 
@@ -250,20 +255,23 @@ class BenchmarkAdapter(Protocol):
         """
 
 
-def rollout_cost(adapter: BenchmarkAdapter, run_dir: Path) -> float:
+def rollout_cost(adapter: BenchmarkAdapter, run_dir: Path) -> float | None:
     """Executor USD of one rollout, from the adapter's optional `rollout_cost(run_dir)`.
 
     Accounting never fails a rollout: an adapter without the hook, a substrate that reports
-    no price, or an unreadable stream counts as 0.0.
+    no price, an unreadable stream or a value that is not a finite non-negative number is
+    None, i.e. unpriced, never a silent $0.
     """
     fn = getattr(adapter, "rollout_cost", None)
     if not callable(fn):
-        return 0.0
+        return None
     try:
         usd = fn(run_dir)
     except Exception:
-        return 0.0
-    return float(usd) if isinstance(usd, (int, float)) and usd > 0 else 0.0
+        return None
+    if isinstance(usd, bool) or not isinstance(usd, (int, float)):
+        return None
+    return float(usd) if math.isfinite(usd) and usd >= 0 else None
 
 
 def resolve_prompts(adapter: BenchmarkAdapter, task_id: str) -> BenchPrompts:
