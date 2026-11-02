@@ -20,6 +20,7 @@ and shared by every setting, so the run_id becomes the label.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -415,8 +416,14 @@ def _script_doc(p: Path) -> str:
         txt = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return "helper script"
-    m = re.search(r'^\s*(?:"""|\'\'\')(.+)', txt)
-    return m.group(1).strip()[:120] if m else "helper script"
+    try:
+        doc = ast.get_docstring(ast.parse(txt))
+    except (SyntaxError, ValueError):
+        return "helper script"
+    if not doc:
+        return "helper script"
+    first = doc.strip().splitlines()[0].strip()
+    return first[:120] or "helper script"
 
 
 def compose_agent_body(staged: Path, ctx: dict) -> str:
