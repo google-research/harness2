@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -259,12 +260,8 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
         suffix = "" if safe.endswith(".txt") else ".txt"
         (d / f"{safe}{suffix}").write_text(str(body), encoding="utf-8")
     raw_fn = getattr(adapter, "deliverable_assets", None)
-    raw_names: list[str] = []
-    for src in raw_fn(r.run_dir) if callable(raw_fn) else []:
-        t = d / "raw" / Path(src).name
-        t.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, t)
-        raw_names.append(Path(src).name)
+    raw = [Path(src) for src in raw_fn(r.run_dir)] if callable(raw_fn) else []
+    raw_names = copy_assets(raw, d / "raw")
     raw_note = (
         "\n\n`raw/` holds the binary originals of the artifacts above (same names). "
         "The rendered\n`.txt` view is CANONICAL -- it reads each artifact the way the "
@@ -381,6 +378,24 @@ def _images(adapter, run_dir: Path) -> list[Path]:
     if not callable(fn):
         return []
     return [Path(p) for p in (fn(run_dir) or [])]
+
+
+def copy_assets(paths: Sequence[Path], dst: Path) -> list[str]:
+    """Copy each asset into `dst` and return the names it landed under.
+
+    A name is the file's basename unless two assets share one, e.g. `q1/report.xlsx` and
+    `q2/report.xlsx`; then every name is the path below the assets' common folder, so the
+    second copy cannot overwrite the first.
+    """
+    names = [p.name for p in paths]
+    if len(set(names)) < len(names):
+        common = Path(os.path.commonpath([p.parent for p in paths]))
+        names = [p.relative_to(common).as_posix() for p in paths]
+    for src, name in zip(paths, names):
+        t = dst / name
+        t.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, t)
+    return names
 
 
 def _copy_tree(src: Path, dst: Path) -> int:
