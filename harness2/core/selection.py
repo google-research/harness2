@@ -415,37 +415,41 @@ def reflect_adoption(
         return {}
     root = Path(work_dir) / "reflection" / f"{sel.mode}{sel.k}"
     harnesses = Path(work_dir) / "harnesses"
-    evidence = context.build(
-        root,
-        adapter,
-        task_id,
-        list(candidates.values()),
-        harness_dir=harnesses / sel.chosen_label,
-        pool=[
-            (label, harnesses / label, rollout)
-            for label, rollout in candidates.items()
-            if not label.startswith("base")
-        ],
-        decisions=decisions,
-    )
-    shutil.copytree(adapter.base_harness(), root / "base_harness")
-    (root / "adoption.json").write_text(
-        json.dumps(
-            {
-                "chosen_label": sel.chosen_label,
-                "candidate_ids": sel.id_map,
-                "reason": sel.why,
-            },
-            indent=2,
+    try:
+        evidence = context.build(
+            root,
+            adapter,
+            task_id,
+            list(candidates.values()),
+            harness_dir=harnesses / sel.chosen_label,
+            pool=[
+                (label, harnesses / label, rollout)
+                for label, rollout in candidates.items()
+                if not label.startswith("base")
+            ],
+            decisions=decisions,
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    context.assert_no_leak_paths(root, adapter.spec.leak_globs)
-    context.assert_no_grader_verdicts(root)
-    experience = _distil(
-        task_id, sel, candidates, adapter=adapter, prop=prop, root=root, layout=evidence.layout
-    )
+        shutil.copytree(adapter.base_harness(), root / "base_harness")
+        (root / "adoption.json").write_text(
+            json.dumps(
+                {
+                    "chosen_label": sel.chosen_label,
+                    "candidate_ids": sel.id_map,
+                    "reason": sel.why,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        context.assert_no_leak_paths(root, adapter.spec.leak_globs)
+        context.assert_no_grader_verdicts(root)
+        experience = _distil(
+            task_id, sel, candidates, adapter=adapter, prop=prop, root=root, layout=evidence.layout
+        )
+    except ValueError as exc:
+        sel.error = f"reflection rejected: {exc}"
+        return {}
     sel.experience = experience
     _persist(sel, Path(work_dir) / "selection" / f"{sel.mode}{sel.k}", str(chosen.run_dir))
     return experience
@@ -501,5 +505,8 @@ def _distil(
         return {}
     if edits:
         out["edits"] = edits.group(1).strip()
-    context.assert_tree_has_no_grader_verdicts({"EXPERIENCE.md": json.dumps(out)})
+    try:
+        context.assert_tree_has_no_grader_verdicts({"EXPERIENCE.md": json.dumps(out)})
+    except ValueError:
+        return {}
     return out

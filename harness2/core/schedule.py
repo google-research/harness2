@@ -586,6 +586,8 @@ def _run_one_mode(
                 work_dir=work_dir,
                 decisions={stage.label: stage.notes or stage.error for stage in r.stages},
             )
+        except ValueError as exc:
+            sel.error = f"reflection rejected: {exc}"
         finally:
             res.selections[mode] = sel.to_dict()
     d = sel.to_dict()
