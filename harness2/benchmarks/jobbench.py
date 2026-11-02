@@ -559,7 +559,12 @@ def _extractor_lacks_deps(got: dict) -> bool:
     )
 
 
-_JUDGE_FAILURE_PREFIXES = ("opus judge failed", "failed after", "failed to get judge response")
+_JUDGE_FAILURE_PREFIXES = (
+    "opus judge failed",
+    "failed after",
+    "failed to get judge response",
+    "judge raised an exception:",
+)
 
 
 def _has_events(p: Path) -> bool:
