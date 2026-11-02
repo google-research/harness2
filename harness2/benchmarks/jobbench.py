@@ -927,7 +927,14 @@ class JobBenchAdapter:
         for f in sorted(p for p in d.rglob("*") if p.is_file()):
             rel = str(f.relative_to(d))
             if f.suffix.lower().lstrip(".") in _VISION_EXTS:
+                # An image is served through `images`, not decoded into the text view:
+                # read_text(errors="replace") turns its bytes into U+FFFD noise that is
+                # worthless to the proposer/selector and crowds out the real deliverables.
                 images.append(str(f))
+                stub = f"(image: {f.name}, {f.stat().st_size} bytes -- not inlined as text)"
+                files[rel] = stub
+                parts.append(f"=== FILE: {f.name} ===\n{stub}\n")
+                continue
             try:
                 text = f.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
