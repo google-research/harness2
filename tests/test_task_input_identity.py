@@ -84,6 +84,15 @@ class InputsFingerprintTests(unittest.TestCase):
             runmark.inputs_fingerprint("Use version one.", self.root / "absent"),
         )
 
+    def test_digest_normalizes_nested_paths_as_posix(self):
+        nested = self.files / "sub" / "folder"
+        nested.mkdir(parents=True)
+        (nested / "doc.txt").write_text("nested-content")
+        fp1 = runmark.inputs_fingerprint("Prompt", self.files)
+        fp_harness1 = runmark.fingerprint(self.files)
+        self.assertTrue(isinstance(fp1, str) and len(fp1) == 16)
+        self.assertTrue(isinstance(fp_harness1, str) and len(fp_harness1) == 16)
+
 
 class MarkerInputTests(unittest.TestCase):
     def setUp(self):
