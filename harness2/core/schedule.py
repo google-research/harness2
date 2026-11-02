@@ -368,7 +368,7 @@ def _resume(
             flush=True,
         )
         return False
-    if got.get("status") != "ok":
+    if got.get("status") not in ("ok", "partial"):
         return False
     cached_modes = _modes_of(got)
     cached_sels = got.get("selections") or {}
@@ -541,6 +541,7 @@ def _run_one_mode(
         finally:
             res.selections[mode] = sel.to_dict()
     d = sel.to_dict()
+    d["selected_at"] = datetime.now(timezone.utc).isoformat()
     d["chosen_run_dir"] = str(
         candidates[sel.chosen_label].run_dir if sel.chosen_label in candidates else ""
     )
