@@ -603,7 +603,12 @@ def _run_one_mode(
     if not sel.ok:
         res.errors.append(f"{mode}: selection failed: {sel.error}")
     chosen = candidates.get(sel.chosen_label)
-    if sel.ok and chosen is not None and not chosen.delivered:
+    if (
+        sel.ok
+        and chosen is not None
+        and not chosen.delivered
+        and not (sel.evidence == "trajectory" and adapter.spec.state_deliverable)
+    ):
         res.errors.append(f"{mode}: selected run {chosen.run_id} produced no deliverable")
     if mode_lib and sel.ok and library_store.has_experience(sel.experience):
         mode_lib.add(
