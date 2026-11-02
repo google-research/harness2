@@ -303,16 +303,39 @@ def _load_old(path: Path) -> dict:
         return {}
 
 
+def _lock_summary(lf) -> None:
+    """Exclusive lock on the summary lock file (flock on POSIX, msvcrt on Windows)."""
+    if os.name == "nt":
+        import msvcrt
+
+        lf.seek(0)
+        msvcrt.locking(lf.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lf, fcntl.LOCK_EX)
+
+
+def _unlock_summary(lf) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        lf.seek(0)
+        msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
     """Merge `res` into the summary under an flock, atomically, deriving the merged status.
 
     Modes may be written by separate processes, so records accumulate per mode.
     """
-    import fcntl
-
     lock = summary_path.with_suffix(".lock")
     with open(lock, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
+        _lock_summary(lf)
         try:
             merged = res.to_dict()
             if summary_path.is_file():
@@ -355,7 +378,7 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             tmp.write_text(json.dumps(merged, indent=2, default=str))
             os.replace(tmp, summary_path)
         finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+            _unlock_summary(lf)
 
 
 def _resolve_libraries(
