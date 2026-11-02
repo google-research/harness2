@@ -129,14 +129,18 @@ class CodexSubstrate:
         if not HT.is_tree(CODEX_SURFACE, tree_dir):
             raise ValueError(f"{tree_dir} is not a codex harness tree (no AGENTS.md)")
         staged = Path(tempfile.mkdtemp(prefix="adapt-cx-root-"))
-        for entry in CODEX_ROOT_ENTRIES:
-            src = tree_dir / entry
-            if not src.exists():
-                continue
-            if src.is_dir():
-                shutil.copytree(src, staged / entry)
-            else:
-                shutil.copy2(src, staged / entry)
+        try:
+            for entry in CODEX_ROOT_ENTRIES:
+                src = tree_dir / entry
+                if not src.exists():
+                    continue
+                if src.is_dir():
+                    shutil.copytree(src, staged / entry)
+                else:
+                    shutil.copy2(src, staged / entry)
+        except BaseException:
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
         return Install(
             staging_dir=staged,
             fingerprint=RM.fingerprint(tree_dir),

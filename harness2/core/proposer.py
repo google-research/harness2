@@ -87,6 +87,21 @@ class Proposer:
     project: str = field(default_factory=lambda: config.VERTEX_PROJECT)
     region: str = field(default_factory=lambda: config.VERTEX_REGION)
     _calls: list[Reply] = field(default_factory=list)
+    _transient_dir: tempfile.TemporaryDirectory | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def cleanup(self) -> None:
+        """Remove any transient harvest directory created when audit_dir was unset."""
+        if self._transient_dir is not None:
+            self._transient_dir.cleanup()
+            self._transient_dir = None
+
+    def __enter__(self) -> Proposer:
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.cleanup()
 
     def __post_init__(self) -> None:
         if not self.spec.model.strip():
@@ -308,7 +323,14 @@ class Proposer:
         src = tmp / sub
         if not src.is_dir():
             return None
-        dest = Path(self.audit_dir or tempfile.mkdtemp(prefix="harness2-harvest-"))
+        if self.audit_dir:
+            dest = Path(self.audit_dir)
+        else:
+            if self._transient_dir is None:
+                self._transient_dir = tempfile.TemporaryDirectory(
+                    prefix="harness2-harvest-", ignore_cleanup_errors=True
+                )
+            dest = Path(self._transient_dir.name)
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
         if cache_key:
             safe = f"{safe}.{cache_key}"

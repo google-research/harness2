@@ -219,24 +219,29 @@ def _attempt(
     title = f"{task_name} | {cfg.label} | a{attempt}"
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
-    with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
-            _command(cfg, workspace, prompt, title),
-            cwd=cfg.opencode_dir,
-            env={
-                **os.environ,
-                **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
-                "OPENCODE_PERMISSION": _permission(workspace),
-            },
-            stdout=out,
-            stderr=err,
-        ).returncode
-    with open(raw, encoding="utf-8", errors="replace") as src:
-        traj_file.write_text(
-            "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
-        )
-    os.unlink(raw)
-    return code
+    try:
+        with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
+            code = subprocess.run(
+                _command(cfg, workspace, prompt, title),
+                cwd=cfg.opencode_dir,
+                env={
+                    **os.environ,
+                    **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
+                    "OPENCODE_PERMISSION": _permission(workspace),
+                },
+                stdout=out,
+                stderr=err,
+            ).returncode
+        with open(raw, encoding="utf-8", errors="replace") as src:
+            traj_file.write_text(
+                "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
+            )
+        return code
+    finally:
+        try:
+            os.unlink(raw)
+        except OSError:
+            pass
 
 
 def _note_exit(traj_file: Path, log_file: Path, code: int, *, limit: str, kept: bool) -> None:

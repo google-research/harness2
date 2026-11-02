@@ -794,24 +794,29 @@ class JobBenchAdapter:
     def _launch_opencode(self, req: RunRequest, install: Install) -> list[Path]:
         task_id, label, t = self._launch_common(req)
         self.substrate.preflight()
-        render_dir = Path(tempfile.mkdtemp(prefix=f"hrender_{label}_"))
-        render_opencode_tree(install.staging_dir, render_dir, _render_ctx(self.domain_of(task_id)))
-        env = {
-            **config.scrub_env(keep=config.provider_keys(config.SOLVER_MODEL_OC)),
-            "TASK_IDS": task_id,
-            "LABEL": label,
-            "HARNESS_RENDER_DIR": str(render_dir),
-            "AGENT_NAME": "",
-            "TASKS_BASE_DIR": str(self.store),
-            "OPENCODE_DIR": str(config.OPENCODE_DIR),
-            "MODEL_ID": config.SOLVER_MODEL_OC,
-            "TIMEOUT_PER_TASK": str(t),
-            "MAX_RETRIES": "2",
-            "MAX_CONCURRENT": "1",
-            "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
-        }
-        self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
-        return [self._require_artifacts(task_id, label)]
+        with tempfile.TemporaryDirectory(
+            prefix=f"hrender_{label}_", ignore_cleanup_errors=True
+        ) as tmp:
+            render_dir = Path(tmp)
+            render_opencode_tree(
+                install.staging_dir, render_dir, _render_ctx(self.domain_of(task_id))
+            )
+            env = {
+                **config.scrub_env(keep=config.provider_keys(config.SOLVER_MODEL_OC)),
+                "TASK_IDS": task_id,
+                "LABEL": label,
+                "HARNESS_RENDER_DIR": str(render_dir),
+                "AGENT_NAME": "",
+                "TASKS_BASE_DIR": str(self.store),
+                "OPENCODE_DIR": str(config.OPENCODE_DIR),
+                "MODEL_ID": config.SOLVER_MODEL_OC,
+                "TIMEOUT_PER_TASK": str(t),
+                "MAX_RETRIES": "2",
+                "MAX_CONCURRENT": "1",
+                "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
+            }
+            self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
+            return [self._require_artifacts(task_id, label)]
 
     def _launch_codex(self, req: RunRequest, install: Install) -> list[Path]:
         task_id, label, t = self._launch_common(req)
