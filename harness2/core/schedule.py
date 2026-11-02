@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .. import config
 from . import library as library_store
 from . import recursion, runmark, selection
 from . import tree as harness_tree
@@ -42,7 +43,7 @@ MODES = ("agg", "seq")
 MODE_NAMES = {"agg": "parallel", "seq": "sequential"}
 _MODE_ALIASES = {"agg": "agg", "seq": "seq", "parallel": "agg", "sequential": "seq"}
 
-ROLLOUT_PARALLEL = recursion.PHASE_WIDTH
+ROLLOUT_PARALLEL = config.ROLLOUT_PARALLEL
 
 
 def mode_token(name: str) -> str:

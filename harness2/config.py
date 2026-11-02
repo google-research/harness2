@@ -168,15 +168,23 @@ WB_WEB_JUDGE = "harness2/judge"
 WB_RENDER_PY = sys.executable
 WB_OC_HARNESS_VER = "1.14.18"
 WB_CX_HARNESS_VER = CODEX_VERSION
-WB_MAX_JOBS = {"oc": 1, "cx": 1}
-WB_MAX_TRIALS = {"oc": 2, "cx": 2}
+WB_MAX_JOBS = {
+    "oc": env_int("HARNESS2_WB_MAX_JOBS_OC", env_int("HARNESS2_WB_MAX_JOBS", 1)),
+    "cx": env_int("HARNESS2_WB_MAX_JOBS_CX", env_int("HARNESS2_WB_MAX_JOBS", 1)),
+}
+WB_MAX_TRIALS = {
+    "oc": env_int("HARNESS2_WB_MAX_TRIALS_OC", env_int("HARNESS2_WB_MAX_TRIALS", 2)),
+    "cx": env_int("HARNESS2_WB_MAX_TRIALS_CX", env_int("HARNESS2_WB_MAX_TRIALS", 2)),
+}
 WB_MODEL_CONNECTION = "local_proxy"
 
 DEFAULT_PROPOSER_CHANNEL = "opencode"
 PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
 PHASE_WIDTH = 2
 TRANSPORT_ATTEMPTS = 2
-PROPOSER_CONCURRENCY = 2
+PROPOSER_CONCURRENCY = env_int("HARNESS2_PROPOSER_CONCURRENCY", 2)
+ROLLOUT_PARALLEL = env_int("HARNESS2_ROLLOUT_PARALLEL", PHASE_WIDTH)
+JUDGE_PARALLEL = env_int("HARNESS2_JUDGE_PARALLEL", 8)
 
 
 def validate_models(*, judge: bool = False) -> None:

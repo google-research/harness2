@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .. import config
@@ -44,7 +45,7 @@ from . import _common as C
 _DERIVED = ("frac", "graded")
 
 
-_PARALLEL = 8
+_PARALLEL = config.JUDGE_PARALLEL
 
 
 def _load_rows(path: Path) -> list[J.Scored]:
@@ -111,9 +112,10 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
     return out
 
 
-def judge_bases(adapter, ns_dir: Path) -> int:
+def judge_bases(adapter, ns_dir: Path, *, parallel: int = _PARALLEL) -> int:
     """Score every reference execution recorded in this namespace's task summaries."""
-    rows, legacy = [], 0
+    items: list[tuple[str, dict]] = []
+    legacy = 0
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
             summary = json.loads(summary_path.read_text())
@@ -125,29 +127,42 @@ def judge_bases(adapter, ns_dir: Path) -> int:
             if not isinstance(entry, dict) or not entry.get("run_dir"):
                 legacy += 1
                 continue
-            label, run_dir = entry.get("label", ""), Path(entry["run_dir"])
-            try:
-                got = adapter.score(run_dir, task_id) if run_dir.is_dir() else None
-                if got is not None and not J.has_grade(got.get("n_passed"), got.get("n_criteria")):
-                    got = None
-            except Exception as exc:
-                got = None
-                print(f"  {task_id[:52]:<52} {label} ERROR {type(exc).__name__}: {exc}", flush=True)
-            else:
-                shown = "-" if got is None else f"{got.get('n_passed')}/{got.get('n_criteria')}"
-                print(f"  {task_id[:52]:<52} {label} {shown}", flush=True)
-            rows.append(
-                {"task": task_id, "label": label, "run_id": entry.get("run_id", ""), "score": got}
-            )
+            items.append((task_id, entry))
+
     if legacy:
         print(
             f"  {legacy} reference execution(s) predate run-directory recording and cannot be "
             f"scored; re-run those tasks to include them.",
             flush=True,
         )
-    if not rows:
+    if not items:
         print(f"no reference executions recorded under {ns_dir}; wrote nothing", flush=True)
         return 2
+
+    def _score_one(idx: int, task_id: str, entry: dict):
+        label, run_dir = entry.get("label", ""), Path(entry["run_dir"])
+        got, err = None, None
+        if run_dir.is_dir():
+            try:
+                got = adapter.score(run_dir, task_id)
+                if got is not None and not J.has_grade(got.get("n_passed"), got.get("n_criteria")):
+                    got = None
+            except Exception as exc:
+                err = exc
+        return idx, task_id, label, entry.get("run_id", ""), got, err
+
+    rows: list[dict] = [{}] * len(items)
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        futs = [pool.submit(_score_one, i, tid, ent) for i, (tid, ent) in enumerate(items)]
+        for f in as_completed(futs):
+            i, task_id, label, run_id, got, err = f.result()
+            if err is not None:
+                print(f"  {task_id[:52]:<52} {label} ERROR {type(err).__name__}: {err}", flush=True)
+            else:
+                shown = "-" if got is None else f"{got.get('n_passed')}/{got.get('n_criteria')}"
+                print(f"  {task_id[:52]:<52} {label} {shown}", flush=True)
+            rows[i] = {"task": task_id, "label": label, "run_id": run_id, "score": got}
+
     out = ns_dir / "base_judged.json"
     out.write_text(json.dumps(rows, indent=1, default=str), encoding="utf-8")
     graded = sum(1 for r in rows if r["score"] is not None)
@@ -167,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
         help="score this namespace's reference executions into base_judged.json "
         "instead of the selected runs",
     )
+    p.add_argument(
+        "--parallel",
+        type=int,
+        default=_PARALLEL,
+        help="number of parallel judge workers (default: %(default)s)",
+    )
     args = p.parse_args(argv)
     modes = C.parse_modes(args.modes)
 
@@ -182,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             f"nothing to judge: {ns_dir} does not exist — has the sweep `{ns}` run on this machine?"
         )
     if args.bases:
-        return judge_bases(adapter, ns_dir)
+        return judge_bases(adapter, ns_dir, parallel=args.parallel)
 
     sels = collect_selections(ns_dir, modes)
     if not sels:
@@ -193,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(f"judging {len(sels)} selection(s) under {ns} ...", flush=True)
-    rows = J.judge_selections(adapter, sels, parallel=_PARALLEL)
+    rows = J.judge_selections(adapter, sels, parallel=args.parallel)
 
     out_path = ns_dir / "judged.json"
     merged = _merge(_load_rows(out_path), rows)
