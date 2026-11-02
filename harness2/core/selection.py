@@ -201,12 +201,7 @@ def _write_candidates(
             assets = [Path(a) for a in (asset_fn(pool[lbl].run_dir) or []) if Path(a).is_file()]
         note = ""
         if assets:
-            adir = cand_dir / anon
-            adir.mkdir(parents=True, exist_ok=True)
-            names = []
-            for a in assets:
-                shutil.copy2(a, adir / a.name)
-                names.append(a.name)
+            names = context.copy_assets(assets, cand_dir / anon)
             note = _assets_note(adapter, anon, names)
             asset_names.update(names)
         header = (
