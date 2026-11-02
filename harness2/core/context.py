@@ -254,10 +254,15 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
             shutil.copy2(img, t)
         except OSError:
             pass
-    for name, body in per_file.items():
-        safe = str(name).replace("/", "__") or "unnamed"
-        suffix = "" if safe.endswith(".txt") else ".txt"
-        (d / f"{safe}{suffix}").write_text(str(body), encoding="utf-8")
+    rendered_files: list[str] = []
+    for index, (name, body) in enumerate(per_file.items(), start=1):
+        # Artifact names can collide when flattened or given a .txt suffix. Keep
+        # identity in the index and use a unique local name for every rendering.
+        rendered = f"artifact-{index:04d}.txt"
+        (d / rendered).write_text(str(body), encoding="utf-8")
+        rendered_files.append(
+            f"- `{name}` -> [{rendered}]({rendered})  ({len(str(body)):,} chars extracted)"
+        )
     raw_fn = getattr(adapter, "deliverable_assets", None)
     raw_names: list[str] = []
     for src in raw_fn(r.run_dir) if callable(raw_fn) else []:
@@ -276,7 +281,7 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
     )
     (d / "INDEX.md").write_text(
         f"# {r.label} produced {len(per_file)} file(s)\n\n"
-        + "\n".join(f"- `{n}`  ({len(str(b)):,} chars extracted)" for n, b in per_file.items())
+        + "\n".join(rendered_files)
         + "\n\nEach `.txt` is the artifact converted to text by the SAME reader the "
         "work\nis assessed through, so reason about correctness from these -- an "
         "artifact\nthat does not survive that conversion is treated as unreadable "
