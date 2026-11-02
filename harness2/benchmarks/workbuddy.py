@@ -41,7 +41,7 @@ from ..core import tree as HT
 from ..core.selection import order_graded_first
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..substrate import opencode as OC
-from ..substrate.base import Install, RunRequest
+from ..substrate.base import Install, RunRequest, stream_cost_of
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
 from . import wb_render as RENDER
@@ -870,6 +870,10 @@ class WbAdapter:
         if not f.is_file():
             return "(no trajectory)"
         return self.substrate.read_trajectory(f, obs_trunc=obs_trunc, max_chars=TRAJ_MAX_CHARS)
+
+    def rollout_cost(self, run_dir: Path) -> float | None:
+        f = self.trajectory_path(run_dir)
+        return stream_cost_of(self.substrate, [f] if f.is_file() else [])
 
     def deliverable_files(self, run_dir: Path) -> dict[str, str]:
         """filename -> our rendering of the agent's own bytes, one entry per artifact."""

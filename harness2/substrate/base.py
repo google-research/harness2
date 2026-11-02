@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, runtime_checkable
+from typing import Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..core.tree import SurfaceSpec
 
@@ -75,9 +75,19 @@ class Substrate(Protocol):
         BenchSpec does not carry and no caller overrides.
         """
 
+    def stream_cost(self, stream_paths: Sequence[Path]) -> float | None:
+        """Executor USD summed over one rollout's capture streams, or None when this
+        substrate's format carries no price or no stream could be read."""
+
     def preflight(self) -> None:
         """Health checks before money is spent; raises RuntimeError with the remediation
         command and never starts any part of the model chain."""
 
 
-__all__ = ["Install", "RunRequest", "Launcher", "Substrate"]
+def stream_cost_of(substrate, stream_paths: Sequence[Path]) -> float | None:
+    """`substrate.stream_cost(stream_paths)`, or None for a substrate that does not price."""
+    fn = getattr(substrate, "stream_cost", None)
+    return fn(list(stream_paths)) if callable(fn) else None
+
+
+__all__ = ["Install", "RunRequest", "Launcher", "Substrate", "stream_cost_of"]

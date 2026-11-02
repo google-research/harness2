@@ -478,7 +478,13 @@ def _opencode_stdout(stdout: str) -> tuple[str, str]:
 
 def _opencode_cost(stdout: str) -> float:
     """Sum `part.cost` over the step_finish events of an `opencode run --format json` stream."""
-    total = 0.0
+    return round(opencode_usage(stdout)[0], 6)
+
+
+def opencode_usage(stdout: str) -> tuple[float, int]:
+    """(USD, tokens) summed over the step_finish events of an `opencode run --format json`
+    stream. The one parser of OpenCode spend, for improver sessions and executor rollouts."""
+    cost, tokens = 0.0, 0
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -490,11 +496,21 @@ def _opencode_cost(stdout: str) -> float:
         if not isinstance(ev, dict):
             continue
         part = _obj(ev, "part")
-        if (part.get("type") or ev.get("type")) in ("step-finish", "step_finish"):
-            c = part.get("cost")
-            if isinstance(c, (int, float)):
-                total += float(c)
-    return round(total, 6)
+        if (part.get("type") or ev.get("type")) not in ("step-finish", "step_finish"):
+            continue
+        c = part.get("cost")
+        if isinstance(c, (int, float)):
+            cost += float(c)
+        used = _obj(part, "tokens")
+        for n in (
+            used.get("input"),
+            used.get("output"),
+            used.get("reasoning"),
+            *_obj(used, "cache").values(),
+        ):
+            if isinstance(n, (int, float)) and n > 0:
+                tokens += int(n)
+    return cost, tokens
 
 
 def _call_fingerprint(label: str, mission: str, system: str, context_dir: Path | str | None) -> str:

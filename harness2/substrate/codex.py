@@ -28,7 +28,7 @@ import shutil
 import socket
 import tempfile
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .. import config
 from ..core import runmark as RM
@@ -203,6 +203,10 @@ class CodexSubstrate:
         return render_events(
             Path(stream_path), obs_trunc=obs_trunc, max_chars=max_chars, args_trunc=args_trunc
         )
+
+    def stream_cost(self, stream_paths: Sequence[Path]) -> float | None:
+        """Always None: `codex exec --json` reports token counts, never a price."""
+        return None
 
     def preflight(self, *, require_dist: bool = False, require_bridge: bool = False) -> None:
         """Check the CLI and Responses endpoint, including container configuration."""

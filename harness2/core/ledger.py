@@ -44,6 +44,7 @@ class Entry:
     usd: float = 0.0
     cached: bool = False
     attempts: int = 1
+    priced: bool = True
 
 
 @dataclass
@@ -55,8 +56,10 @@ class Ledger:
     k: int
     entries: list[Entry] = field(default_factory=list)
 
-    def rollout(self, label: str, usd: float = 0.0, *, cached: bool = False) -> None:
-        self.entries.append(Entry("rollout", label, usd, cached))
+    def rollout(self, label: str, usd: float | None = None, *, cached: bool = False) -> None:
+        """Record one rollout; `usd=None` means it has no price, which sums as $0 but is
+        counted in `unpriced_rollouts` so a spend total can say what it leaves out."""
+        self.entries.append(Entry("rollout", label, usd or 0.0, cached, priced=usd is not None))
 
     def session(
         self, label: str, usd: float = 0.0, *, cached: bool = False, attempts: int = 1
@@ -82,6 +85,10 @@ class Ledger:
     @property
     def session_usd(self) -> float:
         return round(sum(e.usd for e in self.entries if e.kind == "session"), 6)
+
+    @property
+    def unpriced_rollouts(self) -> int:
+        return sum(1 for e in self.entries if e.kind == "rollout" and not e.priced)
 
     def labels(self, kind: str) -> list[str]:
         return [e.label for e in self.entries if e.kind == kind]
@@ -126,6 +133,7 @@ class Ledger:
             "expected_P": expected_sessions(self.k),
             "usd": self.usd,
             "rollout_usd": self.rollout_usd,
+            "unpriced_rollouts": self.unpriced_rollouts,
             "session_usd": self.session_usd,
             "rollouts": self.labels("rollout"),
             "sessions": self.labels("session"),

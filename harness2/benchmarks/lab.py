@@ -35,7 +35,7 @@ from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
-from ..substrate.base import Install, RunRequest
+from ..substrate.base import Install, RunRequest, stream_cost_of
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
 from .tasks import discover, select
@@ -784,6 +784,11 @@ class LabAdapter:
         if not stream.is_file():
             return f"(no trajectory recorded for {Path(run_dir).name})"
         return self.substrate.read_trajectory(stream, obs_trunc=obs_trunc, max_chars=10**9)
+
+    def rollout_cost(self, run_dir: Path) -> float | None:
+        name = "opencode_session.jsonl" if self.substrate.name == "oc" else "codex_session.jsonl"
+        stream = Path(run_dir) / name
+        return stream_cost_of(self.substrate, [stream] if stream.is_file() else [])
 
     def deliverable_files(self, run_dir: Path) -> dict[str, str]:
         """filename -> extracted text via the JUDGE's own reader, in a subprocess inside

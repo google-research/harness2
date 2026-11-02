@@ -38,7 +38,7 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..install import codex_config_error
-from ..substrate.base import Install, RunRequest
+from ..substrate.base import Install, RunRequest, stream_cost_of
 from ..substrate.codex import CodexSubstrate
 from ..substrate.opencode import OUTPUT_TOKEN_MAX, OpencodeSubstrate
 from .tasks import discover, select
@@ -886,6 +886,12 @@ class JobBenchAdapter:
         if not files:
             return f"(no trajectory for {task_id} @ {label})"
         return self.substrate.read_trajectory(files[0], obs_trunc=obs_trunc, max_chars=8_000_000)
+
+    def rollout_cost(self, run_dir: Path) -> float | None:
+        """Executor USD over every attempt of this rollout; a retry is paid for too."""
+        task_id, label = self._task_and_label(run_dir)
+        td = self._traj_dir(task_id, label)
+        return stream_cost_of(self.substrate, sorted(td.glob("*.jsonl")) if td.is_dir() else [])
 
     def _extract(self, run_dir: Path) -> dict:
         """The judge's own extractor in a subprocess; raw text reads as the visible fallback."""

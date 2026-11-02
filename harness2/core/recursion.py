@@ -31,7 +31,7 @@ from . import context, prompts
 from . import tree as harness_tree
 from .ledger import Ledger
 from .proposer import Proposer, ProposerError
-from .spec import BenchmarkAdapter, RunView, resolve_prompts
+from .spec import BenchmarkAdapter, RunView, resolve_prompts, rollout_cost
 
 STAGE_ATTEMPTS = 2
 TRANSPORT_ATTEMPTS = config.TRANSPORT_ATTEMPTS
@@ -295,6 +295,7 @@ def _roll(
             run_dir=rd,
             ok=exists,
             delivered=exists and adapter.delivered(rd),
+            cost_usd=rollout_cost(adapter, rd) if exists else None,
             error="" if exists else "adapter returned a missing run directory",
         )
     except Exception as exc:
@@ -307,7 +308,7 @@ def _roll(
             error=f"{type(exc).__name__}: {exc}",
         )
     if record:
-        ledger.rollout(label)
+        ledger.rollout(label, rv.cost_usd)
     return rv
 
 
@@ -346,7 +347,7 @@ def _roll_many(
             )
         )
     for (label, _tree), rv in zip(items, got):
-        ledger.rollout(label)
+        ledger.rollout(label, rv.cost_usd)
         out[label] = rv
     return out
 
@@ -369,7 +370,7 @@ def run_parallel(
     surface = adapter.substrate.surface()
     ledger = Ledger(mode="agg", task_id=task_id, k=k)
     for r in base:
-        ledger.rollout(r.label)
+        ledger.rollout(r.label, r.cost_usd)
     result = ModeResult(mode="agg", task_id=task_id, k=k, ledger=ledger)
     result.rollouts.update({r.label: r for r in base})
     ctx_dir = work_dir / "context"
@@ -478,7 +479,7 @@ def run_sequential(
     surface = adapter.substrate.surface()
     ledger = Ledger(mode="seq", task_id=task_id, k=k)
     for r in base:
-        ledger.rollout(r.label)
+        ledger.rollout(r.label, r.cost_usd)
     result = ModeResult(mode="seq", task_id=task_id, k=k, ledger=ledger)
     result.rollouts.update({r.label: r for r in base})
     ctx_dir = work_dir / "context"
