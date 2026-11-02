@@ -239,6 +239,35 @@ def _attempt(
     return code
 
 
+def _note_exit(traj_file: Path, log_file: Path, code: int, *, limit: str, kept: bool) -> None:
+    """Close the trajectory with an error event when the executor did not exit cleanly."""
+    if code == 0:
+        return
+    span = f"{limit} s" if limit.isdigit() else limit
+    if code == 124:
+        why = f"was stopped at the {span} time limit (exit 124)"
+    elif code in (-9, 137):
+        why = f"was killed with SIGKILL ({code}), after the {span} time limit or by the system"
+    elif code < 0:
+        why = f"was killed by signal {-code}"
+    else:
+        why = f"exited with status {code}"
+    outcome = (
+        "files already in the output directory were kept as the deliverable"
+        if kept
+        else "the output directory was empty"
+    )
+    message = f"Rollout runner: the executor {why}; {outcome}."
+    event = {
+        "type": "error",
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "error": {"name": "RunnerExit", "data": {"message": message}},
+    }
+    with traj_file.open("a", encoding="utf-8") as fh:
+        fh.write("\n" + json.dumps(event) + "\n")
+    _log(log_file, f"[{_hms()}] EXIT {code}: {message}")
+
+
 def run_one(cfg: Settings, task_id: str) -> bool:
     """Roll one task; the existing-output skip mirrors the adapter's resume, for direct runs.
 
@@ -275,6 +304,9 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         traj_file = traj_dir / f"{task_name}_{cfg.label}_attempt{attempt}_{_stamp()}.jsonl"
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
+        _note_exit(
+            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_nonempty(output_dir)
+        )
         if _nonempty(output_dir):
             break
         if code in (124, 137):
