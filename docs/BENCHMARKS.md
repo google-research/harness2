@@ -1,5 +1,7 @@
 # Benchmark guides
 
+[简体中文](i18n/zh-CN/BENCHMARKS.md)
+
 Complete the [installation and credentials](SETUP.md) first. Each
 benchmark installs separately; install the ones you intend to run. Every command
 below takes `--substrate cx` to use the

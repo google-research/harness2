@@ -1,5 +1,7 @@
 # Setup guide
 
+[简体中文](i18n/zh-CN/SETUP.md)
+
 Start with the [quick start](../README.md#install). This guide covers benchmark
 dependencies, model credentials, and the optional Codex executor. For individual
 benchmarks, see the [benchmark guides](BENCHMARKS.md).

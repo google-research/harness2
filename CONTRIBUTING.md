@@ -1,5 +1,7 @@
 # How to contribute
 
+[简体中文](docs/i18n/zh-CN/CONTRIBUTING.md)
+
 We'd love to accept your patches and contributions to this project.
 
 ## Before you begin
@@ -24,6 +26,12 @@ This project follows
 [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
 
 ## Contribution process
+
+### Documentation translations
+
+Translations live under `docs/i18n/<locale>/`. See the
+[translation guide](docs/i18n/README.md) for the directory layout, locale naming,
+and synchronization rules.
 
 ### Code reviews
 

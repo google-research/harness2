@@ -1,5 +1,7 @@
 # Experiment guide
 
+[简体中文](i18n/zh-CN/EXPERIMENTS.md)
+
 Complete [setup](SETUP.md) and choose a [benchmark](BENCHMARKS.md) first. This
 guide covers recursion budgets, task selection, reproducibility, and evaluation.
 
