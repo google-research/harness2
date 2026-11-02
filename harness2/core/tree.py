@@ -67,7 +67,7 @@ def _res(surface_name: str, skill_dir: str, plugin_dir: str | None) -> dict[str,
         "skill": re.compile(rf"{sd}/({_NAME})/SKILL\.md"),
         "skill_script": re.compile(rf"{sd}/{_NAME}/scripts/[A-Za-z0-9_.\-]+"),
         "subagent": re.compile(rf"sub_agents/({_NAME})/AGENT\.md"),
-        "script": re.compile(r"scripts/[a-z0-9_][a-z0-9_]*\.py"),
+        "script": re.compile(r"scripts/[a-z0-9_][a-z0-9_\-]*\.py"),
         "script_ref": re.compile(rf"(?:python3?\s+)((?:{sd}/[\w\-]+/)?scripts/[\w.\-]+\.py)"),
     }
     if plugin_dir is not None:
