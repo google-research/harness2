@@ -1,0 +1,19 @@
+# Local model settings and credentials; .env.example is not matched.
+.env
+
+# Python environments and build outputs.
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/build/
+/dist/
+
+# Run outputs (the HARNESS2_RUNS_DIR default).
+/runs/
+
+# Checkouts, runtimes and data downloaded by harness2-setup.
+/dependencies/*
+!/dependencies/README.md
+!/dependencies/PINNED.md
+!/dependencies/ASSETS.json
