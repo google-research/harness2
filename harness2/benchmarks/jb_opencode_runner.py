@@ -109,6 +109,14 @@ def _nonempty(path: Path) -> bool:
     return path.is_dir() and any(path.iterdir())
 
 
+def _has_deliverable(output: Path) -> bool:
+    """A real deliverable is a non-hidden entry in the rollout's output directory. Hidden
+    files (a stray .DS_Store, a tool's dotfile cache) are skipped when the output is
+    moved to the final directory, so they must not end the retry loop or count as a
+    delivery either -- otherwise a junk-dotfile-only attempt silently cancels the retry."""
+    return output.is_dir() and any(not p.name.startswith(".") for p in output.iterdir())
+
+
 def _log(log_file: Path, line: str) -> None:
     print(line, flush=True)
     with log_file.open("a", encoding="utf-8") as fh:
@@ -305,14 +313,14 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
         _note_exit(
-            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_nonempty(output_dir)
+            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_has_deliverable(output_dir)
         )
-        if _nonempty(output_dir):
+        if _has_deliverable(output_dir):
             break
         if code in (124, 137):
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")
 
-    delivered = _nonempty(output_dir)
+    delivered = _has_deliverable(output_dir)
     if delivered:
         final_output_dir.mkdir(parents=True, exist_ok=True)
         for item in sorted(output_dir.iterdir()):
