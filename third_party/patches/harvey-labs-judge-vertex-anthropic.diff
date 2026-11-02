@@ -136,15 +136,24 @@
  
      def _evaluate_anthropic(self, prompt: str, temperature: float, _retries: int) -> dict:
          last_err: Exception | None = None
-@@ -236,11 +326,21 @@
-         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-         if match:
-             try:
+@@ -232,15 +322,25 @@
+     @staticmethod
+     def _parse_json(text: str) -> dict:
+         """Extract JSON from model response, handling markdown fences."""
+-        # Try to find JSON in code fences first
+-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+-        if match:
+-            try:
 -                return json.loads(match.group(1).strip())
++        # Fenced JSON is subject to the same ambiguity check as prose objects.
++        # Returning the first fence can mistake a format example for the verdict.
++        objs = []
++        for match in re.finditer(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL):
++            try:
 +                # strict=False tolerates raw control characters (notably literal
 +                # newlines) inside strings — the judge quotes multi-line document
 +                # excerpts into `reasoning`, and strict parsing rejects those.
-+                return json.loads(match.group(1).strip(), strict=False)
++                objs.append(json.loads(match.group(1).strip(), strict=False))
              except json.JSONDecodeError:
                  pass  # Fall through to brace matching
  
@@ -156,7 +165,6 @@
 +        # ('Format: {"verdict": "pass"} ... Answer: {"verdict": "fail", ...}')
 +        # would otherwise be scored on the echo, which is the same manufactured
 +        # verdict the last-resort branch below guards against -- just one layer up.
-+        objs = []
          for i, ch in enumerate(text):
              if ch == '{':
                  depth = 0

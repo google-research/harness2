@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/harveyai/harvey-labs",
+  "commit": "b58a28ae9fde5ee4b810e53b4fd0a1915325a35d",
+  "license": "MIT; see LICENSE",
+  "purpose": "Exact pinned parser and grading consumer fixture for offline validation of the distributed patch; SDK imports are not executed.",
+  "sha256": {
+    "evaluation/judge.py.txt": "0506e459bc2e05f77b2c1a745d02482cd6933b972a58766a8cf66dbffaf5bbf6",
+    "evaluation/scoring.py.txt": "2c9e266ad0c148a599637fe05b0ba98c798c4de6c2fc987d0406dcfae9071cde",
+    "evaluation/run_eval.py.txt": "386f3c71e78220a407b94dcc4391b1df45cb96f83dcd463e8fc65c86166c0721",
+    "evaluation/prompts/rubric_criterion.txt": "fcd53795c434163070053c156cb14eccc781db8018e3af8beae3834bca8bd5b1",
+    "LICENSE": "f92627d2ebe80fc0add3b171b2d7eee5e28a98dd0d0a4a5ee5829314243bb3b9"
+  },
+  "fixture_data": "Python snapshots use an additional .txt suffix; original pinned source paths omit that suffix. Tests restore the upstream filenames before applying the bundled patch."
+}

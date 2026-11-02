@@ -1,0 +1,2 @@
+# Exact upstream source snapshots retain their original whitespace.
+*.py.txt -whitespace
