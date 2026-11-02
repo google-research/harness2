@@ -310,6 +310,46 @@ def _render_item(item: dict, lines: list[str], obs_trunc: int, args_trunc: int) 
         lines.append(f"[OBSERVATION{' ERROR' if failed else ''}] {obs}{suffix}")
         return
 
+    if itype == "file_change":
+        changes = json.dumps(item.get("changes") or [], ensure_ascii=False)
+        lines.append(f"[ACTION] apply_patch: {_clip(changes, args_trunc)}")
+        status = item.get("status", "")
+        lines.append(f"[OBSERVATION{' ERROR' if status == 'failed' else ''}] {status}")
+        return
+
+    if itype == "mcp_tool_call":
+        name = f"{item.get('server', '')}.{item.get('tool', '')}"
+        args = json.dumps(item.get("arguments"), ensure_ascii=False)
+        lines.append(f"[ACTION] mcp {name}({_clip(args, args_trunc)})")
+        error = item.get("error")
+        failed = item.get("status") == "failed" or error is not None
+        if error is not None:
+            obs = _text_of(error) or json.dumps(error, ensure_ascii=False)
+        elif item.get("result") is not None:
+            obs = json.dumps(item["result"], ensure_ascii=False)
+        else:
+            obs = item.get("status", "")
+        lines.append(f"[OBSERVATION{' ERROR' if failed else ''}] {_clip(obs, obs_trunc)}")
+        return
+
+    if itype == "collab_tool_call":
+        args = json.dumps(
+            {key: item.get(key) for key in ("sender_thread_id", "receiver_thread_ids", "prompt")},
+            ensure_ascii=False,
+        )
+        lines.append(f"[ACTION] collab {item.get('tool', '')}({_clip(args, args_trunc)})")
+        states = json.dumps(item.get("agents_states") or {}, ensure_ascii=False)
+        failed = item.get("status") == "failed"
+        lines.append(f"[OBSERVATION{' ERROR' if failed else ''}] {_clip(states, obs_trunc)}")
+        return
+
+    if itype == "web_search":
+        args = json.dumps(
+            {"query": item.get("query"), "action": item.get("action")}, ensure_ascii=False
+        )
+        lines.append(f"[ACTION] web_search: {_clip(args, args_trunc)}")
+        return
+
     if itype == "agent_message":
         txt = item.get("text")
         if isinstance(txt, str) and txt.strip():
@@ -351,7 +391,6 @@ def _render_item(item: dict, lines: list[str], obs_trunc: int, args_trunc: int) 
 
 
 def _emit(lines: list[str], line: str) -> None:
-
     if not lines or lines[-1] != line:
         lines.append(line)
 
