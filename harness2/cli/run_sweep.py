@@ -65,6 +65,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "drop it for the full run",
     )
     g.add_argument(
+        "--max-usd",
+        type=float,
+        default=None,
+        help="stop starting tasks once the task summaries of this run record this much "
+        "spend, earlier runs included; checked between tasks, so a run can pass it by up "
+        "to one task per worker. Rerun the same command with a higher value to continue",
+    )
+    g.add_argument(
         "--dry-run",
         action="store_true",
         help="print the stream order, the namespaces and the split's domains, then "
@@ -131,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
 def _main(args: argparse.Namespace) -> int:
     if args.k < 1 or args.workers < 1:
         raise ValueError("--k and --workers must be positive")
+    if args.max_usd is not None and not args.max_usd > 0:
+        raise ValueError(f"--max-usd must be a positive amount, got {args.max_usd}")
     modes = C.parse_modes(args.modes)
 
     if args.dry_run:
@@ -156,6 +166,12 @@ def _main(args: argparse.Namespace) -> int:
         f"sweep {summary_ns}: {lanes} domain(s) in parallel, tasks within a domain in stream order",
         flush=True,
     )
+    if args.max_usd is not None:
+        print(
+            f"spend limit ${args.max_usd:.2f}: "
+            f"${schedule.recorded_usd(runs_root / summary_ns):.2f} already recorded here",
+            flush=True,
+        )
     rep = schedule.run_sweep(
         args.k,
         adapter=adapter,
@@ -170,6 +186,7 @@ def _main(args: argparse.Namespace) -> int:
         only_domains=only,
         max_tasks=args.max_tasks,
         pool_policy="finals",
+        max_usd=args.max_usd,
     )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -192,6 +209,13 @@ def _main(args: argparse.Namespace) -> int:
         f"\nsweep {summary_ns}: {done} tasks ok, {failed} failed, "
         f"{len(dead)} domain(s) died{': ' + ', '.join(dead) if dead else ''}"
     )
+    stopped = sum(int(d.get("spend_limit", 0)) for d in rep["domains"])
+    if stopped:
+        print(
+            f"spend limit: ${schedule.recorded_usd(runs_root / summary_ns):.2f} recorded of "
+            f"${args.max_usd:.2f}; {stopped} task(s) not started. Rerun this command with a "
+            f"higher --max-usd to continue."
+        )
     print(f"record: {rec}")
     print(
         f"next:   python3 -m harness2.cli.judge --bench {args.bench}"
@@ -203,7 +227,7 @@ def _main(args: argparse.Namespace) -> int:
 
     if dead:
         return 1
-    return 2 if failed else 0
+    return 2 if failed or stopped else 0
 
 
 def _check_identity(adapter, args, namespace_dir: Path) -> None:

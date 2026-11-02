@@ -49,6 +49,13 @@ review model pricing before launching a full run.
 
 - `--only-domains` restricts the run to the named domains.
 - `--max-tasks` caps tasks **per domain**, not across the whole run.
+- `--max-usd` stops starting new tasks once the task summaries of the run record
+  that much spend, including tasks from earlier runs of the same command. The
+  check runs between tasks, so a task that starts always finishes, and a run can
+  pass the limit by up to one task per worker. The tasks it did not start are
+  listed with status `spend_limit`. To continue, run the same command with a
+  higher limit. Spend counts only what the summaries record: a rollout whose
+  executor reports no price counts as $0.
 - `--dry-run` previews selected tasks and available domains without model calls.
 
 Each benchmark also has a script that runs checks, refinement, judging, and
