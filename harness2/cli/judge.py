@@ -122,6 +122,8 @@ def judge_bases(adapter, ns_dir: Path) -> int:
             label, run_dir = entry.get("label", ""), Path(entry["run_dir"])
             try:
                 got = adapter.score(run_dir, task_id) if run_dir.is_dir() else None
+                if got is not None and not J.has_grade(got.get("n_passed"), got.get("n_criteria")):
+                    got = None
             except Exception as exc:
                 got = None
                 print(f"  {task_id[:52]:<52} {label} ERROR {type(exc).__name__}: {exc}", flush=True)

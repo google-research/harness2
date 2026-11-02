@@ -559,7 +559,12 @@ def _extractor_lacks_deps(got: dict) -> bool:
     )
 
 
-_JUDGE_FAILURE_PREFIXES = ("opus judge failed", "failed after", "failed to get judge response")
+_JUDGE_FAILURE_PREFIXES = (
+    "opus judge failed",
+    "failed after",
+    "failed to get judge response",
+    "judge raised an exception:",
+)
 
 
 def _has_events(p: Path) -> bool:
@@ -789,7 +794,7 @@ class JobBenchAdapter:
         render_dir = Path(tempfile.mkdtemp(prefix=f"hrender_{label}_"))
         render_opencode_tree(install.staging_dir, render_dir, _render_ctx(self.domain_of(task_id)))
         env = {
-            **os.environ,
+            **config.scrub_env(keep=config.provider_keys(config.SOLVER_MODEL_OC)),
             "TASK_IDS": task_id,
             "LABEL": label,
             "HARNESS_RENDER_DIR": str(render_dir),
@@ -895,6 +900,7 @@ class JobBenchAdapter:
                     capture_output=True,
                     text=True,
                     timeout=900,
+                    env=config.scrub_env(),
                 )
                 if r.returncode == 0:
                     got = json.loads(r.stdout)
@@ -1128,7 +1134,7 @@ class JobBenchAdapter:
             label,
         ]
         env = {
-            **os.environ,
+            **config.scrub_env(),
             "JUDGE_API_KEY": token,
             "JUDGE_REASONING_EFFORT": config.JB_JUDGE_REASONING_EFFORT,
             "VERTEXAI_LOCATION": config.VERTEX_REGION,
