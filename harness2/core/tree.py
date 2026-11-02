@@ -275,14 +275,15 @@ def _check_skills(surface: SurfaceSpec, tree: Tree, body: str, errs: list[str]) 
                 f"frontmatter, or the skill is dropped SILENTLY at load"
             )
         m_name = re.search(r"^name:\s*(\S+)\s*$", fm, re.M)
+        matching_names = {name, f'"{name}"', f"'{name}'"}
         if surface.skill_name_rule == "must_match":
-            if not (m_name and m_name.group(1) == name):
+            if not (m_name and m_name.group(1) in matching_names):
                 errs.append(
                     f"{surface.skill_dir}/{name}/SKILL.md needs frontmatter "
                     f"`name: {name}` matching its directory (a mismatch is dropped "
                     f"SILENTLY at load)"
                 )
-        elif m_name and m_name.group(1) != name:
+        elif m_name and m_name.group(1) not in matching_names:
             errs.append(
                 f"{surface.skill_dir}/{name}/SKILL.md frontmatter `name: "
                 f"{m_name.group(1)}` OVERRIDES the directory name at load, so every "
