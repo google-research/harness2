@@ -606,11 +606,13 @@ class LabAdapter:
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
         out = self._run_dir(run_id)
-        if RM.is_complete(out, harness_dir=harness_dir) and self.artifacts_intact(out):
+        inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        reusable = RM.is_complete(out, harness_dir=harness_dir, inputs=inputs)
+        if reusable and self.artifacts_intact(out):
             self._check_tool_gate(out)
             return out
         if out.is_dir() and any(out.iterdir()):
-            reason = RM.why_not(out, harness_dir=harness_dir)
+            reason = RM.why_not(out, harness_dir=harness_dir, inputs=inputs)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -636,6 +638,7 @@ class LabAdapter:
             out,
             run_id=run_id,
             harness_dir=harness_dir,
+            inputs=inputs,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return out

@@ -726,11 +726,13 @@ class JobBenchAdapter:
         label = run_id.replace("/", "__")
         out = self._out_dir(task_id, label)
         mark = self._traj_dir(task_id, label)
-        if RM.is_complete(mark, harness_dir=harness_dir) and self.artifacts_intact(out):
+        inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        reusable = RM.is_complete(mark, harness_dir=harness_dir, inputs=inputs)
+        if reusable and self.artifacts_intact(out):
             out.mkdir(parents=True, exist_ok=True)
             return out
         if out.is_dir() or mark.is_dir():
-            reason = RM.why_not(mark, harness_dir=harness_dir)
+            reason = RM.why_not(mark, harness_dir=harness_dir, inputs=inputs)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -757,6 +759,7 @@ class JobBenchAdapter:
             mark,
             run_id=run_id,
             harness_dir=harness_dir,
+            inputs=inputs,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return dirs[0]

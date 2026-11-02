@@ -243,6 +243,7 @@ class TaskResult:
     k: int
     seed: int | None = None
     status: str = "running"
+    inputs: str | None = None
     modes: dict = field(default_factory=dict)
     selections: dict = field(default_factory=dict)
     base: list[str] = field(default_factory=list)
@@ -255,11 +256,27 @@ class TaskResult:
             "k": self.k,
             "seed": self.seed,
             "status": self.status,
+            "inputs": self.inputs,
             "base": self.base,
             "modes": self.modes,
             "selections": self.selections,
             "errors": self.errors,
         }
+
+
+def _task_inputs(adapter: BenchmarkAdapter, task_id: str) -> str | None:
+    """The task's own identity: its model-visible prompt plus its source material.
+
+    `None` when the adapter cannot supply them, which keeps the summary check off rather than
+    turning a missing task into a spurious invalidation.
+    """
+    try:
+        prompt = adapter.task_prompt(task_id)
+        files = getattr(adapter, "task_files", None)
+        files_dir = files(task_id) if callable(files) else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return runmark.inputs_fingerprint(prompt, files_dir)
 
 
 def _merged_status(merged: dict) -> str:
@@ -300,27 +317,40 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             merged = res.to_dict()
             if summary_path.is_file():
                 old = _load_old(summary_path)
-                for key in ("modes", "selections"):
-                    prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
-                    prev.update(merged.get(key) or {})
-                    merged[key] = prev
+                inputs_changed = (
+                    res.inputs is not None
+                    and old.get("inputs") is not None
+                    and old.get("inputs") != res.inputs
+                )
+                if not inputs_changed:
+                    for key in ("modes", "selections"):
+                        prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
+                        prev.update(merged.get(key) or {})
+                        merged[key] = prev
 
-                merged["errors"] = list(merged.get("errors") or [])
-                seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
-                for e in old.get("errors") or []:
-                    if e == "no base rollout produced anything" and res.status in ("ok", "partial"):
-                        continue
-                    mode = str(e).partition(":")[0]
-                    if (
-                        (res.modes.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("chosen_label")
-                    ):
-                        continue
-                    if json.dumps(e, sort_keys=True, default=str) not in seen:
-                        merged["errors"].append(e)
-                if merged.get("status") in ("ok", "partial"):
-                    merged["status"] = _merged_status(merged)
+                    merged["errors"] = list(merged.get("errors") or [])
+                    seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
+                    for e in old.get("errors") or []:
+                        if e == "no base rollout produced anything" and res.status in (
+                            "ok",
+                            "partial",
+                        ):
+                            continue
+                        mode = str(e).partition(":")[0]
+                        if (
+                            (res.modes.get(mode) or {}).get("ok")
+                            and (res.selections.get(mode) or {}).get("ok")
+                            and (res.selections.get(mode) or {}).get("chosen_label")
+                        ):
+                            continue
+                        if json.dumps(e, sort_keys=True, default=str) not in seen:
+                            merged["errors"].append(e)
+                    if merged.get("status") in ("ok", "partial"):
+                        merged["status"] = _merged_status(merged)
+                # else: the previous summary answered a different question. Its mode
+                # records and selections were derived from the old inputs and must not
+                # be re-used under the new digest, otherwise a later run would skip
+                # recomputation for results that are already stale.
             tmp = summary_path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(merged, indent=2, default=str))
             os.replace(tmp, summary_path)
@@ -359,7 +389,12 @@ def _resume(
     mode_libs: dict[str, library_store.Library],
     res: TaskResult,
 ) -> bool:
-    """Fill `res` from a cached summary covering every requested mode; True if it did."""
+    """Fill `res` from a cached summary covering every requested mode; True if it did.
+
+    The summary only stands for this task while the task itself is unchanged: a corrected
+    instruction or a refreshed data room under the same task id makes the cached selections
+    answers to a different question, so they are re-derived rather than reported as complete.
+    """
     try:
         got = json.loads(summary_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
@@ -369,6 +404,14 @@ def _resume(
         )
         return False
     if got.get("status") not in ("ok", "partial"):
+        return False
+    recorded_inputs = got.get("inputs")
+    if recorded_inputs is not None and res.inputs is not None and recorded_inputs != res.inputs:
+        print(
+            f"  [{task_id}] task inputs {recorded_inputs} != {res.inputs} -- the task prompt "
+            f"or its source files changed since this summary was written; re-running",
+            flush=True,
+        )
         return False
     cached_modes = _modes_of(got)
     cached_sels = got.get("selections") or {}
@@ -612,6 +655,7 @@ def run_task(
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
     summary_path = work / "summary.json"
+    res.inputs = _task_inputs(adapter, task_id)
 
     if summary_path.is_file() and _resume(
         summary_path, task_id, k, adapter, runs_root, modes, seed, tag, mode_libs, res
