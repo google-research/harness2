@@ -26,9 +26,11 @@ from .substrate.opencode import OpencodeSubstrate
 
 
 def check(adapter, *, judge=False) -> list[str]:
-    missing = missing_runners()
-    if missing:
-        return [missing]
+    bench = adapter.spec.name.split("-", 1)[0]
+    if bench != "local":
+        missing = missing_runners()
+        if missing:
+            return [missing]
     errors = []
 
     def probe(label, cmd, *, cwd=None, remedy="run harness2-setup for this benchmark"):
@@ -55,6 +57,8 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(str(exc))
 
     bench = adapter.spec.name.split("-", 1)[0]
+    if bench == "local":
+        return errors
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[bench]
     repo = config.DEPENDENCIES / name
     for dependency in (name, "opencode"):

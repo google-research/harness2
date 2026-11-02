@@ -78,7 +78,13 @@ def main(argv: list[str] | None = None) -> int:
     if not ks:
         raise SystemExit("--k named no scale")
 
-    adapter = C.make_adapter(args.bench, args.subset, args.substrate)
+    adapter = C.make_adapter(
+        args.bench,
+        args.subset,
+        args.substrate,
+        tasks_dir=args.tasks_dir,
+        base_harness=args.base_harness,
+    )
     rows, fell_back, usd = [], {}, {}
     for k in ks:
         ns_dir = C.runs_root_for(adapter) / C.summary_namespace(adapter, k, seed=args.seed)
