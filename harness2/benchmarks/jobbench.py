@@ -449,8 +449,12 @@ def compose_agent_body(staged: Path, ctx: dict) -> str:
 def _ensure_mode_subagent(text: str) -> str:
     if re.search(r"(?m)^mode:\s*subagent", text):
         return text
-    if text.lstrip().startswith("---"):
-        return re.sub(r"^---\n", "---\nmode: subagent\n", text, count=1)
+    # Insert the mode right after an opening `---` fence. The match tolerates a leading
+    # blank line and CRLF endings, so it agrees with the lstrip()-based detection the old
+    # `^---\n` substitution silently disagreed with (leaving such files without a mode).
+    fence = re.match(r"\s*---[^\S\r\n]*\r?\n", text)
+    if fence:
+        return text[: fence.end()] + "mode: subagent\n" + text[fence.end() :]
     return "---\nmode: subagent\ndescription: delegated subagent\n---\n\n" + text
 
 
