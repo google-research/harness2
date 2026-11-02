@@ -22,6 +22,7 @@ answering a task that has since been corrected -- is never reused.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -62,15 +63,20 @@ def fingerprint(harness_dir: Path | None) -> str:
     return h.hexdigest()[:16]
 
 
-def inputs_fingerprint(task_prompt: str, files_dir: Path | None) -> str:
+def inputs_fingerprint(
+    task_prompt: str, files_dir: Path | None, *, exclude: tuple[str, ...] = ()
+) -> str:
     """A stable digest of what the agent was asked and what it was given.
 
     `task_prompt` is the model-visible task text (adapters already strip the answer key and the
     grading criteria from it, so those never enter the digest); `files_dir` is the source
     material from `BenchmarkAdapter.task_files`, walked in sorted order and hashed by relative
-    path plus bytes. An adapter that exposes neither still digests to a stable value, so callers
-    need no special case.
+    path plus bytes. `exclude` takes an adapter's `leak_globs` when `files_dir` also holds the
+    answer key, matched as in `context.assert_no_leak_paths`, so editing a grader-only file does
+    not re-roll a rollout. An adapter that exposes neither still digests to a stable value, so
+    callers need no special case.
     """
+    pats = [str(g).replace("\\", "/").lstrip("./") for g in exclude]
     h = hashlib.sha1()
     h.update(b"prompt\0")
     h.update(str(task_prompt).encode())
@@ -79,6 +85,9 @@ def inputs_fingerprint(task_prompt: str, files_dir: Path | None) -> str:
     if root is not None and root.is_dir():
         for p in sorted(root.rglob("*")):
             if not p.is_file() or _ignored(p):
+                continue
+            rel = p.relative_to(root).as_posix()
+            if any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(rel, f"*/{g}") for g in pats):
                 continue
             h.update(str(p.relative_to(root)).encode())
             h.update(b"\0")

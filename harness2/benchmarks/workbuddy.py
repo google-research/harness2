@@ -750,10 +750,17 @@ class WbAdapter:
         m = RM.read_mark(Path(trial)) or {}
         return all(m.get(key) == val for key, val in self._cell_identity().items())
 
-    def _reusable(self, trial: Path, harness_dir: Path | None) -> bool:
+    def _inputs(self, task_id: str) -> str:
+        """The task's identity for rollout reuse. `task_files` is the whole task directory,
+        answer key included, so the grader-only `leak_globs` paths are left out of it."""
+        return RM.inputs_fingerprint(
+            self.task_prompt(task_id), self.task_files(task_id), exclude=self.spec.leak_globs
+        )
+
+    def _reusable(self, trial: Path, harness_dir: Path | None, inputs: str) -> bool:
         return (
             _trial_finished(trial)
-            and RM.is_complete(trial, harness_dir=harness_dir)
+            and RM.is_complete(trial, harness_dir=harness_dir, inputs=inputs)
             and self._identity_matches(trial)
         )
 
@@ -777,13 +784,14 @@ class WbAdapter:
         label = self._label(req.run_ids[0], k)
         if self.substrate.name == "cx":
             self.substrate.preflight(require_dist=True, require_bridge=True)
+        inputs = self._inputs(req.task_ref)
 
         def _have(task_id: str) -> int:
             return sum(
                 1
                 for t in self._trials(label, task_id)
                 if _trial_finished(t)
-                and _mark_matches(t, install.fingerprint)
+                and _mark_matches(t, install.fingerprint, inputs)
                 and self._identity_matches(t)
             )
 
@@ -807,7 +815,8 @@ class WbAdapter:
     ) -> Path:
         """One rollout = a one-task Harbor batch, idempotent by run id and harness id."""
         label = self._label(run_id)
-        usable = [t for t in self._trials(label, task_id) if self._reusable(t, harness_dir)]
+        inputs = self._inputs(task_id)
+        usable = [t for t in self._trials(label, task_id) if self._reusable(t, harness_dir, inputs)]
         if usable:
             return max(usable, key=lambda q: q.stat().st_mtime)
         install = self._install(harness_dir)
@@ -819,7 +828,11 @@ class WbAdapter:
             raise RuntimeError(f"Harbor produced no finished trial for {label} / {task_id}")
         chosen = fresh[0]
         RM.mark_complete(
-            chosen, run_id=run_id, harness_dir=harness_dir, extra=self._cell_identity()
+            chosen,
+            run_id=run_id,
+            harness_dir=harness_dir,
+            inputs=inputs,
+            extra=self._cell_identity(),
         )
         return chosen
 
@@ -837,9 +850,12 @@ class WbAdapter:
             return []
         k = len(run_ids)
         label = self._label(run_ids[0], k)
+        inputs = self._inputs(task_id)
 
         def _mine() -> list[Path]:
-            return [t for t in self._trials(label, task_id) if self._reusable(t, harness_dir)]
+            return [
+                t for t in self._trials(label, task_id) if self._reusable(t, harness_dir, inputs)
+            ]
 
         mine = _mine()
         if len(mine) < k:
@@ -851,7 +867,11 @@ class WbAdapter:
             for t in fresh:
                 if not RM.read_mark(t):
                     RM.mark_complete(
-                        t, run_id=run_ids[0], harness_dir=harness_dir, extra=self._cell_identity()
+                        t,
+                        run_id=run_ids[0],
+                        harness_dir=harness_dir,
+                        inputs=inputs,
+                        extra=self._cell_identity(),
                     )
             mine = _mine()
         return self._rank(mine)[:k]
@@ -1004,10 +1024,16 @@ class WbAdapter:
         }
 
 
-def _mark_matches(trial: Path, fingerprint: str) -> bool:
-    """runmark's is_complete against a known fingerprint string."""
+def _mark_matches(trial: Path, fingerprint: str, inputs: str) -> bool:
+    """runmark's is_complete against a known fingerprint string and task-input digest. A
+    marker written before input identity existed carries none and still matches."""
     m = RM.read_mark(Path(trial))
-    return bool(m) and m.get("version") == RM.VERSION and m.get("harness") == fingerprint
+    return (
+        bool(m)
+        and m.get("version") == RM.VERSION
+        and m.get("harness") == fingerprint
+        and m.get("inputs") in (None, inputs)
+    )
 
 
 __all__ = [
