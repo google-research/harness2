@@ -224,6 +224,32 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
+    def test_failed_rejudge_keeps_grade_only_for_same_selection(self):
+        from harness2.cli import judge as judge_cli
+
+        def selections():
+            return {s["task_id"]: s for s in judge_cli.collect_selections(ns_dir, ("agg",))}
+
+        self.run_stream(k=1)
+        ns_dir = self.adapter.spec.runs_root / "demo-oc-agg1"
+        first = selections()
+        self.assertTrue(all(sel["selected_at"] for sel in first.values()))
+        self.adapter.score = Mock(return_value={"n_passed": 1, "n_criteria": 1})
+        graded = judge.judge_selections(self.adapter, list(first.values()))
+        self.adapter.score = Mock(side_effect=RuntimeError("judge endpoint unavailable"))
+        failed = judge.judge_selections(self.adapter, list(first.values()))
+        self.assertTrue(all(r.graded for r in judge_cli._merge(graded, failed)))
+
+        (Path(first["ledger-1"]["chosen_run_dir"]) / "answer.txt").unlink()
+        self.run_stream(k=1)
+        again = selections()
+        self.assertEqual(again["ledger-1"]["chosen_run_id"], first["ledger-1"]["chosen_run_id"])
+        self.assertNotEqual(again["ledger-1"]["selected_at"], first["ledger-1"]["selected_at"])
+        self.assertEqual(again["ledger-2"]["selected_at"], first["ledger-2"]["selected_at"])
+        failed = judge.judge_selections(self.adapter, list(again.values()))
+        merged = {r.task_id: r.graded for r in judge_cli._merge(graded, failed)}
+        self.assertEqual(merged, {"ledger-1": False, "ledger-2": True})
+
 
 if __name__ == "__main__":
     unittest.main()

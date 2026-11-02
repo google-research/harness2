@@ -16,8 +16,10 @@
 
 Only the run the blind terminal selector chose is scored. A judge failure is recorded as
 ungraded (score=None), never as a zero. Re-running re-judges every selection, but
-adapters serve cached judge details and a failed re-judge never replaces an existing
-graded row.
+adapters serve cached judge details and a failed re-judge never replaces the existing
+graded row of the same selection. A task that was re-run (a partial task on resume, say)
+has a fresh selection record under the same run id, and a failed judge of its new rollout
+leaves it ungraded rather than keeping the replaced rollout's score.
 
     python3 -m harness2.cli.judge --bench jb --substrate oc --k 2 --modes parallel
 
@@ -63,8 +65,11 @@ def _load_rows(path: Path) -> list[J.Scored]:
 
 
 def _merge(old: list[J.Scored], new: list[J.Scored]) -> list[J.Scored]:
-    """Per (task, mode, k): a changed chosen run replaces; for the same run_id the graded
-    row wins, so a failed re-judge never erases an existing score."""
+    """Per (task, mode, k): a changed chosen run or a re-selected task replaces; for the same
+    selection the graded row wins, so a failed re-judge never erases an existing score.
+
+    Run ids are fixed labels, so a re-run task writes its new rollout under the old run id;
+    `selected_at` is what tells the two apart."""
     by_key = {(r.task_id, r.mode, r.k): r for r in old}
     for r in new:
         key = (r.task_id, r.mode, r.k)
@@ -72,6 +77,7 @@ def _merge(old: list[J.Scored], new: list[J.Scored]) -> list[J.Scored]:
         if (
             prev is not None
             and prev.run_id == r.run_id
+            and prev.selected_at == r.selected_at
             and prev.graded
             and not r.graded
             and not r.error.startswith("selection")

@@ -537,6 +537,7 @@ def _run_one_mode(
             decisions={stage.label: stage.notes or stage.error for stage in r.stages},
         )
     d = sel.to_dict()
+    d["selected_at"] = datetime.now(timezone.utc).isoformat()
     d["chosen_run_dir"] = str(
         candidates[sel.chosen_label].run_dir if sel.chosen_label in candidates else ""
     )
