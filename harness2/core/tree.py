@@ -189,6 +189,11 @@ def always_on_text(surface: SurfaceSpec, tree: Tree) -> str:
     return "\n\n".join(tree.get(a, "") for a in surface.always_on)
 
 
+def _names_skill(body: str, name: str) -> bool:
+    """Whether `body` names skill `name` as a whole name, not inside a longer word or name."""
+    return re.search(rf"(?<![A-Za-z0-9_\-]){re.escape(name)}(?![A-Za-z0-9_\-])", body) is not None
+
+
 def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None = None) -> list[str]:
     """Give every skill a trigger line in always-on text; return the names repaired.
 
@@ -198,7 +203,7 @@ def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None =
     body = always_on_text(surface, tree)
     fixed: list[str] = []
     for name in skill_names(surface, tree):
-        if name in body:
+        if _names_skill(body, name):
             continue
         fm = tree.get(f"{surface.skill_dir}/{name}/SKILL.md", "")[:600]
         m = re.search(r"^description:\s*(.+)$", fm, re.M)
@@ -289,7 +294,7 @@ def _check_skills(surface: SurfaceSpec, tree: Tree, body: str, errs: list[str]) 
                 f"trigger line naming `{name}` stops matching; drop the `name:` line "
                 f"or make it `name: {name}`"
             )
-        if name not in body:
+        if not _names_skill(body, name):
             errs.append(
                 f"skill '{name}' is never named in the always-on text, so the agent "
                 f"will not know to invoke it — an untriggered skill is dead weight. "
