@@ -20,6 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
+from ..core import feedback
 from ..core.schedule import mode_token, run_domain
 from ..demo import DemoAdapter, DemoProposer
 
@@ -29,11 +30,20 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, default=Path("runs/demo"))
     parser.add_argument("--k", type=int, default=2)
     parser.add_argument("--mode", choices=("parallel", "sequential", "both"), default="both")
+    parser.add_argument(
+        "--feedback-dir", type=Path, default=None, help="optional folder of <task>.md feedback"
+    )
     args = parser.parse_args(argv)
     if args.k < 1:
         parser.error("--k must be positive")
+    if args.feedback_dir is not None and not args.feedback_dir.is_dir():
+        parser.error(f"--feedback-dir {args.feedback_dir} is not a directory")
     root = args.output.expanduser().resolve()
     adapter = DemoAdapter(root)
+    if args.feedback_dir is not None:
+        unmatched = feedback.check_dir(args.feedback_dir, adapter.tasks())
+        if unmatched:
+            print(f"feedback: ignoring {', '.join(unmatched)} (no such task)")
     proposer = DemoProposer(adapter.spec.channels["proposer"])
     modes = ("agg", "seq") if args.mode == "both" else (mode_token(args.mode),)
     result = run_domain(
@@ -45,6 +55,7 @@ def main(argv=None) -> int:
         runs_root=adapter.spec.runs_root,
         library_root=root / "library" / f"k{args.k}",
         modes=modes,
+        feedback_dir=args.feedback_dir,
     )
     result["execution_count"] = adapter.execution_count
     result["editor_calls"] = len(proposer._calls)

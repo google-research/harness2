@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from . import feedback as feedback_store
 from . import library as library_store
 from . import recursion, runmark, selection
 from . import tree as harness_tree
@@ -358,6 +359,8 @@ def _resume(
     tag: str,
     mode_libs: dict[str, library_store.Library],
     res: TaskResult,
+    feedback: str = "",
+    feedback_on: bool = False,
 ) -> bool:
     """Fill `res` from a cached summary covering every requested mode; True if it did."""
     try:
@@ -409,6 +412,18 @@ def _resume(
             fingerprint = sel.get("harness_fingerprint")
             if fingerprint and runmark.fingerprint(harness_dir) != fingerprint:
                 raise ValueError("adopted harness has changed")
+            recorded = sel.get("feedback_fingerprint", "")
+            if recorded != feedback_store.fingerprint(feedback):
+                raise ValueError(
+                    "human feedback has changed"
+                    if feedback or feedback_on
+                    else "it was steered by human feedback and no feedback directory was given"
+                )
+            mode_lib = mode_libs.get(mode)
+            if feedback_on and mode_lib:
+                library_fingerprint = runmark.fingerprint(mode_lib.context_dir())
+                if sel.get("input_library_fingerprint") != library_fingerprint:
+                    raise ValueError("input experience library has changed")
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"  [{task_id}] cannot resume {mode}: {exc}; re-running", flush=True)
             return False
@@ -493,10 +508,17 @@ def _run_one_mode(
     surface,
     pool_policy: str,
     res: TaskResult,
+    feedback: str = "",
+    feedback_on: bool = False,
 ) -> None:
-    """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
+    """Run one recursion mode over the shared bases, select a final, and record it on `res`.
+
+    With feedback on, the summary also records the input library, so a lesson changed by a
+    note on an earlier task re-runs this one on resume.
+    """
     work_dir = n.task_dir(runs_root, task_id)
     lib_dir = mode_lib.context_dir() if mode_lib else None
+    library_fingerprint = runmark.fingerprint(lib_dir)
     r = recursion.run_mode(
         mode,
         task_id,
@@ -525,6 +547,7 @@ def _run_one_mode(
             prop=selector,
             work_dir=work_dir,
             pool_kind="finals",
+            feedback=feedback,
         )
     if mode_lib and sel.ok:
         selection.reflect_adoption(
@@ -535,8 +558,13 @@ def _run_one_mode(
             prop=selector,
             work_dir=work_dir,
             decisions={stage.label: stage.notes or stage.error for stage in r.stages},
+            feedback=feedback,
         )
     d = sel.to_dict()
+    if feedback:
+        d["feedback_fingerprint"] = feedback_store.fingerprint(feedback)
+    if feedback_on and mode_lib:
+        d["input_library_fingerprint"] = library_fingerprint
     d["chosen_run_dir"] = str(
         candidates[sel.chosen_label].run_dir if sel.chosen_label in candidates else ""
     )
@@ -577,6 +605,7 @@ def run_task(
     libraries: dict[str, library_store.Library] | None = None,
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    feedback_dir: Path | None = None,
 ) -> TaskResult:
     """k shared reference executions -> every mode -> blind selection per mode -> summary.json.
 
@@ -584,6 +613,8 @@ def run_task(
     caller's job. `pool_policy` is "finals" -- exactly the k finals per mode, the published
     convention and the only pool this release builds; it is a parameter rather than a literal
     only so the cost claim at k=1 (no selector session) stays legible at the call site.
+    `feedback_dir` turns on human feedback (core.feedback); None, the default, leaves the
+    run exactly as without it. With it on, a task also re-runs when its input library changed.
     """
     if int(k) < 1:
         raise ValueError(f"k must be positive, got {k!r}")
@@ -599,6 +630,7 @@ def run_task(
         )
     mode_libs = _resolve_libraries(library, libraries, modes)
     selector = _selector_for(adapter, prop, selector_prop)
+    feedback = feedback_store.read(feedback_dir, task_id)
     bench, sub = adapter.spec.name, adapter.substrate.name
 
     domain = adapter.domain_of(task_id)
@@ -609,7 +641,18 @@ def run_task(
     summary_path = work / "summary.json"
 
     if summary_path.is_file() and _resume(
-        summary_path, task_id, k, adapter, runs_root, modes, seed, tag, mode_libs, res
+        summary_path,
+        task_id,
+        k,
+        adapter,
+        runs_root,
+        modes,
+        seed,
+        tag,
+        mode_libs,
+        res,
+        feedback,
+        feedback_dir is not None,
     ):
         return res
 
@@ -650,6 +693,8 @@ def run_task(
                 surface=surface,
                 pool_policy=pool_policy,
                 res=res,
+                feedback=feedback,
+                feedback_on=feedback_dir is not None,
             )
         except Exception as exc:
             res.modes[mode] = {
@@ -680,6 +725,7 @@ def run_domain(
     tag: str = "",
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    feedback_dir: Path | None = None,
 ) -> dict:
     """Every task in one domain, in `stream_order()` order, threading the library forward."""
     surface = adapter.substrate.surface()
@@ -712,6 +758,7 @@ def run_domain(
                 libraries=libs,
                 selector_prop=selector_prop,
                 pool_policy=pool_policy,
+                feedback_dir=feedback_dir,
             )
             if r.status in ("ok", "skipped"):
                 out["done"] += 1
@@ -794,6 +841,7 @@ def run_sweep(
     pool_policy: str = "finals",
     max_tasks: int | None = None,
     only_tasks: Sequence[str] = (),
+    feedback_dir: Path | None = None,
 ) -> dict:
     """Run domains concurrently, preserving task order after stream filters are applied."""
     ordered_tasks = task_stream(
@@ -805,6 +853,15 @@ def run_sweep(
         max_tasks=max_tasks,
     )
     order = list(ordered_tasks)
+    if feedback_dir is not None:
+        stream = [t for tasks in ordered_tasks.values() for t in tasks]
+        unmatched = feedback_store.check_dir(feedback_dir, stream)
+        if unmatched:
+            print(
+                f"feedback: {len(unmatched)} file(s) in {feedback_dir} match no task in this "
+                f"stream and are ignored: {', '.join(unmatched)}",
+                flush=True,
+            )
 
     started = datetime.now(timezone.utc).isoformat()
     rows = []
@@ -825,6 +882,7 @@ def run_sweep(
                 tag=tag,
                 selector_prop=selector,
                 pool_policy=pool_policy,
+                feedback_dir=feedback_dir,
             ): d
             for d in order
         }
@@ -833,7 +891,7 @@ def run_sweep(
                 rows.append(f.result())
             except Exception as exc:
                 rows.append({"domain": futs[f], "error": f"{type(exc).__name__}: {exc}"})
-    return {
+    record = {
         "benchmark": adapter.spec.name,
         "substrate": adapter.substrate.name,
         "k": k,
@@ -848,3 +906,6 @@ def run_sweep(
         "n_domains": len(order),
         "domains": rows,
     }
+    if feedback_dir is not None:
+        record["feedback_dir"] = str(feedback_dir)
+    return record

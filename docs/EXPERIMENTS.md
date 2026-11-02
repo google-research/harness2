@@ -120,3 +120,43 @@ task selection.
 
 Refinement, judging, and reporting use `harness2`, `harness2-judge`, and
 `harness2-report`; each supports `--help`.
+
+## Human feedback
+
+`--feedback-dir` lets a person who has reviewed a task's outputs steer which
+candidate is selected and what lesson enters the library. It is off by default.
+It is meant for your own work, not benchmark runs: feedback is a hint toward the
+answer, so results produced with it are not comparable to the paper's. Give a
+feedback run its own `HARNESS2_RUNS_DIR`. The first run with the flag marks that
+run directory as feedback-steered in its `config.json`; after that the flag is
+required there, and `harness2-report` warns that feedback was used.
+
+The folder holds one Markdown file per task, named after the task id with `/`
+replaced by `__`. Write what a good answer for that task must do or avoid. The
+text is served as `context/feedback.md` to the selector and to the experience
+session, and both are told to follow it where it disagrees with their own
+judgement. The task's proposers never see it, but what selection and reflection
+take from it reaches later tasks in the domain through the library. At `--k 1`
+there is no selector session, so the note reaches only the experience session.
+Candidate ids are stable across reruns, so a note can refer to the candidate in
+`selection/<mode><k>/candidates/<id>.md` by its id.
+
+Every file is read before the first rollout. A file that is not UTF-8 or that
+contains a grader-output marker such as `"pass_rate"` stops the run; files that
+match no task in the stream are listed and ignored.
+
+To use it, run once, review the outputs, write the notes, and repeat the same
+command with `--feedback-dir`. With the flag on, a task re-runs when its note
+was added, changed or removed, and also when the library it read has changed,
+so a note on one task re-runs the later tasks of its domain. Rollouts and
+proposer sessions whose inputs did not change are reused; for those later
+tasks the proposer sessions see a different library, so they run again, and
+with a real model so do the probes they lead to. The first run with the flag
+re-runs every task once, because older summaries do not record their library.
+To try it without model credentials:
+
+```bash
+mkdir -p feedback
+echo "The total must include credits." > feedback/ledger-1.md
+harness2-demo --k 2 --feedback-dir feedback
+```

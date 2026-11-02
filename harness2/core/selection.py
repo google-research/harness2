@@ -275,12 +275,14 @@ def run_selection(
     prop: Proposer,
     work_dir: Path,
     pool_kind: str = "mixed",
+    feedback: str = "",
 ) -> Selection:
     """Pick one output. A selector failure falls back to a delivered base and never raises;
     an adapter bug does raise, because it is a bug and not a selection outcome.
 
     `pool_kind="finals"` adjusts only the wording shown to the selector and the failure
-    fallback; the default is byte-identical to the mixed-pool behaviour.
+    fallback; the default is byte-identical to the mixed-pool behaviour. `feedback` is a
+    person's notes on the task, served as context/feedback.md; empty changes nothing.
     """
     sel = Selection(task_id=task_id, mode=mode, k=k)
     bp = resolve_prompts(adapter, task_id)
@@ -298,6 +300,8 @@ def run_selection(
     shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True, exist_ok=True)
     (root / "task.md").write_text(adapter.task_prompt(task_id), encoding="utf-8")
+    if feedback:
+        (root / "feedback.md").write_text(feedback + "\n", encoding="utf-8")
     context.copy_source(adapter, task_id, root)
 
     cand_dir = root / "candidates"
@@ -309,10 +313,13 @@ def run_selection(
     a_line, a_evid = _evidence_block(asset_names, adapter, reference_only)
     mission = "\n\n".join(
         [
-            P.select(bp, len(pool), pool_kind=pool_kind, assets_note=a_line),
+            P.select(
+                bp, len(pool), pool_kind=pool_kind, assets_note=a_line, feedback=bool(feedback)
+            ),
             "# YOUR EVIDENCE\n\nIt is on disk. Read it -- do not answer from this message alone.\n\n"
             "context/task.md                 the instructions\n"
-            "context/source/                 task source materials, when supplied\n"
+            + (context.FEEDBACK_LAYOUT_LINE + "\n" if feedback else "")
+            + "context/source/                 task source materials, when supplied\n"
             f"context/candidates/<id>.md      one file per candidate: {ids}\n"
             + a_evid
             + (
@@ -408,6 +415,7 @@ def reflect_adoption(
     prop: Proposer,
     work_dir: Path,
     decisions: dict[str, str] | None = None,
+    feedback: str = "",
 ) -> dict:
     """Learn from harness edits, decisions, trajectories, and deliverables after adoption."""
     chosen = candidates.get(sel.chosen_label)
@@ -427,6 +435,7 @@ def reflect_adoption(
             if not label.startswith("base")
         ],
         decisions=decisions,
+        feedback=feedback,
     )
     shutil.copytree(adapter.base_harness(), root / "base_harness")
     (root / "adoption.json").write_text(
@@ -444,7 +453,14 @@ def reflect_adoption(
     context.assert_no_leak_paths(root, adapter.spec.leak_globs)
     context.assert_no_grader_verdicts(root)
     experience = _distil(
-        task_id, sel, candidates, adapter=adapter, prop=prop, root=root, layout=evidence.layout
+        task_id,
+        sel,
+        candidates,
+        adapter=adapter,
+        prop=prop,
+        root=root,
+        layout=evidence.layout,
+        feedback=evidence.feedback,
     )
     sel.experience = experience
     _persist(sel, Path(work_dir) / "selection" / f"{sel.mode}{sel.k}", str(chosen.run_dir))
@@ -461,11 +477,12 @@ def _distil(
     root: Path,
     bp: BenchPrompts | None = None,
     layout: str = "",
+    feedback: bool = False,
 ) -> dict:
     """Extract a supported lesson from the complete task-local improvement record."""
     mission = "\n\n".join(
         [
-            P.experience(bp or resolve_prompts(adapter, task_id)),
+            P.experience(bp or resolve_prompts(adapter, task_id), feedback=feedback),
             "# WHAT HAPPENED\n\n"
             f"Harness {sel.chosen_label} was adopted. The selection reasoning was:\n\n{sel.why}\n\n"
             "context/adoption.json maps any anonymous IDs in that reasoning to rollout labels. "

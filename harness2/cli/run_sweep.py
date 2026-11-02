@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
-from ..core import schedule
+from ..core import feedback, schedule
 from ..core.proposer import Proposer
 from . import _common as C
 
@@ -69,6 +69,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the stream order, the namespaces and the split's domains, then "
         "exit — no rollouts, no sessions, nothing written",
+    )
+    g.add_argument(
+        "--feedback-dir",
+        type=Path,
+        default=None,
+        help="folder of human feedback, one <task>.md per task ('/' in a task id becomes "
+        "'__'), shown to the selector and the experience session. Leave it off for benchmark "
+        "runs: feedback hints at the answer",
     )
     return p
 
@@ -131,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
 def _main(args: argparse.Namespace) -> int:
     if args.k < 1 or args.workers < 1:
         raise ValueError("--k and --workers must be positive")
+    if args.feedback_dir is not None and not args.feedback_dir.is_dir():
+        raise FileNotFoundError(f"--feedback-dir {args.feedback_dir} is not a directory")
     modes = C.parse_modes(args.modes)
 
     if args.dry_run:
@@ -139,7 +149,9 @@ def _main(args: argparse.Namespace) -> int:
         )
 
     adapter = C.make_adapter(args.bench, args.subset, args.substrate, args.split_file)
-    _stream_for(adapter, args)
+    _, stream = _stream_for(adapter, args)
+    if args.feedback_dir is not None:
+        feedback.check_dir(args.feedback_dir, [task for _, task in stream])
     from ..preflight import require_ready
 
     require_ready(adapter, judge=True)
@@ -170,6 +182,7 @@ def _main(args: argparse.Namespace) -> int:
         only_domains=only,
         max_tasks=args.max_tasks,
         pool_policy="finals",
+        feedback_dir=args.feedback_dir,
     )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -207,7 +220,12 @@ def _main(args: argparse.Namespace) -> int:
 
 
 def _check_identity(adapter, args, namespace_dir: Path) -> None:
-    """Prevent a resumed run or library from silently mixing models or task partitions."""
+    """Prevent a resumed run or library from silently mixing models or task partitions.
+
+    The first run with --feedback-dir marks the namespace with "feedback": true for good, so
+    harness2-report can say so, and a later run without the flag is refused rather than
+    quietly undoing the feedback-steered results.
+    """
     identity = {
         "method_version": config.METHOD_VERSION,
         "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
@@ -225,13 +243,28 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
     }
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
+    with_feedback = args.feedback_dir is not None
     if path.is_file():
-        if json.loads(path.read_text()) != json.loads(json.dumps(identity)):
+        recorded = json.loads(path.read_text())
+        steered = bool(recorded.pop("feedback", False))
+        if recorded != json.loads(json.dumps(identity)):
             raise ValueError(
                 "This run directory belongs to different models or tasks. "
                 "Choose a new HARNESS2_RUNS_DIR for a new experiment."
             )
+        if steered and not with_feedback:
+            raise ValueError(
+                "This run directory was steered by human feedback. Pass --feedback-dir again, "
+                "or choose a new HARNESS2_RUNS_DIR for a run without it."
+            )
+        if with_feedback and not steered:
+            print(f"marking {path} as steered by human feedback", flush=True)
+            path.write_text(
+                json.dumps({**identity, "feedback": True}, indent=2) + "\n", encoding="utf-8"
+            )
     else:
+        if with_feedback:
+            identity["feedback"] = True
         path.write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
 
 
