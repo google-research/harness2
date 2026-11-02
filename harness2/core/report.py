@@ -42,6 +42,7 @@ class Summary:
     fell_back: int = 0
     usd: float = 0.0
     metrics: tuple[str, ...] = ()
+    graded_tasks: tuple[str, ...] = ()
 
     @property
     def name(self) -> str:
@@ -103,6 +104,7 @@ def summarise(
             fell_back=(fell_back or {}).get((mode, k), 0),
             usd=round((usd or {}).get((mode, k), 0.0), 2),
             metrics=units,
+            graded_tasks=tuple(sorted(r.task_id for r in good)),
         )
         if good:
             s.score = round(100 * st.mean(r.frac for r in good), 2)
@@ -120,7 +122,14 @@ def render(summaries: Sequence[Summary], *, title: str = "", bench: str = "") ->
         lines.append(s.line(bench))
 
     at1 = {s.mode: s for s in summaries if s.k == 1 and s.score is not None}
-    if len(at1) == 2:
+    if len(at1) == 2 and at1["agg"].graded_tasks != at1["seq"].graded_tasks:
+        lines += [
+            "",
+            "  WARNING  cannot estimate the k=1 noise floor: parallel and sequential "
+            "scores cover different graded task sets. Re-judge the missing tasks before "
+            "comparing this gap.",
+        ]
+    elif len(at1) == 2:
         gap = abs(at1["agg"].score - at1["seq"].score)
         lines += [
             "",
