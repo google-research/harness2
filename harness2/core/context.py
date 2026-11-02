@@ -216,13 +216,28 @@ def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
     return src_n
 
 
+_MISSING_TRAJECTORY_PREFIXES = (
+    "(no trajectory",
+    "(no parseable events in trajectory)",
+    "(failed to read trajectory:",
+    "(trajectory unavailable:",
+)
+
+
+def is_missing_trajectory(text: str) -> bool:
+    """True when `text` is empty or one of the substrate/adapter missing-trajectory sentinels."""
+    stripped = (text or "").strip()
+    return not stripped or stripped.startswith(_MISSING_TRAJECTORY_PREFIXES)
+
+
 def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool) -> str:
     """Write one rollout's trajectory and deliverables; return "" or the failure detail."""
     failure = ""
     try:
-        (dest / "rollouts" / f"{r.label}.md").write_text(
-            adapter.trajectory(r.run_dir, obs_trunc=trunc), encoding="utf-8"
-        )
+        traj = adapter.trajectory(r.run_dir, obs_trunc=trunc)
+        (dest / "rollouts" / f"{r.label}.md").write_text(traj, encoding="utf-8")
+        if is_missing_trajectory(traj):
+            failure = f"{r.label}: {traj.strip() or 'empty trajectory'}"
     except Exception as exc:
         (dest / "rollouts" / f"{r.label}.md").write_text(
             f"(trajectory unavailable: {type(exc).__name__}: {exc})", encoding="utf-8"
