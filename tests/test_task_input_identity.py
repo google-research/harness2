@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from harness2 import config
+from harness2.benchmarks import workbuddy
 from harness2.benchmarks.lab import LabAdapter
 from harness2.core import runmark, schedule
 
@@ -83,6 +84,17 @@ class InputsFingerprintTests(unittest.TestCase):
             runmark.inputs_fingerprint("Use version one.", None),
             runmark.inputs_fingerprint("Use version one.", self.root / "absent"),
         )
+
+    def test_digest_skips_excluded_paths(self):
+        (self.files / "tests").mkdir()
+        (self.files / "tests" / "test.sh").write_text("check one")
+        before = runmark.inputs_fingerprint("Use version one.", self.files, exclude=("tests/**",))
+        (self.files / "tests" / "test.sh").write_text("check two")
+        after = runmark.inputs_fingerprint("Use version one.", self.files, exclude=("tests/**",))
+        self.assertEqual(before, after)
+        (self.files / "source.txt").write_text("version-two")
+        changed = runmark.inputs_fingerprint("Use version one.", self.files, exclude=("tests/**",))
+        self.assertNotEqual(before, changed)
 
 
 class MarkerInputTests(unittest.TestCase):
@@ -292,6 +304,81 @@ class RolloutReuseTests(unittest.TestCase):
             self.assertIn("version two", adapter.task_prompt(self.task_id))
             # The source material is unchanged, so the fresh answer still matches it.
             self.assertEqual(self._answer(out), "version-one")
+
+
+class WorkBuddyRolloutReuseTests(unittest.TestCase):
+    """The same symptom through `WbAdapter.execute` and `execute_many`, with the real `_launch`.
+
+    Harbor's batch runner is replaced by a function that writes one finished trial per attempt,
+    holding the instruction it was given: no Docker, no model, no shell.
+    """
+
+    task_id = "fix-login"
+    run_id = "wb-code-oc-agg1/fix-login/base1"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        for p in (
+            patch.object(config, "RUNS", self.root / "runs"),
+            patch.object(config, "wb_repo", return_value=self.root / "wb"),
+            patch.object(workbuddy, "resolve_task", lambda name, subset: name),
+            patch.object(workbuddy, "run_batch", side_effect=self._run_batch),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        self.adapter = workbuddy.WbAdapter("code", substrate="oc")
+        self.task = self.adapter.subset_info.tasks_dir / self.task_id
+        (self.task / "tests").mkdir(parents=True)
+        self.instruction = self.task / "instruction.md"
+        self.instruction.write_text("Fix the login form.")
+        self.answer_key = self.task / "tests" / "test.sh"
+        self.answer_key.write_text("check one")
+        self.batches = 0
+
+    def _run_batch(self, subset, substrate, label_dir, label, tasks, ws, k, *, done, need=None,
+                   timeout_s=None):  # fmt: skip
+        todo = [t for t in tasks if not done(t)]
+        if not todo:
+            return []
+        self.batches += 1
+        run = label_dir / f"run{self.batches}"
+        for t in todo:
+            for n in range(need(t) if need else k):
+                trial = run / f"{t}__t{self.batches}x{n}"
+                (trial / "verifier").mkdir(parents=True)
+                (trial / "verifier" / "score.json").write_text("{}")
+                (trial / "answer.txt").write_text(self.instruction.read_text())
+        return [run]
+
+    def test_unchanged_inputs_reuse_the_trial(self):
+        first = self.adapter.execute(self.task_id, None, self.run_id)
+        second = self.adapter.execute(self.task_id, None, self.run_id)
+        self.assertEqual((self.batches, Path(second)), (1, Path(first)))
+
+    def test_changed_instruction_re_rolls_the_trial(self):
+        self.adapter.execute(self.task_id, None, self.run_id)
+        self.instruction.write_text("Fix the signup form.")
+        out = self.adapter.execute(self.task_id, None, self.run_id)
+        self.assertEqual(self.batches, 2)
+        self.assertEqual((out / "answer.txt").read_text(), "Fix the signup form.")
+
+    def test_changed_answer_key_keeps_the_trial(self):
+        # `leak_globs` paths are grader-only: the agent never sees them, so they are not inputs.
+        first = self.adapter.execute(self.task_id, None, self.run_id)
+        self.answer_key.write_text("check two")
+        second = self.adapter.execute(self.task_id, None, self.run_id)
+        self.assertEqual((self.batches, Path(second)), (1, Path(first)))
+
+    def test_changed_instruction_re_rolls_replicates(self):
+        run_ids = [self.run_id, self.run_id.replace("base1", "base2")]
+        self.adapter.execute_many(self.task_id, None, run_ids)
+        self.instruction.write_text("Fix the signup form.")
+        outs = self.adapter.execute_many(self.task_id, None, run_ids)
+        self.assertEqual(self.batches, 2)
+        self.assertEqual(len(outs), 2)
+        self.assertEqual({(o / "answer.txt").read_text() for o in outs}, {"Fix the signup form."})
 
 
 if __name__ == "__main__":
