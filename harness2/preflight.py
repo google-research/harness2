@@ -55,6 +55,11 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(str(exc))
 
     bench = adapter.spec.name.split("-", 1)[0]
+    if bench in ("lab", "jb") and not shutil.which("timeout"):
+        # The OpenCode runners wrap the agent in GNU `timeout`; without it the
+        # agent never starts and the sweep reports a bare "no base rollout
+        # produced anything", hiding the missing command.
+        errors.append("`timeout` command missing; install coreutils (GNU timeout)")
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[bench]
     repo = config.DEPENDENCIES / name
     for dependency in (name, "opencode"):
