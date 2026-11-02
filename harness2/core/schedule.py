@@ -526,16 +526,20 @@ def _run_one_mode(
             work_dir=work_dir,
             pool_kind="finals",
         )
+    res.selections[mode] = sel.to_dict()
     if mode_lib and sel.ok:
-        selection.reflect_adoption(
-            task_id,
-            sel,
-            r.rollouts,
-            adapter=adapter,
-            prop=selector,
-            work_dir=work_dir,
-            decisions={stage.label: stage.notes or stage.error for stage in r.stages},
-        )
+        try:
+            selection.reflect_adoption(
+                task_id,
+                sel,
+                r.rollouts,
+                adapter=adapter,
+                prop=selector,
+                work_dir=work_dir,
+                decisions={stage.label: stage.notes or stage.error for stage in r.stages},
+            )
+        finally:
+            res.selections[mode] = sel.to_dict()
     d = sel.to_dict()
     d["selected_at"] = datetime.now(timezone.utc).isoformat()
     d["chosen_run_dir"] = str(
@@ -628,8 +632,14 @@ def run_task(
 
     res.base = [{"label": b.label, "run_id": b.run_id, "run_dir": str(b.run_dir)} for b in base]
     if not any(b.ok for b in base):
+        err = "no base rollout produced anything"
         res.status = "base-failed"
-        res.errors.append("no base rollout produced anything")
+        res.errors.append(err)
+        for mode in modes:
+            res.modes[mode] = {"ok": False, "error": err}
+            res.selections[mode] = selection.Selection(
+                task_id=task_id, mode=mode, k=k, error=err
+            ).to_dict()
         _write_summary(summary_path, res)
         return res
 
@@ -653,12 +663,20 @@ def run_task(
                 res=res,
             )
         except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
             res.modes[mode] = {
                 "ok": False,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": err,
                 "traceback": traceback.format_exc()[-1500:],
             }
-            res.errors.append(f"{mode}: {type(exc).__name__}: {exc}")
+            res.selections[mode] = selection.Selection(
+                task_id=task_id,
+                mode=mode,
+                k=k,
+                error=err,
+                usd=float((res.selections.get(mode) or {}).get("usd") or 0.0),
+            ).to_dict()
+            res.errors.append(f"{mode}: {err}")
         res.status = "partial"
         _write_summary(summary_path, res)
 
