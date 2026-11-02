@@ -21,7 +21,7 @@ dependencies = []
 
 [project.optional-dependencies]
 render = ["openpyxl>=3.1,<4", "python-pptx>=1,<2"]
-bridge = ["litellm[proxy]==1.95.0", "fastapi==0.139.2", "google-auth==2.56.3"]
+bridge = ["litellm[proxy]==1.95.1", "fastapi==0.139.2", "google-auth==2.56.3"]
 
 [project.scripts]
 harness2 = "harness2.cli.run_sweep:main"
