@@ -303,6 +303,25 @@ def _load_old(path: Path) -> dict:
         return {}
 
 
+def recorded_usd(ns_dir: Path) -> float:
+    """USD the task summaries under `ns_dir` record: each mode's ledger plus its selection.
+
+    Read from disk on every call, so tasks finished by an earlier run, a resumed task and a
+    concurrent domain all count once, with no running total to keep in step; one read per
+    summary before each task is small next to the task itself. Once executor rollouts are
+    priced, the k shared base rollouts sit in every mode's ledger, so a two-mode run counts
+    them twice and the limit stops early, never late.
+    """
+    total = 0.0
+    for path in Path(ns_dir).glob("*/summary.json"):
+        summary = _load_old(path)
+        selections = summary.get("selections") or {}
+        for mode, rec in _modes_of(summary).items():
+            total += float(((rec or {}).get("ledger") or {}).get("usd") or 0.0)
+            total += float((selections.get(mode) or {}).get("usd") or 0.0)
+    return round(total, 6)
+
+
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
     """Merge `res` into the summary under an flock, atomically, deriving the merged status.
 
@@ -748,9 +767,18 @@ def run_domain(
     tag: str = "",
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    max_usd: float | None = None,
 ) -> dict:
-    """Every task in one domain, in `stream_order()` order, threading the library forward."""
+    """Every task in one domain, in `stream_order()` order, threading the library forward.
+
+    `max_usd` is checked only between tasks: once the summaries in this namespace record that
+    much spend, the remaining tasks are listed with status `spend_limit` and never started, so
+    a task that starts always finishes every mode and the library stays in stream order.
+    """
     surface = adapter.substrate.surface()
+    ns_dir = Path(runs_root) / str(
+        Namespace(adapter.spec.name, adapter.substrate.name, "agg", k, seed, tag)
+    )
     libs = {
         mode: library_store.Library(root=Path(library_root) / mode, domain=domain, surface=surface)
         for mode in modes
@@ -764,6 +792,16 @@ def run_domain(
         "tasks": [],
     }
     for i, tid in enumerate(task_ids, 1):
+        if max_usd is not None and (spent := recorded_usd(ns_dir)) >= max_usd:
+            left = task_ids[i - 1 :]
+            out["spend_limit"] = len(left)
+            out["tasks"] += [{"task": t, "status": "spend_limit"} for t in left]
+            print(
+                f"  [{domain}] spend limit: ${spent:.2f} recorded of ${max_usd:.2f}; "
+                f"{len(left)} task(s) not started",
+                flush=True,
+            )
+            break
         try:
             for lib in libs.values():
                 lib.retain(task_ids[: i - 1])
@@ -862,8 +900,13 @@ def run_sweep(
     pool_policy: str = "finals",
     max_tasks: int | None = None,
     only_tasks: Sequence[str] = (),
+    max_usd: float | None = None,
 ) -> dict:
-    """Run domains concurrently, preserving task order after stream filters are applied."""
+    """Run domains concurrently, preserving task order after stream filters are applied.
+
+    With `max_usd`, every domain checks the namespace's recorded spend before each task (see
+    `run_domain`), so a sweep can pass the limit by up to one task per concurrent domain.
+    """
     ordered_tasks = task_stream(
         adapter,
         split=split,
@@ -893,6 +936,7 @@ def run_sweep(
                 tag=tag,
                 selector_prop=selector,
                 pool_policy=pool_policy,
+                max_usd=max_usd,
             ): d
             for d in order
         }
@@ -910,6 +954,7 @@ def run_sweep(
         "tag": tag,
         "domain_order": order,
         "max_tasks": max_tasks,
+        **({"max_usd": max_usd} if max_usd is not None else {}),
         "only_tasks": list(only_tasks),
         "started_at": started,
         "finished_at": datetime.now(timezone.utc).isoformat(),
