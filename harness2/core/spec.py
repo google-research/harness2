@@ -143,6 +143,9 @@ class BenchSpec:
     allow_subagents: bool = False
 
     reserved_scripts: frozenset[str] = frozenset()
+    # Harness files a deployer fixes: every proposed tree must keep them byte-identical to the
+    # tree it was derived from, so a standing rule can be added but never trimmed or deleted.
+    pinned_paths: frozenset[str] = frozenset()
     proposer_deliverables: str = "contents"
     state_deliverable: bool = False
     obs_trunc: int = 50_000
@@ -171,6 +174,10 @@ class BenchSpec:
             raise ValueError(
                 f"BenchSpec.reserved_scripts takes bare .py BASENAMES, not paths: {bad}"
             )
+
+        escaping = sorted(p for p in self.pinned_paths if not p or p.startswith(("/", "..")))
+        if escaping:
+            raise ValueError(f"BenchSpec.pinned_paths must be relative harness paths: {escaping}")
 
 
 @dataclass

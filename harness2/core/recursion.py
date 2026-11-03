@@ -124,6 +124,12 @@ def _accept_tree(
         print(f"  [{label}] auto-triggered skill(s): {', '.join(triggered)}", flush=True)
     changed = harness_tree.diff_summary(surface, fallback, new)
     kept = not (changed["added"] or changed["removed"] or changed["modified"])
+    moved = sorted(p for p in adapter.spec.pinned_paths if fallback.get(p) != new.get(p))
+    if moved:
+        return kept, (
+            "these pinned files were changed or removed; they must stay exactly as they are: "
+            + ", ".join(moved)
+        )
     try:
         harness_tree.validate(
             surface,
