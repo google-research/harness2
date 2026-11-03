@@ -234,7 +234,13 @@ CODEX_PROVIDER = "harness2"
 
 
 def configure_codex(*, dry_run=False):
-    config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex setup")
+    try:
+        config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex setup")
+    except config.ConfigError as exc:
+        if not dry_run:
+            raise
+        print(f"Configure Codex provider -- {exc}", flush=True)
+        return
     body = (
         f"model = {json.dumps(config.SOLVER_MODEL_CX)}\n"
         f"model_provider = {json.dumps(CODEX_PROVIDER)}\n"
