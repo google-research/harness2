@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -165,16 +166,42 @@ def build_env(workspace: Path, doc_parser: str) -> dict:
     return env
 
 
+def _terminate_process(proc: subprocess.Popen, *, grace: float = 30) -> int:
+    """Stop the process group, preserving GNU timeout's 124/137 exit statuses."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        return 137
+    return 124
+
+
 def invoke(args_extra: list[str], *, base: list[str], env: dict, timeout: int,
            session_path: Path, log_path: Path, append: bool) -> int:
     """One `opencode run`, appending its JSON stream to session_path."""
     with open(session_path, "a" if append else "w", encoding="utf-8") as out, \
          open(log_path, "a", encoding="utf-8") as err:
-        proc = subprocess.run(
-            ["timeout", "--kill-after=30s", str(int(max(30, timeout)))] + base + args_extra,
-            stdout=out, stderr=err, env=env, cwd=str(BENCH_ROOT),
-        )
-    return proc.returncode
+        try:
+            proc = subprocess.Popen(
+                base + args_extra,
+                stdout=out, stderr=err, env=env, cwd=str(BENCH_ROOT),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            print(f"Could not start OpenCode: {type(exc).__name__}: {exc}", file=err)
+            return 127
+        try:
+            return proc.wait(timeout=int(max(30, timeout)))
+        except subprocess.TimeoutExpired:
+            return _terminate_process(proc)
 
 
 def main(args) -> None:
