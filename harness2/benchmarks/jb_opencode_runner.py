@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ JOBBENCH = Path(__file__).resolve().parents[1]
 TEMP_BASE = Path("/tmp/hevo_ws")
 TRAJ_DIR_NAME = "model_traj"
 EVENT_PREFIX = '{"type":'
+GRACE_SECONDS = 30.0
 
 PROMPT = """=== TASK FOLDER ===
 {task_folder}
@@ -175,11 +177,79 @@ def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
         shutil.copytree(render_dir / "scripts", workspace / "scripts")
 
 
+def _timeout_seconds(raw: str) -> float | None:
+    """Parse TIMEOUT_PER_TASK; a non-positive value means no limit, like GNU timeout."""
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        raise SystemExit(f"[ERROR] TIMEOUT_PER_TASK must be seconds, got {raw!r}") from None
+    return seconds if seconds > 0 else None
+
+
+def _signal_group(proc: subprocess.Popen, sig: int) -> None:
+    """Signal the executor's process group, falling back to the direct child off POSIX."""
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, sig)
+        elif sig == signal.SIGTERM:
+            proc.terminate()
+        else:
+            proc.kill()
+    except OSError:
+        pass
+
+
+def _run_process(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None,
+    stdout,
+    stderr,
+    timeout_s: float | None,
+    grace_s: float = GRACE_SECONDS,
+) -> int:
+    """Run one OpenCode attempt with a portable wall limit.
+
+    GNU `timeout` is not available on a default macOS install, and Windows'
+    `timeout.exe` does not accept --kill-after. The runner manages the limit itself:
+    the child gets its own process group, SIGTERM on timeout, and SIGKILL after the
+    grace period. Exit statuses match timeout(1): 124 after a graceful stop and 137
+    after a forced kill. A failure to start the executor is logged and returned as 127.
+    """
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        message = f"[ERROR] could not start {cmd[0]}: {type(exc).__name__}: {exc}"
+        try:
+            print(message, file=stderr, flush=True)
+        except (AttributeError, OSError):
+            print(message, file=sys.stderr, flush=True)
+        return 127
+
+    try:
+        return proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _signal_group(proc, signal.SIGTERM)
+        try:
+            proc.wait(timeout=grace_s)
+            return 124
+        except subprocess.TimeoutExpired:
+            _signal_group(proc, signal.SIGKILL)
+            proc.wait()
+            return 137
+
+
 def _command(cfg: Settings, workspace: Path, prompt: str, title: str) -> list[str]:
+    """The OpenCode argv; `_run_process` enforces the wall limit."""
     cmd = [
-        "timeout",
-        "--kill-after=30s",
-        cfg.timeout_per_task,
         "bun",
         "run",
         "--cwd",
@@ -202,6 +272,7 @@ def _attempt(
     cfg: Settings, workspace: Path, traj_file: Path, log_file: Path, task_name: str, attempt: int
 ) -> int:
     """Run OpenCode once; its event stream lands in `traj_file`, everything else in the log."""
+    timeout_s = _timeout_seconds(cfg.timeout_per_task)
     if cfg.agent_steps and not (workspace / "opencode.json").is_file():
         (workspace / "opencode.json").write_text(
             json.dumps(
@@ -220,7 +291,7 @@ def _attempt(
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
+        code = _run_process(
             _command(cfg, workspace, prompt, title),
             cwd=cfg.opencode_dir,
             env={
@@ -230,7 +301,8 @@ def _attempt(
             },
             stdout=out,
             stderr=err,
-        ).returncode
+            timeout_s=timeout_s,
+        )
     with open(raw, encoding="utf-8", errors="replace") as src:
         traj_file.write_text(
             "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
