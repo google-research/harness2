@@ -9,3 +9,6 @@ log paths use the `harness2` namespace. Setup installs these agents and harness 
 
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.
+
+OpenCode trajectory prompt totals restore the cache read/write tokens excluded from
+its non-cached input field; cache-hit counts remain a subset of those prompt totals.
