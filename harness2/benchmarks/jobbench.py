@@ -595,12 +595,18 @@ def _judge_failed(got: dict) -> bool:
 
 
 def _parse_details(got: dict) -> dict | None:
-    """Weighted total_score / max_score, with a labelled unweighted fallback."""
+    """Weighted total_score / max_score, with a labelled unweighted fallback.
+
+    A payload that carries no usable total is a JUDGE FAILURE, not a score of zero:
+    `core.judge` counts a None as ungraded and keeps it out of the denominator, while
+    a graded 0.0 is a score the run actually earned.
+    """
     try:
         results = [r.get("result") or {} for r in got.get("rubrics") or []]
         n_c = sum(int(r.get("criteria_count") or 0) for r in results)
         n_p = sum(int(r.get("criteria_passed") or 0) for r in results)
-        total = float(got.get("total_score") or 0)
+        raw_total = got.get("total_score")
+        total = float(raw_total) if raw_total is not None else None
         mx = float(got.get("max_score") or 0)
     except (TypeError, ValueError):
         return None
@@ -613,6 +619,16 @@ def _parse_details(got: dict) -> dict | None:
             "all_pass": n_p == n_c,
             "metric": "unweighted-fallback",
         }
+    if total is None:
+        # max_score without a total: the judge never produced a score.
+        return None
+    if total == 0 and n_c > 0 and n_p == n_c:
+        # Every criterion passed, so the weighted total cannot be zero. The payload
+        # contradicts itself, and grading it would report one row as 0% score AND
+        # 100% all-pass at the same time. The rule is deliberately narrow: a total
+        # that merely DIFFERS from max_score is not provably wrong, and comparing
+        # the two would reject a genuine full score on float arithmetic.
+        return None
     return {
         "n_passed": total,
         "n_criteria": mx,
@@ -1022,6 +1038,14 @@ class JobBenchAdapter:
         reporting = (er / pattern.format(label=label)) if pattern else None
         return (reporting, er / f"eval_{label}" / f"{safe}_judge.json")
 
+    def _quarantine(self, details: Path) -> None:
+        """Put a judge-details file that is not a grade aside, so the judge runs again."""
+        q = details.with_name(details.name + ".judge_failed")
+        try:
+            os.replace(details, q)
+        except OSError as exc:
+            print(f"  [jb] could not quarantine unusable details {details}: {exc}", flush=True)
+
     def _read_details(self, details: Path) -> dict | None:
         if not details.is_file():
             return None
@@ -1032,13 +1056,7 @@ class JobBenchAdapter:
         if not isinstance(got, dict):
             return None
         if _judge_failed(got):
-            q = details.with_name(details.name + ".judge_failed")
-            try:
-                os.replace(details, q)
-            except OSError as exc:
-                print(
-                    f"  [jb] could not quarantine judge-failed details {details}: {exc}", flush=True
-                )
+            self._quarantine(details)
             return None
         rubrics, tc = got.get("rubrics"), got.get("total_count")
         if isinstance(rubrics, list) and isinstance(tc, int) and tc > 0 and len(rubrics) < tc:
@@ -1047,6 +1065,11 @@ class JobBenchAdapter:
                 f"not served, judge will resume",
                 flush=True,
             )
+            return None
+        if _parse_details(got) is None:
+            # Readable, but not a grade. Put it aside: the judge then runs again and
+            # writes a fresh one, instead of this file being served as a zero forever.
+            self._quarantine(details)
             return None
         return got
 
