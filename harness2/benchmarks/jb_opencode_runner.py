@@ -239,7 +239,9 @@ def _attempt(
     return code
 
 
-def _note_exit(traj_file: Path, log_file: Path, code: int, *, limit: str, kept: bool) -> None:
+def _note_exit(
+    traj_file: Path, log_file: Path, code: int, *, limit: str, kept: bool, accepted: bool = True
+) -> None:
     """Close the trajectory with an error event when the executor did not exit cleanly."""
     if code == 0:
         return
@@ -253,7 +255,11 @@ def _note_exit(traj_file: Path, log_file: Path, code: int, *, limit: str, kept: 
     else:
         why = f"exited with status {code}"
     outcome = (
-        "files already in the output directory were kept as the deliverable"
+        (
+            "files already in the output directory were kept as the deliverable"
+            if accepted
+            else "files already in the output directory were preserved for diagnosis, not accepted"
+        )
         if kept
         else "the output directory was empty"
     )
@@ -268,7 +274,17 @@ def _note_exit(traj_file: Path, log_file: Path, code: int, *, limit: str, kept: 
     _log(log_file, f"[{_hms()}] EXIT {code}: {message}")
 
 
-def run_one(cfg: Settings, task_id: str) -> bool:
+def _archive_partial(output_dir: Path, partial_dir: Path, attempt: int) -> None:
+    """Keep failed-attempt files for diagnosis without treating them as deliverables."""
+    if not _nonempty(output_dir):
+        return
+    target = partial_dir / f"attempt{attempt}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(target, ignore_errors=True)
+    shutil.copytree(output_dir, target)
+
+
+def run_one(cfg: Settings, task_id: str, *, stage=_stage, run=_attempt) -> bool:
     """Roll one task; the existing-output skip mirrors the adapter's resume, for direct runs.
 
     True only when deliverables landed in `model_output/<label>/`. A rollout that dies
@@ -294,7 +310,7 @@ def run_one(cfg: Settings, task_id: str) -> bool:
 
     workspace = TEMP_BASE / f"{task_name}_{cfg.label}_{os.getpid()}"
     output_dir = workspace / "output"
-    _stage(task_dir, cfg.render_dir, workspace)
+    stage(task_dir, cfg.render_dir, workspace)
     _stage_sandbox(workspace)
 
     for attempt in range(1, cfg.max_retries + 1):
@@ -303,16 +319,28 @@ def run_one(cfg: Settings, task_id: str) -> bool:
             _stage_sandbox(workspace)
         traj_file = traj_dir / f"{task_name}_{cfg.label}_attempt{attempt}_{_stamp()}.jsonl"
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
-        code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
+        code = run(cfg, workspace, traj_file, log_file, task_name, attempt)
+        require_clean = bool(getattr(cfg, "require_clean_exit", False))
         _note_exit(
-            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_nonempty(output_dir)
+            traj_file,
+            log_file,
+            code,
+            limit=cfg.timeout_per_task,
+            kept=_nonempty(output_dir),
+            accepted=not require_clean,
         )
-        if _nonempty(output_dir):
+        if _nonempty(output_dir) and (code == 0 or not require_clean):
             break
+        if require_clean:
+            _archive_partial(output_dir, cfg.log_dir / "partials" / cfg.label / task_name, attempt)
+            shutil.rmtree(output_dir, ignore_errors=True)
+            output_dir.mkdir(parents=True)
         if code in (124, 137):
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")
 
-    delivered = _nonempty(output_dir)
+    delivered = _nonempty(output_dir) and (
+        code == 0 or not bool(getattr(cfg, "require_clean_exit", False))
+    )
     if delivered:
         final_output_dir.mkdir(parents=True, exist_ok=True)
         for item in sorted(output_dir.iterdir()):

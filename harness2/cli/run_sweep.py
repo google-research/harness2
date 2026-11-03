@@ -210,7 +210,11 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
     """Prevent a resumed run or library from silently mixing models or task partitions."""
     identity = {
         "method_version": config.METHOD_VERSION,
-        "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
+        "executor": {
+            "oc": config.SOLVER_MODEL_OC,
+            "cx": config.SOLVER_MODEL_CX,
+            "cc": config.SOLVER_MODEL_CC,
+        }[args.substrate],
         "improver": config.IMPROVER_MODEL,
         "judge": config.JUDGE_MODEL,
         "project": config.VERTEX_PROJECT,
@@ -223,6 +227,10 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    if args.substrate == "cc":
+        identity["executor_version"] = adapter.substrate.cli_version()
+        identity["executor_binary"] = str(config.CLAUDE_BIN)
+        identity["executor_auth"] = config.CLAUDE_AUTH
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

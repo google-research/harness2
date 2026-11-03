@@ -26,7 +26,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--bench", choices=("jb", "lab", "wb"), required=True)
     p.add_argument("--subset", choices=("office", "web", "code"))
-    p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
+    p.add_argument("--substrate", choices=("oc", "cx", "cc"), default="oc")
     args = p.parse_args(argv)
     try:
         adapter = make_adapter(args.bench, args.subset, args.substrate)

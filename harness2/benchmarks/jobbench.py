@@ -39,6 +39,7 @@ from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..install import codex_config_error
 from ..substrate.base import Install, RunRequest
+from ..substrate.claude import CLAUDE_SURFACE, ClaudeSubstrate
 from ..substrate.codex import CodexSubstrate
 from ..substrate.opencode import OUTPUT_TOKEN_MAX, OpencodeSubstrate
 from .tasks import discover, select
@@ -47,6 +48,7 @@ _RUNNER_DIR = config.THIRD_PARTY / "jb_runner"
 _STORE_SEED_LOCK = threading.Lock()
 
 OC_RUNNER = Path(__file__).resolve().parent / "jb_opencode_runner.py"
+CC_RUNNER = Path(__file__).resolve().parent / "jb_claude_runner.py"
 CX_RUNNER = _RUNNER_DIR / "run_benchmark_codex_cli_adapt.sh"
 OC_BASE_HARNESS = _RUNNER_DIR / "harness_baseline_oc"
 CX_BASE_HARNESS = _RUNNER_DIR / "codex_base_harness"
@@ -494,9 +496,9 @@ def render_opencode_tree(staged: Path, render_dir: Path, ctx: dict) -> None:
             shutil.copy(p, rd / ".opencode" / "plugin" / p.name)
 
 
-_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root"}
+_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root", "cc": "claude_root"}
 
-_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600}
+_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600, "cc": 3600}
 
 
 def _channels() -> dict:
@@ -507,7 +509,7 @@ def _channels() -> dict:
 
 def make_spec(substrate: str) -> BenchSpec:
     if substrate not in _INSTALL_MODE:
-        raise ValueError(f"JobBench substrate must be 'oc' or 'cx', got {substrate!r}")
+        raise ValueError(f"JobBench substrate must be one of {tuple(_INSTALL_MODE)}, got {substrate!r}")
     return BenchSpec(
         name="jb",
         runs_root=config.RUNS / "jb",
@@ -516,7 +518,7 @@ def make_spec(substrate: str) -> BenchSpec:
         channels=_channels(),
         domain_word="profession",
         leak_globs=("RUBRICS.json", "eval_result/**", "expected/**", "reference/**"),
-        allow_subagents=(substrate == "oc"),
+        allow_subagents=(substrate in ("oc", "cc")),
         obs_trunc=config.JB_OBS_TRUNC,
         proposer_deliverables="contents",
     )
@@ -637,12 +639,12 @@ class JobBenchAdapter:
     ):
         self.split_file = split_file
         self.spec = make_spec(substrate)
-        launcher = self._launch_opencode if substrate == "oc" else self._launch_codex
-        self.substrate = (
-            OpencodeSubstrate(launcher=launcher)
-            if substrate == "oc"
-            else CodexSubstrate(launcher=launcher)
-        )
+        factories = {
+            "oc": lambda: OpencodeSubstrate(launcher=self._launch_opencode),
+            "cx": lambda: CodexSubstrate(launcher=self._launch_codex),
+            "cc": lambda: ClaudeSubstrate(launcher=self._launch_claude),
+        }
+        self.substrate = factories[substrate]()
         self.timeout = int(timeout or _DEFAULT_TIMEOUT[substrate])
         self.store = Path(store_root) if store_root else config.RUNS / "jb" / "dataset"
 
@@ -837,6 +839,24 @@ class JobBenchAdapter:
         self._run_runner(CX_RUNNER, env, wall=t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
 
+    def _launch_claude(self, req: RunRequest, install: Install) -> list[Path]:
+        task_id, label, timeout = self._launch_common(req)
+        self.substrate.preflight()
+        env = config.scrub_env()
+        env.update(
+            {
+                "TASK_IDS": task_id,
+                "LABEL": label,
+                "HARNESS_RENDER_DIR": str(install.staging_dir),
+                "TASKS_BASE_DIR": str(self.store),
+                "HARNESS2_CLAUDE_MODEL": config.SOLVER_MODEL_CC,
+                "TIMEOUT_PER_TASK": str(timeout),
+                "MAX_RETRIES": "2",
+            }
+        )
+        self._run_runner(CC_RUNNER, env, wall=2 * timeout + 600, label=label)
+        return [self._require_artifacts(task_id, label)]
+
     def _run_runner(self, runner: Path, env: dict, *, wall: int, label: str) -> None:
         """Run the packaged launcher; timeouts leave the rollout incomplete."""
         if not runner.is_file():
@@ -957,7 +977,23 @@ class JobBenchAdapter:
         return str(self._extract(d)["flat"]) if d.is_dir() else ""
 
     def base_harness(self) -> Path:
-        base = OC_BASE_HARNESS if self.substrate.name == "oc" else CX_BASE_HARNESS
+        if self.substrate.name == "cc":
+            base = self.spec.runs_root / "_base_harness_cc"
+            with _STORE_SEED_LOCK:
+                if not HT.is_tree(CLAUDE_SURFACE, base):
+                    HT.write_tree(
+                        CLAUDE_SURFACE,
+                        {
+                            "CLAUDE.md": (
+                                "Follow the task instructions and complete the requested work in "
+                                "the workspace, writing every deliverable where instructed.\n"
+                            )
+                        },
+                        base,
+                        stubs=True,
+                    )
+        else:
+            base = OC_BASE_HARNESS if self.substrate.name == "oc" else CX_BASE_HARNESS
         if not HT.is_tree(self.substrate.surface(), base):
             raise FileNotFoundError(
                 f"JobBench base harness missing or not a {self.substrate.surface().name} "

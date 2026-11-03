@@ -1,7 +1,7 @@
 # Setup guide
 
 Start with the [quick start](../README.md#install). This guide covers benchmark
-dependencies, model credentials, and the optional Codex executor. For individual
+dependencies, model credentials, and the optional Codex and Claude Code executors. For individual
 benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
@@ -146,6 +146,45 @@ changing either. `harness2-check` reports stale configuration until then.
 
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
+
+## Claude Code executor (JobBench)
+
+Claude Code is currently supported for JobBench only. By default it invokes
+`claude` on PATH and uses its saved login, including the operating system keychain.
+Run `claude auth login` first if necessary. No credentials are copied or extracted.
+Set `HARNESS2_CLAUDE_BIN` to select another executable. The model defaults to `sonnet`;
+set `HARNESS2_CLAUDE_MODEL` to override it.
+
+```bash
+harness2-setup jb --substrate cc
+harness2-check --bench jb --substrate cc
+harness2 --bench jb --substrate cc --k 1 --mode parallel --max-tasks 1
+```
+
+Preflight checks the installed version, required CLI flags and saved-login status
+without making a model call. Experiment identity records the actual CLI version,
+binary selection and authentication mode; a changed version requires a new run directory.
+Setup does not install or update the system CLI.
+
+For a pinned installation, set `HARNESS2_CLAUDE_RUNTIME=managed` before setup.
+For Vertex authentication, set `HARNESS2_CLAUDE_AUTH=vertex`, a bare Vertex model ID
+in `HARNESS2_CLAUDE_MODEL`, and the Google project/credentials. Vertex mode uses
+a fresh `CLAUDE_CONFIG_DIR` per attempt. Login mode retains the normal configuration
+location to find saved credentials: project-only settings and strict MCP flags
+restrict settings/server loading, but this mode does not promise isolation from
+all personal instructions, skills or memory. The improver still uses OpenCode and
+the judge retains its existing configuration; selecting `cc` changes the executor only.
+
+The editable surface is native Claude Code configuration: `CLAUDE.md`, project
+skills under `.claude/skills/`, project agents generated under
+`.claude/agents/`, scripts, and command hooks in `.claude/settings.json`.
+Harness² installs only the candidate's `hooks` setting; candidates cannot add
+permissions, environment variables, MCP servers, or other authority-expanding
+settings.
+
+Claude Code runs with permission prompts bypassed inside the benchmark workspace.
+Restrict executor network access before evaluation and do not point a run at an
+untrusted task set.
 
 ## Network access during setup
 
