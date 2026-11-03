@@ -1029,8 +1029,12 @@ CONFORMANCE_BLOCK = (
     "value.\n\n"
 )
 
+# Position 2 of the same ordered list CONFORMANCE_BLOCK occupies: `select()` appends this
+# tail exactly when the conformance block is dropped, so the two are never both rendered and
+# the rendered criteria stay one contiguous 1..6 list. Renumbering it to anything else leaves
+# a gap in a prompt that says "IN THIS ORDER".
 VALUE_TAIL = (
-    "7. VALUES ARE VALUES. A value the request asks for must be PRESENT AS A VALUE. An "
+    "2. VALUES ARE VALUES. A value the request asks for must be PRESENT AS A VALUE. An "
     "artifact that leaves the reader to recompute it -- a spreadsheet formula in place of "
     "the number, a placeholder to be filled, a described-but-not-performed calculation -- "
     "has not delivered that value.\n\n"
@@ -1065,7 +1069,7 @@ def select(bp: BenchPrompts, n: int, pool_kind: str = "mixed", assets_note: str 
                 + (f"0. {bp.selection_lead.strip()}\n\n" if bp.selection_lead.strip() else "")
                 + f"1. DELIVERY. Is every {bp.deliverable_word} named by the instructions present, at the "
                 f"requested path, in the requested form, with every named part?\n\n"
-                + ("" if bp.selection_conformance == "value_only" else CONFORMANCE_BLOCK)
+                + (VALUE_TAIL if bp.selection_conformance == "value_only" else CONFORMANCE_BLOCK)
                 + "3. FIDELITY. CHECK THE CLAIMS AGAINST `context/source/`, which holds the material the "
                 "work was done from. Open it and verify the facts, data, names, figures and constraints "
                 "a candidate asserts -- do not take its word for them, and do not settle for whether it "
@@ -1086,7 +1090,6 @@ def select(bp: BenchPrompts, n: int, pool_kind: str = "mixed", assets_note: str 
                 "fields, visibly incomplete sections, or content that does not match its declared format. "
                 "A renderer-truncation marker inserted for this comparison is not a defect in the original "
                 "artifact; judge only what is actually visible.\n\n"
-                + ("" if bp.selection_conformance == "full" else VALUE_TAIL)
                 + "Length and polish are not merits in themselves. A shorter, correct, complete, "
                 "exactly-shaped answer beats a longer one with a gap or an embellishment.",
                 _checks(bp),
