@@ -118,16 +118,10 @@ def _task_universe(subset: str) -> tuple[str, ...]:
     return tuple(discover("wb", subset))
 
 
-_HARBOR_NAME_MAX = 32
-
-
 @lru_cache(maxsize=8)
 def _exact_index(subset: str) -> dict[str, str]:
-    idx: dict[str, str] = {}
-    for tid in _task_universe(subset):
-        idx.setdefault(tid, tid)
-        idx.setdefault(tid[:_HARBOR_NAME_MAX], tid)
-    return idx
+    # Truncated names must go through resolve_task's ambiguity check.
+    return {tid: tid for tid in _task_universe(subset)}
 
 
 @lru_cache(maxsize=4096)
