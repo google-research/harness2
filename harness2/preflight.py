@@ -26,6 +26,14 @@ from .substrate.opencode import OpencodeSubstrate
 
 
 def check(adapter, *, judge=False) -> list[str]:
+    if config.SUBSCRIPTION:
+        try:
+            config.validate_models(judge=judge)
+            adapter.tasks()
+            adapter.preflight()
+            return []
+        except (OSError, RuntimeError, ValueError) as exc:
+            return [str(exc)]
     missing = missing_runners()
     if missing:
         return [missing]

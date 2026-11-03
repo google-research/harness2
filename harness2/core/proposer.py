@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -91,6 +92,8 @@ class Proposer:
     def __post_init__(self) -> None:
         if not self.spec.model.strip():
             raise ValueError("Set HARNESS2_IMPROVER_MODEL before starting model sessions")
+        if self.spec.kind == "codex_cli" and not config.SUBSCRIPTION:
+            raise ValueError("codex_cli improver requires HARNESS2_TRANSPORT=subscription")
 
     def env(self) -> dict[str, str]:
         keep = () if self.spec.kind == "claude_cli" else config.provider_keys(self.spec.model)
@@ -151,7 +154,11 @@ class Proposer:
                     shutil.copytree(context_dir, tmp / "context", dirs_exist_ok=True)
                 with _SEM if _SEM is not None else contextlib.nullcontext():
                     text, cost, err = (
-                        self._claude_cli if self.spec.kind == "claude_cli" else self._opencode
+                        self._subscription
+                        if config.SUBSCRIPTION
+                        else self._claude_cli
+                        if self.spec.kind == "claude_cli"
+                        else self._opencode
                     )(tmp, mission, system, wall)
                 spent_usd += cost
                 if not text.strip():
@@ -197,6 +204,23 @@ class Proposer:
             attempts=tries,
             cost_usd=spent_usd,
         )
+
+    def _subscription(
+        self, cwd: Path, mission: str, system: str, wall: int
+    ) -> tuple[str, float, str]:
+        from ..subscription import invoke
+
+        audit = (self.audit_dir or config.RUNS / "_audit") / "transport" / uuid.uuid4().hex
+        result = invoke(
+            self.spec.kind,
+            self.spec.model,
+            (system + "\n\n" + mission).strip(),
+            workspace=cwd,
+            audit=audit,
+            effort=self.spec.effort,
+            timeout=wall,
+        )
+        return result["result"], 0.0, ""
 
     def _claude_cli(
         self, cwd: Path, mission: str, system: str, wall: int

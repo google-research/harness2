@@ -175,8 +175,23 @@ def main(argv: list[str] | None = None) -> int:
     ns = C.summary_namespace(adapter, args.k, seed=args.seed)
     ns_dir = C.runs_root_for(adapter) / ns
     identity = ns_dir / "config.json"
-    if identity.is_file() and json.loads(identity.read_text()).get("judge") != config.JUDGE_MODEL:
+    saved = json.loads(identity.read_text()) if identity.is_file() else {}
+    if saved.get("transport", "api") != config.TRANSPORT:
+        raise SystemExit("Judge transport changed; use the original experiment configuration")
+    if identity.is_file() and saved.get("judge") != config.JUDGE_MODEL:
         raise SystemExit("Judge model changed for this experiment; choose a new HARNESS2_RUNS_DIR")
+    if config.SUBSCRIPTION:
+        from ..subscription import check_auth
+
+        version = check_auth(config.JUDGE_CHANNEL)
+        if (
+            saved.get("transport") != "subscription"
+            or saved.get("judge_channel") != config.JUDGE_CHANNEL
+            or saved.get("cli_versions", {}).get(config.JUDGE_CHANNEL) != version
+        ):
+            raise SystemExit(
+                "Judge transport/channel/CLI version changed; use the original experiment configuration"
+            )
     if not ns_dir.is_dir():
         raise SystemExit(
             f"nothing to judge: {ns_dir} does not exist — has the sweep `{ns}` run on this machine?"

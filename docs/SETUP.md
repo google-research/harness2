@@ -27,6 +27,10 @@ Keep the main Harness² environment active when running the commands below.
 
 ## Models and credentials
 
+For existing Claude Code and Codex subscriptions, see
+[native CLI subscriptions](SUBSCRIPTIONS.md). That opt-in LAB path supports macOS
+and does not require the API/Vertex configuration below.
+
 Copy `.env.example` to `.env` if you have not already done so. Set your Vertex AI
 project and model IDs, then authenticate:
 

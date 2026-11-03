@@ -223,6 +223,18 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    if config.SUBSCRIPTION:
+        from ..subscription import check_auth
+
+        identity.update(
+            transport="subscription",
+            improver_channel=config.DEFAULT_PROPOSER_CHANNEL,
+            judge_channel=config.JUDGE_CHANNEL,
+            cli_versions={
+                c: check_auth(c)
+                for c in {"codex_cli", config.DEFAULT_PROPOSER_CHANNEL, config.JUDGE_CHANNEL}
+            },
+        )
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

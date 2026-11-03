@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .. import config
 from ..core import library as LIB
 from ..core import schedule as SCHED
 from ..core.spec import BenchmarkAdapter
@@ -50,6 +51,12 @@ def make_adapter(
         raise ValueError(f"unknown bench {bench!r}; expected one of {BENCHES}")
     if substrate not in SUBSTRATES:
         raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
+    if config.SUBSCRIPTION:
+        if bench != "lab" or substrate != "cx" or subset:
+            raise ValueError("Subscription transport currently supports --bench lab --substrate cx")
+        from ..benchmarks.lab_subscription import SubscriptionLabAdapter
+
+        return SubscriptionLabAdapter(split_file=split_file)
     if bench == "wb":
         if subset not in WB_SUBSETS:
             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
@@ -102,7 +109,7 @@ def add_cell_args(p: argparse._ActionsContainer) -> None:
     )
     p.add_argument(
         "--substrate",
-        default="oc",
+        default="cx" if config.SUBSCRIPTION else "oc",
         choices=SUBSTRATES,
         help="task-executor substrate: oc (opencode) | cx (codex)",
     )

@@ -98,9 +98,12 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", VERTEX_REGION)
 
 
 SOLVER_MODEL_OC = env("HARNESS2_SOLVER_MODEL", "")
+TRANSPORT = env("HARNESS2_TRANSPORT", "api")
+SUBSCRIPTION = TRANSPORT == "subscription"
 SOLVER_MODEL_CX = env("HARNESS2_CODEX_MODEL", SOLVER_MODEL_OC.split("/", 1)[-1])
 IMPROVER_MODEL = env("HARNESS2_IMPROVER_MODEL", SOLVER_MODEL_OC)
 JUDGE_MODEL = env("HARNESS2_JUDGE_MODEL", "")
+JUDGE_CHANNEL = env("HARNESS2_JUDGE_CHANNEL", "claude_cli")
 
 DEPENDENCY_PINS = {
     "job-bench-eval": "fa03a17f9ff662f136798a274e10011c3aa00fd0",
@@ -172,14 +175,29 @@ WB_MAX_JOBS = {"oc": 1, "cx": 1}
 WB_MAX_TRIALS = {"oc": 2, "cx": 2}
 WB_MODEL_CONNECTION = "local_proxy"
 
-DEFAULT_PROPOSER_CHANNEL = "opencode"
-PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
+DEFAULT_PROPOSER_CHANNEL = env(
+    "HARNESS2_IMPROVER_CHANNEL", "claude_cli" if SUBSCRIPTION else "opencode"
+)
+PROPOSER_MODEL_BY_CHANNEL = {
+    kind: IMPROVER_MODEL for kind in ("opencode", "claude_cli", "codex_cli")
+}
 PHASE_WIDTH = 2
 TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2
 
 
 def validate_models(*, judge: bool = False) -> None:
+    if TRANSPORT not in ("api", "subscription"):
+        raise ConfigError("HARNESS2_TRANSPORT must be api or subscription")
+    if SUBSCRIPTION:
+        require("HARNESS2_CODEX_MODEL", needed_by="subscription executor")
+        require("HARNESS2_IMPROVER_MODEL", needed_by="subscription improver")
+        for channel in (DEFAULT_PROPOSER_CHANNEL, JUDGE_CHANNEL):
+            if channel not in ("claude_cli", "codex_cli"):
+                raise ConfigError("Subscription channels must be claude_cli or codex_cli")
+        if judge:
+            require("HARNESS2_JUDGE_MODEL", needed_by="subscription judge")
+        return
     require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
     if "/" not in SOLVER_MODEL_OC or "/" not in IMPROVER_MODEL:
         raise ConfigError("Executor and improver models must use OpenCode's provider/model syntax")

@@ -30,6 +30,8 @@ from harness2.demo import BASE_SCRIPT, DemoAdapter, DemoProposer
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
+        # The deterministic OpenCode test double must not inherit a user's live transport.
+        self.enterContext(patch.object(config, "SUBSCRIPTION", False))
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
