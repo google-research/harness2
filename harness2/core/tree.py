@@ -247,7 +247,9 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
                         f'{hf}: {event}[{i}] hook type must be "command" — '
                         f"async/prompt/agent hooks are skipped as 'not supported yet'"
                     )
-                elif not str(h.get("command", "")).strip():
+                elif not isinstance(h.get("command", ""), str):
+                    errs.append(f"{hf}: {event}[{i}] `command` must be a string")
+                elif not h.get("command", "").strip():
                     errs.append(f"{hf}: {event}[{i}] has an empty `command`")
 
 
