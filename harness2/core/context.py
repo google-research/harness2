@@ -202,10 +202,7 @@ def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
         if not f.is_file() or "__pycache__" in f.parts:
             continue
         rel = f.relative_to(src).as_posix()
-        if any(
-            fnmatch.fnmatch(rel, g.lstrip("./")) or fnmatch.fnmatch(rel, f"*/{g.lstrip('./')}")
-            for g in adapter.spec.leak_globs
-        ):
+        if _is_leak_path(rel, adapter.spec.leak_globs):
             continue
         t = dst / rel
         t.parent.mkdir(parents=True, exist_ok=True)
@@ -396,6 +393,23 @@ def _copy_tree(src: Path, dst: Path) -> int:
     return n
 
 
+def _leak_glob(pattern: str) -> str:
+    """A leak glob relative to the tree root: drop "./" and "/" prefixes, keep dotted names."""
+    pat = str(pattern).replace("\\", "/")
+    while pat.startswith(("./", "/")):
+        pat = pat.removeprefix("./").removeprefix("/")
+    return pat
+
+
+def _is_leak_path(rel: str, patterns: Sequence[str]) -> bool:
+    """True if the POSIX path `rel` matches a leak glob at the root or under any directory."""
+    for pattern in patterns:
+        pat = _leak_glob(pattern)
+        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, f"*/{pat}"):
+            return True
+    return False
+
+
 def assert_no_leak_paths(root: Path | str, patterns: Sequence[str]) -> None:
     """Reject benchmark-declared answer-key paths before a context reaches a model."""
     root = Path(root)
@@ -406,11 +420,8 @@ def assert_no_leak_paths(root: Path | str, patterns: Sequence[str]) -> None:
         if not p.is_file():
             continue
         rel = p.relative_to(root).as_posix()
-        for pattern in patterns:
-            pat = str(pattern).replace("\\", "/").lstrip("./")
-            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, f"*/{pat}"):
-                hits.append(rel)
-                break
+        if _is_leak_path(rel, patterns):
+            hits.append(rel)
     if hits:
         shown = ", ".join(sorted(hits)[:8])
         raise ValueError(f"answer-key path(s) would enter model context: {shown}")
