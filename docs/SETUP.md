@@ -149,19 +149,31 @@ Codex runs with its sandbox disabled. Review the
 
 ## Claude Code executor (JobBench)
 
-Claude Code is currently supported for JobBench only. It runs through Vertex AI
-with a pinned CLI and a fresh `CLAUDE_CONFIG_DIR` for every attempt; user-level
-Claude configuration, MCP servers, plugins, hooks, memory, and authentication are
-not inherited.
-
-Set a bare Claude model ID and install the JobBench cell:
+Claude Code is currently supported for JobBench only. By default it invokes
+`claude` on PATH and uses its saved login, including the operating system keychain.
+Run `claude auth login` first if necessary. No credentials are copied or extracted.
+Set `HARNESS2_CLAUDE_BIN` to select another executable. The model defaults to `sonnet`;
+set `HARNESS2_CLAUDE_MODEL` to override it.
 
 ```bash
-HARNESS2_CLAUDE_MODEL=<bare-vertex-claude-model-id>
 harness2-setup jb --substrate cc
 harness2-check --bench jb --substrate cc
 harness2 --bench jb --substrate cc --k 1 --mode parallel --max-tasks 1
 ```
+
+Preflight checks the installed version, required CLI flags and saved-login status
+without making a model call. Experiment identity records the actual CLI version,
+binary selection and authentication mode; a changed version requires a new run directory.
+Setup does not install or update the system CLI.
+
+For a pinned installation, set `HARNESS2_CLAUDE_RUNTIME=managed` before setup.
+For Vertex authentication, set `HARNESS2_CLAUDE_AUTH=vertex`, a bare Vertex model ID
+in `HARNESS2_CLAUDE_MODEL`, and the Google project/credentials. Vertex mode uses
+a fresh `CLAUDE_CONFIG_DIR` per attempt. Login mode retains the normal configuration
+location to find saved credentials: project-only settings and strict MCP flags
+restrict settings/server loading, but this mode does not promise isolation from
+all personal instructions, skills or memory. The improver still uses OpenCode and
+the judge retains its existing configuration; selecting `cc` changes the executor only.
 
 The editable surface is native Claude Code configuration: `CLAUDE.md`, project
 skills under `.claude/skills/`, project agents generated under

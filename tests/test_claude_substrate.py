@@ -70,7 +70,7 @@ class ClaudeSubstrateTests(unittest.TestCase):
             "HARNESS2_JUDGE_API_KEY": "secret",
             "GITHUB_TOKEN": "secret",
         }
-        with patch.object(config, "VERTEX_REGION", "us-east5"):
+        with patch.object(config, "VERTEX_REGION", "us-east5"), patch.object(config, "CLAUDE_AUTH", "vertex"):
             env = ClaudeSubstrate().exec_env(host, config_dir=self.root)
         for name in host.keys() - {"PATH"}:
             self.assertNotIn(name, env)
@@ -86,6 +86,16 @@ class ClaudeSubstrateTests(unittest.TestCase):
         self.assertIn("--no-session-persistence", argv)
         self.assertEqual(argv[argv.index("--setting-sources") + 1], "project")
         self.assertIn("--strict-mcp-config", argv)
+
+    def test_login_preserves_credential_location_without_provider_override(self):
+        host = {"HOME": "/user", "CLAUDE_CONFIG_DIR": "/custom/claude",
+                "ANTHROPIC_API_KEY": "fake", "CLAUDE_CODE_USE_VERTEX": "1"}
+        with patch.object(config, "CLAUDE_AUTH", "login"):
+            env = ClaudeSubstrate().exec_env(host, config_dir=self.root)
+        self.assertEqual(env["HOME"], "/user")
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], "/custom/claude")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("CLAUDE_CODE_USE_VERTEX", env)
 
     def test_renderer_and_terminal_failure_detection(self):
         stream = self.root / "events.jsonl"

@@ -108,7 +108,7 @@ def main(argv=None):
                 )
         if args.substrate == "cx":
             install.codex(dry_run=dry)
-        elif args.substrate == "cc":
+        elif args.substrate == "cc" and config.CLAUDE_RUNTIME == "managed":
             install.claude(dry_run=dry)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
         p.exit(1, f"setup failed: {exc}\n")

@@ -9,9 +9,8 @@
 """Claude Code as a solver substrate.
 
 The editable tree stays native to Claude Code: CLAUDE.md, project skills,
-project agents, scripts and project hooks.  Every rollout uses an empty
-CLAUDE_CONFIG_DIR so a developer's personal configuration cannot affect an
-experiment.
+project agents, scripts and project hooks. Login mode uses the installed CLI's
+saved credentials; Vertex mode uses a temporary configuration directory.
 """
 
 from __future__ import annotations
@@ -184,12 +183,15 @@ class ClaudeSubstrate:
     def exec_env(
         self, base_env: Mapping[str, str], *, config_dir: Path, model: str | None = None
     ) -> dict[str, str]:
-        # Claude Code's solver is currently a Vertex cell. No API, OAuth, judge,
-        # host, or unrelated provider token is inherited by the agent subprocess.
+        # Remove provider overrides so login mode uses the CLI's saved login.
         env = config.scrub_env(base_env)
         for key in tuple(env):
             if key.startswith(("ANTHROPIC_", "CLAUDE_CODE_")) or key == "CLAUDECODE":
                 env.pop(key, None)
+        if config.CLAUDE_AUTH == "login":
+            # Keep the normal configuration location so the CLI can find its
+            # saved login/keychain. Do not copy or extract credentials.
+            return env
         env.update(
             {
                 "CLAUDE_CONFIG_DIR": str(config_dir),
@@ -222,11 +224,9 @@ class ClaudeSubstrate:
                 return bool(event.get("is_error")) or event.get("subtype") != "success"
         return True
 
-    def preflight(self) -> None:
-        config.require("GOOGLE_CLOUD_PROJECT", needed_by="Claude Code Vertex executor")
-        config.require("HARNESS2_CLAUDE_MODEL", needed_by="Claude Code executor")
-        if not Path(config.CLAUDE_BIN).is_file():
-            raise RuntimeError("Claude Code is not installed; run harness2-setup <bench> --substrate cc")
+    def cli_version(self) -> str:
+        if not shutil.which(str(config.CLAUDE_BIN)):
+            raise RuntimeError("Claude Code is missing; install claude on PATH or set HARNESS2_CLAUDE_BIN")
         try:
             result = subprocess.run(
                 [str(config.CLAUDE_BIN), "--version"],
@@ -236,12 +236,44 @@ class ClaudeSubstrate:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(f"Claude Code could not be started: {exc}") from exc
-        if result.returncode != 0 or config.CLAUDE_VERSION not in result.stdout:
+        if result.returncode != 0:
+            raise RuntimeError("Claude Code --version failed")
+        return result.stdout.strip()
+
+    def preflight(self) -> None:
+        if config.CLAUDE_RUNTIME not in ("system", "managed"):
+            raise ValueError("HARNESS2_CLAUDE_RUNTIME must be system or managed")
+        if config.CLAUDE_AUTH not in ("login", "vertex"):
+            raise ValueError("HARNESS2_CLAUDE_AUTH must be login or vertex")
+        if config.CLAUDE_AUTH == "vertex":
+            config.require("GOOGLE_CLOUD_PROJECT", needed_by="Claude Code Vertex executor")
+            config.require("HARNESS2_CLAUDE_MODEL", needed_by="Claude Code Vertex executor")
+        version = self.cli_version()
+        if config.CLAUDE_RUNTIME == "managed" and version.split()[0] != config.CLAUDE_VERSION:
             raise RuntimeError(
                 f"Claude Code install is stale; expected {config.CLAUDE_VERSION}, got "
-                f"{result.stdout.strip() or result.stderr.strip()!r}; rerun harness2-setup jb "
+                f"{version!r}; rerun harness2-setup jb "
                 "--substrate cc"
             )
+        result = subprocess.run(
+            [str(config.CLAUDE_BIN), "--help"], capture_output=True, text=True, timeout=30
+        )
+        required = ("--effort", "--output-format", "--no-session-persistence",
+                    "--permission-mode", "--setting-sources", "--strict-mcp-config")
+        if result.returncode or any(flag not in result.stdout for flag in required):
+            raise RuntimeError("Installed Claude Code lacks required noninteractive flags; update claude")
+        if config.CLAUDE_AUTH == "login":
+            result = subprocess.run(
+                [str(config.CLAUDE_BIN), "auth", "status", "--json"],
+                env=self.exec_env(config.os.environ, config_dir=Path(".")),
+                capture_output=True, text=True, timeout=30,
+            )
+            try:
+                logged_in = json.loads(result.stdout).get("loggedIn") is True
+            except (ValueError, AttributeError):
+                logged_in = False
+            if result.returncode or not logged_in:
+                raise RuntimeError("Claude Code is not logged in; run claude auth login")
 
 
 _TRUNC_FMT = "…(+{n} chars — render truncation)"

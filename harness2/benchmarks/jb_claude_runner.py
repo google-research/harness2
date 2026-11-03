@@ -78,7 +78,10 @@ def _attempt(
         result = subprocess.run(
             argv,
             cwd=workspace,
-            env=cfg.substrate.exec_env(os.environ, config_dir=Path(home), model=cfg.model),
+            env={
+                **cfg.substrate.exec_env(os.environ, config_dir=Path(home), model=cfg.model),
+                **runner._isolation_env(workspace, os.environ.get("PATH", os.defpath)),
+            },
             stdin=subprocess.DEVNULL,
             stdout=stdout,
             stderr=stderr,

@@ -228,7 +228,9 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "seed": args.seed,
     }
     if args.substrate == "cc":
-        identity["executor_version"] = config.CLAUDE_VERSION
+        identity["executor_version"] = adapter.substrate.cli_version()
+        identity["executor_binary"] = str(config.CLAUDE_BIN)
+        identity["executor_auth"] = config.CLAUDE_AUTH
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():
