@@ -71,6 +71,8 @@ def main(argv=None):
     )
     p.add_argument("--port", type=int, default=0, help="default: the saved port, else a free one")
     args = p.parse_args(argv)
+    if not 0 <= args.port <= 65535:
+        p.error("--port must be between 0 and 65535")
 
     litellm = Path(sys.executable).with_name("litellm")
     if not litellm.is_file():
