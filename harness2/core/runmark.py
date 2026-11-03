@@ -123,10 +123,12 @@ def mark_complete(
 
 
 def read_mark(where: Path) -> dict | None:
+    """Read a completion marker, treating missing or non-object JSON as unusable."""
     try:
-        return json.loads((Path(where) / MARK).read_text())
+        payload = json.loads((Path(where) / MARK).read_text())
     except Exception:
         return None
+    return payload if isinstance(payload, dict) else None
 
 
 def is_complete(
