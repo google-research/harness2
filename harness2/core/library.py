@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -38,6 +39,40 @@ from .tree import SurfaceSpec
 
 def slug(task_id: str) -> str:
     return task_id.replace("/", "__")
+
+
+def parse_verdicts(edits: str) -> dict[str, list[str]]:
+    """component -> the verdicts recorded for it, in the order the rows appear.
+
+    The reflector's edit rows are five lines each (component, candidates, change,
+    observed, verdict). A component appears more than once when two candidates changed
+    it in different ways, and each row carries its own verdict.
+    """
+    out: dict[str, list[str]] = {}
+    component = ""
+    for line in str(edits or "").splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key, value = key.strip().lower(), value.strip()
+        if key == "component":
+            component = value
+        elif key == "verdict" and component:
+            out.setdefault(component, []).append(value)
+            component = ""
+    return out
+
+
+def verdict_summary(verdicts: dict[str, list[str]]) -> str:
+    """`component verdict` per component, `xN` where a component has several rows."""
+    bits = []
+    for component, rows in sorted(verdicts.items()):
+        counts = Counter(rows)
+        bits.append(
+            f"{component} "
+            + "/".join(f"{v} x{n}" if n > 1 else v for v, n in counts.most_common())
+        )
+    return "; ".join(bits)
 
 
 def has_experience(experience: dict | None) -> bool:
@@ -128,13 +163,16 @@ class Library:
         harness_tree.write_tree(self.surface, harness, d / "harness", stubs=False)
 
         exp = experience or {}
+        verdicts = parse_verdicts(str(exp.get("edits") or ""))
         lines = [
             f"# {task_id}",
             "",
             f"- adopted: `{label}`" + (f"  (run `{run_id}`)" if run_id else ""),
             f"- components: {_inventory(self.surface, harness)}",
-            "",
         ]
+        if verdicts:
+            lines.append(f"- **verdicts**: {verdict_summary(verdicts)}")
+        lines.append("")
         if why.strip():
             lines += ["## Why this was chosen", why.strip(), ""]
         if exp.get("edits"):
@@ -167,10 +205,15 @@ class Library:
         for name in names:
             ed = self.dir / "harnesses" / name
             cue = _field(ed / "EXPERIENCE.md", "cue")
+            verdicts = _field(ed / "EXPERIENCE.md", "verdicts")
             tree = harness_tree.read_tree(self.surface, ed / "harness")
             rows += [
                 f"## `harnesses/{name}/`",
                 f"- harness: `harnesses/{name}/harness/` — {_inventory(self.surface, tree)}",
+            ]
+            if verdicts:
+                rows.append(f"- verdicts: {verdicts}")
+            rows += [
                 f"- why:     `harnesses/{name}/EXPERIENCE.md`",
             ]
             if cue:
