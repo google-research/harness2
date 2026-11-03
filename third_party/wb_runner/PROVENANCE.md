@@ -9,3 +9,6 @@ log paths use the `harness2` namespace. Setup installs these agents and harness 
 
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.
+
+The OpenCode and Codex installers check the actual CLI version against the configured
+pin before accepting an existing mount or executable as benchmark-ready.

@@ -141,8 +141,14 @@ class OcAgent(BaseInstalledAgent):
                 'echo "  Override (degraded, not comparable): '
                 'WBBENCH_OC_ALLOW_NPM_FALLBACK=1" >&2; '
                 "exit 1; fi && "
-                "opencode --version && "
-                '{ command -v rg >/dev/null 2>&1 || '
+                'v="$(opencode --version)" && printf "%s\\n" "$v" && '
+                + (
+                    f'{{ [ "$v" = {shlex.quote(ver)} ] || '
+                    f'{{ echo "ERROR: opencode version $v does not match pinned '
+                    f'OPENCODE_VERSION {ver}" >&2; exit 1; }}; }} && '
+                    if ver else ""
+                )
+                + '{ command -v rg >/dev/null 2>&1 || '
                 '{ echo "ERROR: ripgrep (rg) not on PATH; OpenCode glob/grep would '
                 'attempt a run-time download and fail." >&2; exit 1; }; } && '
                 "rg --version | head -1"

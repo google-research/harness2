@@ -90,7 +90,7 @@ class CodexAgent(BaseInstalledAgent):
                 f'v="$(/usr/local/bin/codex --version 2>&1)" && '
                 f'echo "codex version: $v" && '
                 + (
-                    f'case "$v" in *"{want}"*) : ;; *) '
+                    f'case "$v" in "codex-cli {want}") : ;; *) '
                     f'echo "ERROR: mounted codex is \'$v\', pinned CODEX_VERSION is '
                     f'{want}. Refusing to run an unpinned build — point '
                     f'the Codex mount at a staged {want} dist or repin the '
