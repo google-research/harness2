@@ -321,7 +321,9 @@ def _write_pool(
                 (d / "rollout.md").write_text(
                     adapter.trajectory(roll.run_dir, obs_trunc=trunc), encoding="utf-8"
                 )
-
+            except Exception as exc:
+                (d / "rollout.md").write_text(f"(unavailable: {exc})", encoding="utf-8")
+            try:
                 produced = (
                     _listing_md(label, _listing(adapter, roll.run_dir))
                     if names_only
@@ -329,7 +331,7 @@ def _write_pool(
                 )
                 (d / "produced.md").write_text(produced, encoding="utf-8")
             except Exception as exc:
-                (d / "rollout.md").write_text(f"(unavailable: {exc})", encoding="utf-8")
+                (d / "produced.md").write_text(f"(unavailable: {exc})", encoding="utf-8")
         got.append(label)
     return got
 
