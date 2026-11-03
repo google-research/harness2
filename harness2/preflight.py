@@ -46,7 +46,10 @@ def check(adapter, *, judge=False) -> list[str]:
     for validate in (
         lambda: config.validate_models(judge=judge),
         adapter.tasks,
-        OpencodeSubstrate().preflight,
+        # The improver runs through OpenCode whatever the executor substrate is, so this
+        # checkout is always required -- but an opencode executor's own adapter.preflight
+        # below already demands it, and running it twice reports one defect as two issues.
+        OpencodeSubstrate().preflight if adapter.substrate.name != "oc" else (lambda: None),
         adapter.preflight,
     ):
         try:
