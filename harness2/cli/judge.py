@@ -156,6 +156,15 @@ def judge_bases(adapter, ns_dir: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run `_main`, printing a misconfiguration as one remediation line."""
+    try:
+        return _main(argv)
+    except (config.ConfigError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(
         prog="harness2.cli.judge", description=__doc__, formatter_class=C.HelpFormatter
     )

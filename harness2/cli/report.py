@@ -28,6 +28,7 @@ import json
 import sys
 from pathlib import Path
 
+from .. import config
 from ..core import report as R
 from ..core import schedule as SCHED
 from . import _common as C
@@ -56,6 +57,15 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run `_main`, printing a misconfiguration as one remediation line."""
+    try:
+        return _main(argv)
+    except (config.ConfigError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _main(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(
         prog="harness2.cli.report", description=__doc__, formatter_class=C.HelpFormatter
     )
