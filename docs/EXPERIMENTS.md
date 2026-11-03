@@ -110,6 +110,13 @@ tool setting. Report the restrictions used alongside results.
 
 ## Results and resume
 
+Concurrent sweeps sharing a domain's experience library wait for the active
+domain stream to finish, then check cached tasks for resume. Ownership covers
+the whole stream, including pruning and replaying prior entries, so another
+process cannot remove lessons while a task reads them. Different domains and
+disjoint mode libraries remain independent. Lock files stay outside the
+libraries served to models and are released automatically when a process exits.
+
 The default output roots are `runs/lab/`, `runs/jb/`, and
 `runs/wb/<subset>/`. They contain task summaries, execution artifacts, adopted
 harnesses, reflection notes, and graded results.

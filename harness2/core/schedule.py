@@ -763,41 +763,42 @@ def run_domain(
         "failed": 0,
         "tasks": [],
     }
-    for i, tid in enumerate(task_ids, 1):
-        try:
-            for lib in libs.values():
-                lib.retain(task_ids[: i - 1])
-            before = {mode: len(lib.entries()) for mode, lib in libs.items()}
-            r = run_task(
-                tid,
-                k,
-                adapter=adapter,
-                prop=prop,
-                runs_root=runs_root,
-                modes=modes,
-                seed=seed,
-                tag=tag,
-                libraries=libs,
-                selector_prop=selector_prop,
-                pool_policy=pool_policy,
-            )
-            if r.status in ("ok", "skipped"):
-                out["done"] += 1
-                row = {"task": tid, "status": r.status, "library_entries_before": before}
-            else:
+    with library_store.lock_streams(list(libs.values())):
+        for i, tid in enumerate(task_ids, 1):
+            try:
+                for lib in libs.values():
+                    lib.retain(task_ids[: i - 1])
+                before = {mode: len(lib.entries()) for mode, lib in libs.items()}
+                r = run_task(
+                    tid,
+                    k,
+                    adapter=adapter,
+                    prop=prop,
+                    runs_root=runs_root,
+                    modes=modes,
+                    seed=seed,
+                    tag=tag,
+                    libraries=libs,
+                    selector_prop=selector_prop,
+                    pool_policy=pool_policy,
+                )
+                if r.status in ("ok", "skipped"):
+                    out["done"] += 1
+                    row = {"task": tid, "status": r.status, "library_entries_before": before}
+                else:
+                    out["failed"] += 1
+                    row = {
+                        "task": tid,
+                        "status": r.status,
+                        "error": "; ".join(r.errors) if r.errors else r.status,
+                        "library_entries_before": before,
+                    }
+            except Exception as exc:
                 out["failed"] += 1
-                row = {
-                    "task": tid,
-                    "status": r.status,
-                    "error": "; ".join(r.errors) if r.errors else r.status,
-                    "library_entries_before": before,
-                }
-        except Exception as exc:
-            out["failed"] += 1
-            row = {"task": tid, "status": "exception", "error": f"{type(exc).__name__}: {exc}"}
-        out["tasks"].append(row)
-        err = f"  :: {row['error']}" if row.get("error") else ""
-        print(f"  [{domain}] {i}/{len(task_ids)} {row['status']:<12} {tid}{err}", flush=True)
+                row = {"task": tid, "status": "exception", "error": f"{type(exc).__name__}: {exc}"}
+            out["tasks"].append(row)
+            err = f"  :: {row['error']}" if row.get("error") else ""
+            print(f"  [{domain}] {i}/{len(task_ids)} {row['status']:<12} {tid}{err}", flush=True)
     return out
 
 

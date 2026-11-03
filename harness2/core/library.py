@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import re
 import shutil
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 from . import context
 from . import tree as harness_tree
@@ -52,6 +53,31 @@ def domain_dir(domain: str) -> str:
     around them collapse, so a domain without one maps to itself.
     """
     return re.sub(r"\s*[/\\]\s*", "__", domain).strip() or "unknown"
+
+
+@contextmanager
+def lock_streams(libraries: Sequence[Library]) -> Iterator[None]:
+    """Own each mutable library for a whole domain stream, including resume replay.
+
+    Lock files are siblings of the libraries so they never enter model context.
+    Path order avoids deadlocks for overlapping mode sets. The kernel releases
+    the locks when a worker exits, including abnormal termination.
+    """
+    import fcntl
+
+    paths = sorted(
+        {lib.dir.resolve().with_name(f".{lib.dir.name}.stream.lock") for lib in libraries}
+    )
+    with ExitStack() as stack:
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lock = stack.enter_context(path.open("a"))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(f"  waiting for active domain stream: {path}", flush=True)
+                fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 @dataclass
