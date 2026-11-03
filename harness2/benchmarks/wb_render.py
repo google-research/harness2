@@ -210,8 +210,10 @@ def _xlsx_cell(raw, cached) -> str:
         return ""
     s = raw if isinstance(raw, str) else str(raw)
     if not isinstance(raw, str):
-        if type(raw).__name__ in ("ArrayFormula", "DataTableFormula"):
+        if type(raw).__name__ == "ArrayFormula":
             s = getattr(raw, "text", None) or str(raw)
+        elif type(raw).__name__ == "DataTableFormula":
+            s = _data_table_formula(raw)
         else:
             return s
     if not s.startswith("="):
@@ -219,6 +221,24 @@ def _xlsx_cell(raw, cached) -> str:
     if cached is None or (isinstance(cached, str) and cached == ""):
         return f"formula:{s} -> {_XLSX_NO_CACHE}"
     return f"formula:{s} = {cached}"
+
+
+def _data_table_formula(raw) -> str:
+    """The `=TABLE(row_input,col_input)` Excel shows for a what-if data table cell.
+
+    openpyxl keeps no formula text for one and its str() is an object repr carrying a memory
+    address; the flags arrive as the XML attribute strings, so "0" must read as false.
+    """
+
+    def flag(value) -> bool:
+        return value is True or str(value).strip().lower() in ("1", "true")
+
+    r1, r2 = getattr(raw, "r1", None) or "", getattr(raw, "r2", None) or ""
+    if flag(getattr(raw, "dt2D", False)):
+        return f"=TABLE({r1},{r2})"
+    if flag(getattr(raw, "dtr", False)):
+        return f"=TABLE({r1},)"
+    return f"=TABLE(,{r1})"
 
 
 def _pptx_text(path: Path, display_name: str) -> str:
