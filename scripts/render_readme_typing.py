@@ -43,11 +43,15 @@ COMMANDS = (
 
 
 def find_font(requested):
-    candidates = [requested] if requested else [
-        "/System/Library/Fonts/Menlo.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
-    ]
+    candidates = (
+        [requested]
+        if requested
+        else [
+            "/System/Library/Fonts/Menlo.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
+        ]
+    )
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             return candidate
@@ -64,12 +68,16 @@ def render_frame(font_path, command, length, cursor=True):
         raise SystemExit("Setup command is too long for the image width.")
     draw.rounded_rectangle(
         (SCALE, SCALE, (WIDTH - 1) * SCALE, (HEIGHT - 1) * SCALE),
-        radius=10 * SCALE, fill=BACKGROUND, outline=BORDER, width=SCALE,
+        radius=10 * SCALE,
+        fill=BACKGROUND,
+        outline=BORDER,
+        width=SCALE,
     )
     # Minimal window controls stay on the same row as the text.
     for x, color in ((21, "#63708b"), (33, "#8b7daf"), (45, "#b39ace")):
         draw.ellipse(
-            ((x - 3) * SCALE, 29 * SCALE, (x + 3) * SCALE, 35 * SCALE), fill=color,
+            ((x - 3) * SCALE, 29 * SCALE, (x + 3) * SCALE, 35 * SCALE),
+            fill=color,
         )
     draw.line((61 * SCALE, 20 * SCALE, 61 * SCALE, 44 * SCALE), fill=BORDER, width=SCALE)
     baseline = 39 * SCALE
@@ -84,7 +92,8 @@ def render_frame(font_path, command, length, cursor=True):
     if cursor:
         right = text_x + draw.textlength(visible, font=mono) + 3 * SCALE
         draw.rectangle(
-            (right, 21 * SCALE, right + 2 * SCALE, 43 * SCALE), fill=PURPLE,
+            (right, 21 * SCALE, right + 2 * SCALE, 43 * SCALE),
+            fill=PURPLE,
         )
     return canvas
 
@@ -126,14 +135,21 @@ def main():
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(
-        args.output, save_all=True, append_images=frames[1:], duration=durations,
-        loop=0, disposal=1, optimize=False,
+        args.output,
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        disposal=1,
+        optimize=False,
     )
     if args.preview:
         stills[-1].save(args.preview)
-    print(f"Saved {args.output}: {WIDTH * SCALE}x{HEIGHT * SCALE} "
-          f"(display {WIDTH}x{HEIGHT}), {sum(durations) / 1000:.2f}s, "
-          f"{args.output.stat().st_size / 1024:.0f} KiB")
+    print(
+        f"Saved {args.output}: {WIDTH * SCALE}x{HEIGHT * SCALE} "
+        f"(display {WIDTH}x{HEIGHT}), {sum(durations) / 1000:.2f}s, "
+        f"{args.output.stat().st_size / 1024:.0f} KiB"
+    )
 
 
 if __name__ == "__main__":
