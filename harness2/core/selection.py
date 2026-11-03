@@ -421,6 +421,7 @@ def reflect_adoption(
         task_id,
         list(candidates.values()),
         harness_dir=harnesses / sel.chosen_label,
+        base_harness_dir=adapter.base_harness(),
         pool=[
             (label, harnesses / label, rollout)
             for label, rollout in candidates.items()
@@ -428,7 +429,6 @@ def reflect_adoption(
         ],
         decisions=decisions,
     )
-    shutil.copytree(adapter.base_harness(), root / "base_harness")
     (root / "adoption.json").write_text(
         json.dumps(
             {

@@ -55,6 +55,7 @@ class ContextTree:
     deliverables_mode: str = "contents"
     source_files: int = 0
     decisions: int = 0
+    pool_reference: str = "harness"
 
     @property
     def layout(self) -> str:
@@ -86,13 +87,18 @@ class ContextTree:
                 )
         if self.harness_files:
             lines.append(
-                f"context/harness/                the harness you are editing "
-                f"({self.harness_files} files)"
+                f"context/harness/                the current harness ({self.harness_files} files)"
             )
+        if self.pool_reference == "base_harness":
+            lines.append("context/base_harness/           the original base for pool comparisons")
         if self.pool:
             lines.append(
                 f"context/pool/                   {len(self.pool)} candidates, each "
                 f"with its harness and its rollout"
+            )
+            lines.append(
+                f"context/pool/<label>/harness.diff  context/{self.pool_reference}/ -> "
+                "context/pool/<label>/harness/; empty means no textual changes"
             )
         if self.library:
             lines.append(
@@ -109,6 +115,7 @@ def build(
     rollouts: Sequence[RunView] = (),
     *,
     harness_dir: Path | None = None,
+    base_harness_dir: Path | None = None,
     library_dir: Path | None = None,
     pool: Sequence[tuple[str, Path, RunView | None]] = (),
     decisions: Mapping[str, str] | None = None,
@@ -120,6 +127,9 @@ def build(
     Runs inside `recursion._run_stage`'s failure domain, so an adapter bug raised here is
     recorded as a stage error; only the trajectory and deliverable readers are caught,
     because their failure is itself evidence.
+
+    Pool diffs use the copied `base_harness_dir` when supplied (reflection), otherwise
+    the copied `harness_dir` (the stage's current checkpoint).
     """
     dest = Path(dest)
 
@@ -155,7 +165,13 @@ def build(
         assert_no_leak_paths(harness_dir, adapter.spec.leak_globs)
         n_h = _copy_tree(Path(harness_dir), dest / "harness")
 
-    got_p = _write_pool(dest, pool, adapter, trunc, names_only)
+    reference_dir = dest / "harness"
+    if base_harness_dir is not None:
+        assert_no_leak_paths(base_harness_dir, adapter.spec.leak_globs)
+        reference_dir = dest / "base_harness"
+        shutil.copytree(base_harness_dir, reference_dir)
+
+    got_p = _write_pool(dest, pool, adapter, trunc, names_only, reference_dir)
 
     lib = False
     if library_dir and Path(library_dir).is_dir() and any(Path(library_dir).iterdir()):
@@ -185,6 +201,7 @@ def build(
         deliverables_mode=("names" if names_only else "contents"),
         source_files=source_files,
         decisions=len(decisions or {}),
+        pool_reference=reference_dir.name,
     )
 
 
@@ -293,6 +310,7 @@ def _write_pool(
     adapter,
     trunc: int,
     names_only: bool,
+    reference_dir: Path,
 ) -> list[str]:
     """Write each pool candidate's harness and rollout; return the labels written."""
     got: list[str] = []
@@ -303,16 +321,16 @@ def _write_pool(
             assert_no_leak_paths(cand_dir, adapter.spec.leak_globs)
             _copy_tree(Path(cand_dir), d / "harness")
             surface = adapter.substrate.surface()
-            reference = harness_tree.read_tree(surface, dest / "harness")
-            candidate = harness_tree.read_tree(surface, cand_dir)
+            reference = harness_tree.read_tree(surface, reference_dir)
+            candidate = harness_tree.read_tree(surface, d / "harness")
             diff = "".join(
                 line
                 for name in sorted(reference.keys() | candidate.keys())
                 for line in difflib.unified_diff(
                     reference.get(name, "").splitlines(keepends=True),
                     candidate.get(name, "").splitlines(keepends=True),
-                    fromfile=f"current/{name}",
-                    tofile=f"{label}/{name}",
+                    fromfile=f"context/{reference_dir.name}/{name}",
+                    tofile=f"context/pool/{label}/harness/{name}",
                 )
             )
             (d / "harness.diff").write_text(diff, encoding="utf-8")
@@ -538,7 +556,9 @@ def mission(tree: ContextTree, *, job: str) -> str:
         "",
         "Read `task.md` and the current harness first. Inventory every available rollout "
         "or candidate and inspect each at least once before deciding. For a candidate, "
-        "compare what changed from its editing baseline, what behavior changed in its "
+        "read the diff's named reference and target snapshots; a historical candidate "
+        "may be compared with a later checkpoint rather than its original editing baseline. "
+        "Compare the harness changes, what behavior changed in its "
         "rollout, what improved, and what regressed or remained unresolved. Then "
         "deep-read the evidence relevant to any edit. Cite the specific trajectory "
         "moment behind every change; one you cannot trace to a moment is speculation.",
