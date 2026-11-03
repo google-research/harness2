@@ -82,7 +82,11 @@ def select(tasks: dict[str, str], split: str, path: Path | None, *, benchmark: s
         halves.append(set(ids))
     if halves[0] & halves[1]:
         raise ValueError(f"{path}: train and test overlap")
-    unknown = (halves[0] | halves[1]) - tasks.keys()
+    present = halves[0] | halves[1]
+    unknown = present - set(tasks)
     if unknown:
         raise ValueError(f"{path}: task IDs absent from the dataset: {sorted(unknown)[:5]}")
-    return sorted(halves[0] | halves[1] if split == "all" else data[split])
+    missing = set(tasks) - present
+    if missing:
+        raise ValueError(f"{path}: train/test omits task IDs from the dataset: {sorted(missing)[:5]}")
+    return sorted(present if split == "all" else data[split])
