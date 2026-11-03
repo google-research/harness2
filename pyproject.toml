@@ -30,6 +30,7 @@ harness2-report = "harness2.cli.report:main"
 harness2-setup = "harness2.cli.setup:main"
 harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"
+harness2-dashboard = "harness2.cli.dashboard:main"
 harness2-bridge = "harness2.cli.bridge:main"
 
 [tool.setuptools.packages.find]
