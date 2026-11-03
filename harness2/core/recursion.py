@@ -132,6 +132,7 @@ def _accept_tree(
             reserved_scripts=harness_tree.RESERVED_SCRIPTS | adapter.spec.reserved_scripts,
         )
         adapter.validate_tree(new)
+        context.assert_tree_has_no_leak_paths(new, adapter.spec.leak_globs)
         context.assert_tree_has_no_grader_verdicts(new)
     except ValueError as exc:
         return kept, str(exc)

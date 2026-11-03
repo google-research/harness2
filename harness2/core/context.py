@@ -33,7 +33,7 @@ import fnmatch
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from . import tree as harness_tree
 from .spec import BenchmarkAdapter, RunView
@@ -401,19 +401,35 @@ def assert_no_leak_paths(root: Path | str, patterns: Sequence[str]) -> None:
     root = Path(root)
     if not patterns or not root.is_dir():
         return
+    rels = (p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    hits = _leak_hits(rels, patterns)
+    if hits:
+        shown = ", ".join(hits[:8])
+        raise ValueError(f"answer-key path(s) would enter model context: {shown}")
+
+
+def assert_tree_has_no_leak_paths(tree: Mapping[str, str], patterns: Sequence[str]) -> None:
+    """The same tripwire on an agent-authored harness tree (rel -> body), before it can be
+    rolled or stored: such a tree could never afterwards be served as evidence.
+    """
+    hits = _leak_hits(tree, patterns)
+    if hits:
+        raise ValueError(
+            f"harness path(s) {', '.join(hits[:8])} match this benchmark's answer-key paths; "
+            f"rename the component -- files at these paths cannot be served as evidence"
+        )
+
+
+def _leak_hits(rels: Iterable[str], patterns: Sequence[str]) -> list[str]:
+    """The sorted paths that match a benchmark-declared answer-key glob."""
     hits: list[str] = []
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(root).as_posix()
+    for rel in rels:
         for pattern in patterns:
             pat = str(pattern).replace("\\", "/").lstrip("./")
             if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, f"*/{pat}"):
                 hits.append(rel)
                 break
-    if hits:
-        shown = ", ".join(sorted(hits)[:8])
-        raise ValueError(f"answer-key path(s) would enter model context: {shown}")
+    return sorted(hits)
 
 
 GRADER_VERDICT_MARKERS: tuple[str, ...] = (
