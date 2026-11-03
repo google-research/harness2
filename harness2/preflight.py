@@ -40,7 +40,13 @@ def check(adapter, *, judge=False) -> list[str]:
                 errors.append(f"{label} failed; {remedy}")
             return r.returncode == 0
         except (OSError, subprocess.TimeoutExpired) as exc:
-            errors.append(f"{label}: {type(exc).__name__}; see README.md")
+            if isinstance(exc, subprocess.TimeoutExpired):
+                where = exc.cmd[0]
+                why = f"no response in {exc.timeout}s"
+            else:
+                where = exc.filename or cmd[0]
+                why = exc.strerror or type(exc).__name__
+            errors.append(f"{label}: {why} ({where}); see README.md")
             return False
 
     for validate in (
