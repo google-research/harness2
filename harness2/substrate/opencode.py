@@ -356,26 +356,31 @@ def render_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int
         if not isinstance(ev, dict):
             continue
         err = ev.get("error")
-        if isinstance(err, dict):
-            msg = (
-                (err.get("data") or {}).get("message")
-                or err.get("message")
-                or json.dumps(err)[:300]
-            )
+        if err is not None:
+            if isinstance(err, dict):
+                data = err.get("data")
+                msg = (
+                    (data.get("message") if isinstance(data, dict) else None)
+                    or err.get("message")
+                    or json.dumps(err)[:300]
+                )
+            else:
+                msg = err if isinstance(err, str) else json.dumps(err)[:300]
             lines.append(f"[ERROR] {_clip(msg, 300)}")
             continue
         part = ev.get("part") if isinstance(ev.get("part"), dict) else ev
-        ptype = part.get("type", ev.get("type"))
+        ptype = part.get("type") or ev.get("type")
         if ptype in text_tags:
             txt = part.get("text") or part.get("content")
             if isinstance(txt, str) and txt.strip():
                 lines.append(f"[{text_tags[ptype]}] {_clip(txt, obs_trunc)}")
         elif ptype in ("tool", "tool_use", "tool_call", "tool-invocation"):
+            invocation = part.get("toolInvocation")
             name = (
                 part.get("tool")
                 or ev.get("tool")
                 or part.get("name")
-                or (part.get("toolInvocation") or {}).get("toolName")
+                or (invocation.get("toolName") if isinstance(invocation, dict) else None)
                 or "tool"
             )
             state = part.get("state") if isinstance(part.get("state"), dict) else part
