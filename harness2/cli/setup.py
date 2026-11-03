@@ -21,6 +21,7 @@ import shutil
 import subprocess
 
 from harness2 import config, install
+from harness2.substrate.codex import CodexSubstrate
 
 
 def main(argv=None):
@@ -35,8 +36,16 @@ def main(argv=None):
     p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
+    uses_codex = args.substrate == "cx" or config.DEFAULT_PROPOSER_CHANNEL == "codex_cli"
+    if uses_codex:
+        try:
+            CodexSubstrate().binary()
+        except config.ConfigError as exc:
+            p.error(str(exc))
     if args.subset and args.benchmark != "wb":
         p.error("--subset only applies to wb")
+    if args.benchmark == "wb" and args.substrate == "cx" and config.CODEX_AUTH_MODE == "chatgpt":
+        p.error("WorkBuddy containers require api mode; ChatGPT login is supported by native runners")
     dry = args.dry_run
     missing = install.missing_runners()
     if missing and not dry:
@@ -45,22 +54,29 @@ def main(argv=None):
         print(f"Note: {missing}")
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[args.benchmark]
     try:
+        need_opencode = args.substrate == "oc" or config.DEFAULT_PROPOSER_CHANNEL == "opencode"
+        if uses_codex and config.CODEX_AUTH_MODE == "chatgpt":
+            install.codex(dry_run=dry)
         if not dry:
-            for binary in ("git", "uv", "npm") + (
+            required = ("git", "uv")
+            if need_opencode or (uses_codex and config.CODEX_AUTH_MODE == "api"):
+                required += ("npm",)
+            for binary in required + (
                 ("docker", "curl") if args.benchmark == "wb" else ()
             ):
                 if not shutil.which(binary):
                     raise RuntimeError(f"Missing {binary}; see README.md")
-        install.clone("opencode", dry_run=dry)
-        install.patch("opencode", dry_run=dry)
-        install.run(
-            ["npm", "install", "--prefix", config.DEPENDENCIES / "tools", "bun@1.3.11"], dry_run=dry
-        )
-        install.run(
-            [config.BUN, "install", "--frozen-lockfile", "--ignore-scripts"],
-            cwd=config.OPENCODE_DIR,
-            dry_run=dry,
-        )
+        if need_opencode:
+            install.clone("opencode", dry_run=dry)
+            install.patch("opencode", dry_run=dry)
+            install.run(
+                ["npm", "install", "--prefix", config.DEPENDENCIES / "tools", "bun@1.3.11"], dry_run=dry
+            )
+            install.run(
+                [config.BUN, "install", "--frozen-lockfile", "--ignore-scripts"],
+                cwd=config.OPENCODE_DIR,
+                dry_run=dry,
+            )
         install.clone(name, dry_run=dry)
         install.patch(name, dry_run=dry)
         install.overlays(name, dry_run=dry)
@@ -104,7 +120,7 @@ def main(argv=None):
                     cwd=repo,
                     dry_run=dry,
                 )
-        if args.substrate == "cx":
+        if uses_codex and config.CODEX_AUTH_MODE != "chatgpt":
             install.codex(dry_run=dry)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
         p.exit(1, f"setup failed: {exc}\n")

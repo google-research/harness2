@@ -99,7 +99,11 @@ os.environ.setdefault("GOOGLE_CLOUD_LOCATION", VERTEX_REGION)
 
 SOLVER_MODEL_OC = env("HARNESS2_SOLVER_MODEL", "")
 SOLVER_MODEL_CX = env("HARNESS2_CODEX_MODEL", SOLVER_MODEL_OC.split("/", 1)[-1])
-IMPROVER_MODEL = env("HARNESS2_IMPROVER_MODEL", SOLVER_MODEL_OC)
+DEFAULT_PROPOSER_CHANNEL = env("HARNESS2_IMPROVER_CHANNEL", "opencode")
+IMPROVER_MODEL = env(
+    "HARNESS2_IMPROVER_MODEL",
+    SOLVER_MODEL_CX if DEFAULT_PROPOSER_CHANNEL == "codex_cli" else SOLVER_MODEL_OC,
+)
 JUDGE_MODEL = env("HARNESS2_JUDGE_MODEL", "")
 
 DEPENDENCY_PINS = {
@@ -162,6 +166,9 @@ CODEX_BASE_URL = env("HARNESS2_CODEX_BASE_URL", "")
 CODEX_CONTAINER_URL = env("HARNESS2_CODEX_CONTAINER_URL", CODEX_BASE_URL)
 VERTEX_PROXY_KEY = env("HARNESS2_CODEX_API_KEY", "")
 CODEX_HOME_DIR = DEPENDENCIES / "codex" / "home"
+CODEX_AUTH_MODE = env("HARNESS2_CODEX_AUTH_MODE", "api")
+CODEX_BIN = env("HARNESS2_CODEX_BIN", "codex")
+CODEX_LOGIN_HOME = env("HARNESS2_CODEX_HOME", "")
 
 WB_SOLVER_MODEL = "harness2/solver"
 WB_WEB_JUDGE = "harness2/judge"
@@ -172,18 +179,31 @@ WB_MAX_JOBS = {"oc": 1, "cx": 1}
 WB_MAX_TRIALS = {"oc": 2, "cx": 2}
 WB_MODEL_CONNECTION = "local_proxy"
 
-DEFAULT_PROPOSER_CHANNEL = "opencode"
-PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
+PROPOSER_MODEL_BY_CHANNEL = {
+    "opencode": IMPROVER_MODEL,
+    "claude_cli": IMPROVER_MODEL,
+    "codex_cli": IMPROVER_MODEL,
+}
 PHASE_WIDTH = 2
 TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2
 
 
-def validate_models(*, judge: bool = False) -> None:
-    require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
-    if "/" not in SOLVER_MODEL_OC or "/" not in IMPROVER_MODEL:
-        raise ConfigError("Executor and improver models must use OpenCode's provider/model syntax")
-    if any(m.startswith("google-vertex") for m in (SOLVER_MODEL_OC, IMPROVER_MODEL)):
+def validate_models(*, judge: bool = False, substrate: str = "oc") -> None:
+    from .core.spec import resolve_channel_model
+
+    if substrate == "cx":
+        if not SOLVER_MODEL_CX:
+            raise ConfigError("Set HARNESS2_CODEX_MODEL for Codex executor rollouts")
+    else:
+        require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
+        if "/" not in SOLVER_MODEL_OC:
+            raise ConfigError("OpenCode executor models must use provider/model syntax")
+    resolve_channel_model(None, None)
+    if not IMPROVER_MODEL:
+        raise ConfigError("Set HARNESS2_IMPROVER_MODEL before starting model sessions")
+    models = (SOLVER_MODEL_OC if substrate == "oc" else "", IMPROVER_MODEL)
+    if any(m.startswith("google-vertex") for m in models):
         if not VERTEX_PROJECT:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:

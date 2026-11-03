@@ -674,6 +674,10 @@ class WbAdapter:
     def __init__(
         self, subset: str = "office", *, substrate: str = "oc", split_file: Path | None = None
     ):
+        if substrate == "cx" and config.CODEX_AUTH_MODE == "chatgpt":
+            raise config.ConfigError(
+                "WorkBuddy containers require api mode; ChatGPT login is supported by native runners"
+            )
         self.split_file = split_file
         if subset not in SUBSETS:
             raise ValueError(f"unknown subset {subset!r}; one of {sorted(SUBSETS)}")

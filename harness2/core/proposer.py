@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from ..substrate.codex import CodexSubstrate
 from .spec import ChannelSpec
 
 SYSTEM_ARG_MAX = 120_000
@@ -104,7 +105,7 @@ class Proposer:
                     "ANTHROPIC_MODEL": self.spec.model,
                 }
             )
-        else:
+        elif self.spec.kind == "opencode":
             e.update(
                 {
                     "GOOGLE_VERTEX_PROJECT": self.project,
@@ -131,7 +132,10 @@ class Proposer:
         directory is destroyed -- e.g. "context/harness", which is how an edited tree comes back.
         """
 
-        cache_key = _call_fingerprint(label, mission, system, context_dir)
+        cache_label = label
+        if self.spec.kind == "codex_cli":
+            cache_label += f":codex_cli:{self.spec.model}:{self.spec.effort}:{config.CODEX_AUTH_MODE}"
+        cache_key = _call_fingerprint(cache_label, mission, system, context_dir)
         cached = self._cached(label, cache_key, require_workspace=bool(harvest))
         if cached is not None:
             self._calls.append(cached)
@@ -150,9 +154,17 @@ class Proposer:
                 if context_dir and Path(context_dir).is_dir():
                     shutil.copytree(context_dir, tmp / "context", dirs_exist_ok=True)
                 with _SEM if _SEM is not None else contextlib.nullcontext():
-                    text, cost, err = (
-                        self._claude_cli if self.spec.kind == "claude_cli" else self._opencode
-                    )(tmp, mission, system, wall)
+                    invoke = {
+                        "claude_cli": self._claude_cli,
+                        "opencode": self._opencode,
+                        "codex_cli": self._codex_cli,
+                    }[self.spec.kind]
+                    text, cost, err = invoke(tmp, mission, system, wall)
+                if self.spec.kind == "codex_cli" and self.audit_dir:
+                    events = tmp / "output/codex.jsonl"
+                    paths = self._paths(label, cache_key)
+                    if events.is_file():
+                        shutil.copyfile(events, paths["response"].with_suffix(".jsonl"))
                 spent_usd += cost
                 if not text.strip():
                     last = err or "empty reply"
@@ -197,6 +209,26 @@ class Proposer:
             attempts=tries,
             cost_usd=spent_usd,
         )
+
+    def _codex_cli(
+        self, cwd: Path, mission: str, system: str, wall: int
+    ) -> tuple[str, float, str]:
+        (cwd / "MISSION.md").write_text(
+            (f"{system}\n\n---\n\n" if system else "") + mission, encoding="utf-8"
+        )
+        out = cwd / "output"
+        try:
+            text = CodexSubstrate().run_session(
+                "Read MISSION.md and complete its instructions. Return the requested final response.",
+                cwd, self.spec.model, out, timeout=wall, reasoning_effort=self.spec.effort,
+                base_env=self.env(),
+            )
+        except RuntimeError as exc:
+            return "", 0.0, str(exc)
+        except subprocess.TimeoutExpired:
+            return "", 0.0, f"timeout after {wall}s"
+        # The CLI does not report subscription USD spend; zero is an unreported cost here.
+        return text, 0.0, "" if text.strip() else "Codex produced no final response"
 
     def _claude_cli(
         self, cwd: Path, mission: str, system: str, wall: int
@@ -371,6 +403,7 @@ class Proposer:
                     "attempts": r.attempts,
                     "wall_s": r.wall_s,
                     "cost_usd": r.cost_usd,
+                    **({"cost_reported": False} if r.channel == "codex_cli" else {}),
                     "error": r.error,
                 },
                 indent=2,

@@ -66,6 +66,11 @@ SUBSET=web bash scripts/run_workbuddy.sh --max-tasks 1
 When comparing budgets or modes, keep task selection, executor, improver, judge,
 and web access fixed. Use a distinct `HARNESS2_RUNS_DIR` when changing models or
 task selection; the saved configuration prevents incompatible resumes.
+Also record the installed Codex CLI version and authentication mode for native
+saved-login runs. API mode uses the existing unrestricted runner; saved-login
+mode uses workspace-write sandboxing. Keep these execution permissions fixed
+between reference executions and candidate probes, and separate experiments
+when switching modes.
 
 JobBench's dataset is resolved at download time rather than pinned to a commit.
 Setup records the downloaded Hugging Face revision in
@@ -103,8 +108,8 @@ hosts for the executor to reduce access to benchmark data and grading criteria:
 - `huggingface.co`, `hf.co`, and `*.hf.co`
 - `github.com` and `raw.githubusercontent.com`, for benchmark repositories
 
-Setup itself needs these hosts to download dependencies and data. Codex runs
-with its sandbox disabled, so apply restrictions at the network level, such as
+Setup itself needs these hosts to download dependencies and data. API-mode Codex
+runs with its sandbox disabled, so apply restrictions at the network level, such as
 an egress firewall or DNS policy on the executor host, rather than relying on a
 tool setting. Report the restrictions used alongside results.
 

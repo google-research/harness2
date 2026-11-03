@@ -105,6 +105,9 @@ gcloud auth application-default login
 
 See the [setup guide](docs/SETUP.md) for model settings, authentication
 alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
+Native Codex runs can also reuse an existing
+[ChatGPT login](docs/SETUP.md#saved-chatgpt-login-for-native-runs), with an
+optional `codex_cli` improvement channel and an opt-in model-backed local demo.
 
 ## Run a benchmark
 
@@ -165,8 +168,9 @@ reproducibility, and baseline comparisons.
 
 ## Web access
 
-Executor network access is unrestricted, and Codex runs with its sandbox
-disabled. Public benchmark rubrics may be accessible online. Before evaluation,
+Default executor network access is unrestricted, and API-mode Codex runs with
+its sandbox disabled. Saved-login Codex runs use workspace-write sandboxing.
+Public benchmark rubrics may be accessible online. Before evaluation,
 configure [network restrictions](docs/EXPERIMENTS.md#web-access) to prevent
 access to benchmark answers and grading criteria.
 

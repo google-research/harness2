@@ -33,6 +33,7 @@ CODEX_BIN = Path(os.environ.get("ADAPT_LABCX_CODEX_BIN",
 BASE_URL = os.environ.get("ADAPT_LABCX_BASE_URL", "")
 VERTEX_PROXY_KEY = os.environ.get("VERTEX_PROXY_KEY", "")
 DEFAULT_MODEL = os.environ.get("ADAPT_LABCX_MODEL", "")
+AUTH_MODE = os.environ.get("HARNESS2_CODEX_AUTH_MODE", "api")
 
 READ_DOC = REPO / "opencode" / "scripts" / "read_doc.py"
 
@@ -74,6 +75,16 @@ def scratch_paths(label: str, pid: int | None = None) -> tuple[Path, Path, Path]
     codex_home = _require_scratch(SCRATCH_BASE / "codex_home" / f"{label}__{pid}",
                                   "CODEX_HOME")
     return tmp_root, tmp_root / "ws", codex_home
+
+
+def overlaps_login_home(path: Path) -> bool:
+    """Account authentication is user-owned, even if it was placed under scratch."""
+    if AUTH_MODE != "chatgpt":
+        return False
+    home = Path(os.environ.get("HARNESS2_CODEX_HOME") or os.environ.get("CODEX_HOME")
+                or str(Path.home() / ".codex")).expanduser().resolve()
+    path = path.resolve()
+    return path == home or path in home.parents or home in path.parents
 
 
 def run_dir_for(run_id: str) -> Path:
@@ -210,7 +221,7 @@ def reap(hours: float) -> int:
             continue
         for d in sorted(base.iterdir()):
             try:
-                if d.is_dir() and d.stat().st_mtime < cutoff:
+                if d.is_dir() and d.stat().st_mtime < cutoff and not overlaps_login_home(d):
                     _require_scratch(d, "reap target")
                     shutil.rmtree(d, ignore_errors=True)
                     n += 1
@@ -233,6 +244,8 @@ def main(args) -> int:
     run_dir = run_dir_for(args.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     tmp_root, ws, codex_home = scratch_paths(label)
+    if any(overlaps_login_home(path) for path in (tmp_root, codex_home)):
+        raise SystemExit("saved Codex login overlaps rollout scratch; choose another ADAPT_LABCX_SCRATCH")
 
     def _die(signum, _frame):
         raise SystemExit(128 + signum)
@@ -256,17 +269,20 @@ def main(args) -> int:
         harness_dir = Path(args.harness_dir).resolve() if args.harness_dir else None
         installed = install_harness(ws, harness_dir)
 
-        codex_home.mkdir(parents=True)
-        (codex_home / "config.toml").write_text(
-            CONFIG_TOML_TEMPLATE.format(model=args.model, base_url=BASE_URL, workspace=ws),
-            encoding="utf-8")
+        if AUTH_MODE == "api":
+            codex_home.mkdir(parents=True)
+            (codex_home / "config.toml").write_text(
+                CONFIG_TOML_TEMPLATE.format(model=args.model, base_url=BASE_URL, workspace=ws),
+                encoding="utf-8")
 
         config = {
             "runner": "codex",
             "codex_bin": str(CODEX_BIN),
-            "codex_version": "codex-cli 0.144.6",
+            "codex_version": "installed CLI" if AUTH_MODE == "chatgpt" else "codex-cli 0.144.6",
             "model": args.model,
-            "model_chain": f"codex -> {BASE_URL} (Responses API)",
+            "model_chain": "codex -> saved ChatGPT login" if AUTH_MODE == "chatgpt"
+                           else f"codex -> {BASE_URL} (Responses API)",
+            "auth_mode": AUTH_MODE,
             "reasoning_effort": args.reasoning_effort,
             "task": args.task,
             "run_id": args.run_id,
@@ -275,20 +291,23 @@ def main(args) -> int:
             "harness_files": installed,
             "doc_parser": args.doc_parser,
             "workspace": str(ws),
-            "codex_home": str(codex_home),
+            "codex_home": os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+                          if AUTH_MODE == "chatgpt" else str(codex_home),
             "started_at": started,
         }
         (run_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
 
         env = os.environ.copy()
         env.pop("OPENAI_BASE_URL", None)     # would flip codex auth validation; unused anyway
-        env.pop("XDG_DATA_HOME", None)       # read_doc.py sandbox mode needs podman's store
+        if AUTH_MODE == "api":
+            env.pop("XDG_DATA_HOME", None)   # read_doc.py sandbox mode needs podman's store
         env.update({
-            "CODEX_HOME": str(codex_home),
             "VERTEX_PROXY_KEY": VERTEX_PROXY_KEY,
             "LAB_DOC_PARSER": args.doc_parser,
             "LAB_BENCH_ROOT": str(REPO),
         })
+        if AUTH_MODE == "api":
+            env["CODEX_HOME"] = str(codex_home)
         cmd = [
             "timeout", "--kill-after=30s", str(int(max(60, args.timeout))),
             str(CODEX_BIN), "exec", build_prompt(args.task, ws),
@@ -303,6 +322,13 @@ def main(args) -> int:
             "-C", str(ws),
             "--add-dir", str(ws),
         ]
+        if AUTH_MODE == "chatgpt":
+            from harness2.substrate.codex import CodexSubstrate
+            substrate = CodexSubstrate()
+            env = substrate.exec_env(env, codex_home=codex_home)
+            cmd = ["timeout", "--kill-after=30s", str(int(max(60, args.timeout))),
+                   *substrate.exec_argv(build_prompt(args.task, ws), ws, args.model,
+                                        reasoning_effort=args.reasoning_effort)]
         session_path = run_dir / "codex_session.jsonl"
         with open(session_path, "w", encoding="utf-8") as out, \
              open(run_dir / "codex_stderr.log", "w", encoding="utf-8") as err:

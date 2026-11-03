@@ -22,6 +22,7 @@ import subprocess
 
 from . import config
 from .install import PATCHES, missing_runners
+from .substrate.codex import CodexSubstrate
 from .substrate.opencode import OpencodeSubstrate
 
 
@@ -43,12 +44,17 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(f"{label}: {type(exc).__name__}; see README.md")
             return False
 
-    for validate in (
-        lambda: config.validate_models(judge=judge),
+    need_opencode = adapter.substrate.name == "oc" or config.DEFAULT_PROPOSER_CHANNEL == "opencode"
+    checks = [
+        lambda: config.validate_models(judge=judge, substrate=adapter.substrate.name),
         adapter.tasks,
-        OpencodeSubstrate().preflight,
         adapter.preflight,
-    ):
+    ]
+    if need_opencode:
+        checks.append(OpencodeSubstrate().preflight)
+    if config.DEFAULT_PROPOSER_CHANNEL == "codex_cli":
+        checks.append(lambda: CodexSubstrate().preflight(require_config=True))
+    for validate in checks:
         try:
             validate()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -57,7 +63,8 @@ def check(adapter, *, judge=False) -> list[str]:
     bench = adapter.spec.name.split("-", 1)[0]
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[bench]
     repo = config.DEPENDENCIES / name
-    for dependency in (name, "opencode"):
+    dependencies = (name, "opencode") if need_opencode else (name,)
+    for dependency in dependencies:
         target = config.DEPENDENCIES / dependency
         if (target / ".git").exists():
             try:
@@ -73,7 +80,7 @@ def check(adapter, *, judge=False) -> list[str]:
             f"{dependency} patch",
             ["git", "-C", target, "apply", "--reverse", "--check", patch],
         )
-    if not (config.OPENCODE_DIR / "node_modules").is_dir():
+    if need_opencode and not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
     if any(

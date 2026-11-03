@@ -208,6 +208,7 @@ def _main(args: argparse.Namespace) -> int:
 
 def _check_identity(adapter, args, namespace_dir: Path) -> None:
     """Prevent a resumed run or library from silently mixing models or task partitions."""
+    uses_codex = args.substrate == "cx" or config.DEFAULT_PROPOSER_CHANNEL == "codex_cli"
     identity = {
         "method_version": config.METHOD_VERSION,
         "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
@@ -216,13 +217,17 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "project": config.VERTEX_PROJECT,
         "location": config.VERTEX_REGION,
         "judge_endpoint": config.JB_JUDGE_API_BASE,
-        "endpoint": config.CODEX_BASE_URL if args.substrate == "cx" else "",
+        "endpoint": config.CODEX_BASE_URL if uses_codex else "",
         "split": args.split,
         "tasks": _stream_for(adapter, args)[1],
         "max_tasks": args.max_tasks,
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    if uses_codex and config.CODEX_AUTH_MODE != "api":
+        identity["codex_auth_mode"] = config.CODEX_AUTH_MODE
+    if config.DEFAULT_PROPOSER_CHANNEL != "opencode":
+        identity["improver_channel"] = config.DEFAULT_PROPOSER_CHANNEL
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

@@ -823,7 +823,8 @@ class JobBenchAdapter:
         env = self.substrate.exec_env(os.environ, codex_home=codex_home)
         env.update(
             {
-                "HARNESS2_CODEX_BIN": str(Path(config.CODEX_DIST) / "codex"),
+                "HARNESS2_CODEX_BIN": self.substrate.binary(),
+                "HARNESS2_CODEX_AUTH_MODE": config.CODEX_AUTH_MODE,
                 "TASK_IDS": task_id,
                 "LABEL": label,
                 "HARNESS_RENDER_DIR": str(install.staging_dir),
@@ -834,6 +835,8 @@ class JobBenchAdapter:
                 "VERTEX_PROXY_KEY": config.VERTEX_PROXY_KEY,
             }
         )
+        if config.CODEX_AUTH_MODE == "chatgpt":
+            env["PYTHONPATH"] = str(config.ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         self._run_runner(CX_RUNNER, env, wall=t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
 
@@ -979,7 +982,8 @@ class JobBenchAdapter:
                 f"upstream JobBench judge missing at {judge_py}; run scripts/setup_benchmark.py jb"
             )
         if self.substrate.name == "cx":
-            config.require("HARNESS2_CODEX_API_KEY", needed_by="JB codex cells")
+            if config.CODEX_AUTH_MODE == "api":
+                config.require("HARNESS2_CODEX_API_KEY", needed_by="JB codex cells")
             # The rollout reads the endpoint from CODEX_HOME/config.toml, not from the
             # environment the substrate preflight just probed; refuse to report ready
             # for an endpoint the run would never contact.

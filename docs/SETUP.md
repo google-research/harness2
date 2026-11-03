@@ -144,8 +144,63 @@ To use another Responses API endpoint, set `HARNESS2_CODEX_BASE_URL`,
 endpoint and model in `dependencies/codex/home/config.toml`; rerun setup after
 changing either. `harness2-check` reports stale configuration until then.
 
-Codex runs with its sandbox disabled. Review the
+In API mode, Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
+
+### Saved ChatGPT login for native runs
+
+The default `HARNESS2_CODEX_AUTH_MODE=api` uses the Responses endpoint described
+above. Set `HARNESS2_CODEX_AUTH_MODE=chatgpt` to use an existing Codex CLI login
+for native JobBench and LAB execution. The CLI manages authentication and token
+refresh; Harness² does not read or copy credentials. WorkBuddy's container
+executor does not support this mode.
+
+Install a current Codex CLI and run `codex login` with your ChatGPT account.
+Then select a model available to that account. For example:
+
+```bash
+export HARNESS2_CODEX_AUTH_MODE=chatgpt
+export HARNESS2_CODEX_MODEL=gpt-5.3-codex
+export HARNESS2_IMPROVER_CHANNEL=codex_cli
+codex login status
+```
+
+The improvement channel is independent of the executor. `codex_cli` runs the
+proposal, composition, selection, and reflection sessions through `codex exec`.
+Its model defaults to `HARNESS2_CODEX_MODEL`; set `HARNESS2_IMPROVER_MODEL` to use
+a different bare model ID. The existing `opencode` default is unchanged, and
+`claude_cli` is also selectable through `HARNESS2_IMPROVER_CHANNEL`.
+
+Account mode uses `codex` on `PATH`. Set `HARNESS2_CODEX_BIN` for another installed
+CLI and `HARNESS2_CODEX_HOME` for an existing authentication home; otherwise the
+CLI uses the inherited `CODEX_HOME` or its normal default. Setup checks
+`codex login status` and does not install the API-mode pinned Codex distribution
+or generate a provider configuration. Native account sessions ignore user
+configuration, use the OpenAI provider with saved ChatGPT authentication, and
+run in the workspace-write sandbox. Generated harness files and editable hooks
+retain their existing execution semantics.
+
+To exercise the real recursion workflow without installing a benchmark or a
+judge, run the opt-in Codex ledger demo:
+
+```bash
+harness2-demo --substrate cx --max-tasks 1 --k 1 --mode parallel \
+  --output runs/codex-login-demo
+```
+
+This starts real Codex sessions and consumes the account's model quota. JSONL
+trajectories include CLI-reported token usage. The CLI does not report monetary
+subscription spend: `codex_cli` audit records mark `cost_reported: false`; a zero
+USD field is not evidence of free usage. Use a new output directory when changing
+models or demo options. The default demo remains deterministic and offline.
+
+Native benchmarks use the same `--substrate cx` commands as API mode. When both
+the executor and improvement channel use Codex, setup and readiness checks omit
+the unused OpenCode toolchain. Benchmark datasets, document readers, and judges
+remain required. In particular, `harness2-check`, refinement preflight, and
+`harness2-judge` keep the benchmark's original judge configuration and scoring
+rules. A ChatGPT-based executor and improver do not make benchmark judging
+API-free; configure its judge separately as documented above.
 
 ## Network access during setup
 

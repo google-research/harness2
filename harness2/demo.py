@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import csv
+import shutil
 import subprocess
 import sys
 from decimal import Decimal
@@ -25,7 +26,8 @@ from pathlib import Path
 from . import config
 from .core import tree
 from .core.proposer import Proposer, Reply
-from .core.spec import BenchPrompts, BenchSpec, ChannelSpec
+from .core.spec import BenchPrompts, BenchSpec, ChannelSpec, resolve_channel_model
+from .substrate.codex import CodexSubstrate
 from .substrate.opencode import OpencodeSubstrate
 
 BASE_SCRIPT = """import csv
@@ -40,21 +42,30 @@ print(f'Total: {total:.2f}')
 
 
 class DemoAdapter:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, substrate: str = "oc"):
         self.root = root
-        self.substrate = OpencodeSubstrate()
-        channel = ChannelSpec("opencode", "local/deterministic")
+        if substrate not in ("oc", "cx"):
+            raise ValueError("demo substrate must be oc or cx")
+        self.substrate = CodexSubstrate() if substrate == "cx" else OpencodeSubstrate()
+        channel = (
+            resolve_channel_model("codex_cli", config.IMPROVER_MODEL or config.SOLVER_MODEL_CX)
+            if substrate == "cx" else ChannelSpec("opencode", "local/deterministic")
+        )
         self.spec = BenchSpec(
             name="demo",
             runs_root=root / "runs",
-            install_mode="workspace_config",
+            install_mode="codex_root" if substrate == "cx" else "workspace_config",
             prompts=BenchPrompts(work="reconcile signed amounts in a transaction ledger"),
             channels={"proposer": channel, "selector": channel},
             leak_globs=("reference_answer.txt",),
         )
         self.execution_count = 0
         base = {name: "" for name in self.substrate.surface().always_on}
-        base["systemprompt.md"] = "Reconcile the ledger using python scripts/summarize.py.\n"
+        prompt_file = "AGENTS.md" if substrate == "cx" else "systemprompt.md"
+        base[prompt_file] = (
+            "Reconcile the ledger using python3 scripts/summarize.py ledger.csv.\n"
+            if substrate == "cx" else "Reconcile the ledger using python scripts/summarize.py.\n"
+        )
         base["scripts/summarize.py"] = BASE_SCRIPT
         tree.write_tree(self.substrate.surface(), base, self.base_harness(), stubs=False)
         for task_id, amounts in (
@@ -90,6 +101,21 @@ class DemoAdapter:
         self.execution_count += 1
         run_dir = self.root / "executions" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+        if self.substrate.name == "cx":
+            workspace = run_dir / "workspace"
+            shutil.copytree(harness_dir or self.base_harness(), workspace, dirs_exist_ok=True)
+            shutil.copyfile(self.task_files(task_id) / "ledger.csv", workspace / "ledger.csv")
+            answer = self.substrate.run_session(
+                self.task_prompt(task_id) + " Run the reconciliation script and report its output.",
+                workspace, config.SOLVER_MODEL_CX, run_dir / "session", timeout=timeout or 300,
+            )
+            (run_dir / "answer.txt").write_text(answer, encoding="utf-8")
+            (run_dir / "trajectory.md").write_text(
+                self.substrate.read_trajectory(
+                    run_dir / "session/codex.jsonl", obs_trunc=50000, max_chars=200000
+                ), encoding="utf-8",
+            )
+            return run_dir
         script = (harness_dir or self.base_harness()) / "scripts/summarize.py"
         result = subprocess.run(
             [sys.executable, str(script), str(self.task_files(task_id) / "ledger.csv")],

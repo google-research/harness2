@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Mapping
@@ -117,6 +118,15 @@ class CodexSubstrate:
     def surface(self) -> SurfaceSpec:
         return CODEX_SURFACE
 
+    def binary(self) -> str:
+        if config.CODEX_AUTH_MODE not in ("api", "chatgpt"):
+            raise config.ConfigError("HARNESS2_CODEX_AUTH_MODE must be api or chatgpt")
+        if config.CODEX_AUTH_MODE == "chatgpt":
+            executable = os.path.expanduser(config.CODEX_BIN)
+            found = shutil.which(executable)
+            return str(Path(found).absolute()) if found else executable
+        return str(Path(config.CODEX_DIST) / "codex")
+
     def materialise(self, tree_dir: Path, spec, ctx: Mapping[str, str]) -> Install:
         """Stage exactly the codex_root entries for a copy to the workspace root; there is
         no render step, because the CLI injects AGENTS.md itself."""
@@ -154,8 +164,16 @@ class CodexSubstrate:
         Hook trust enables the editable hooks; JSON preserves ephemeral sessions.
         Callers use stdin=DEVNULL and `exec_env`.
         """
+        permissions = ["--dangerously-bypass-approvals-and-sandbox"]
+        if config.CODEX_AUTH_MODE == "chatgpt":
+            permissions = [
+                "--ignore-user-config",
+                "-c", 'forced_login_method="chatgpt"',
+                "-c", 'cli_auth_credentials_store="auto"',
+                "--sandbox", "workspace-write",
+            ]
         return [
-            str(Path(config.CODEX_DIST) / "codex"),
+            self.binary(),
             "exec",
             prompt,
             "--model",
@@ -163,7 +181,7 @@ class CodexSubstrate:
             "-c",
             f'model_reasoning_effort="{reasoning_effort}"',
             "--skip-git-repo-check",
-            "--dangerously-bypass-approvals-and-sandbox",
+            *permissions,
             "--dangerously-bypass-hook-trust",
             "--ephemeral",
             "--json",
@@ -180,6 +198,17 @@ class CodexSubstrate:
         """
         env = config.scrub_env(base_env)
         env.pop("OPENAI_BASE_URL", None)
+        binary = self.binary()
+        if config.CODEX_AUTH_MODE == "chatgpt":
+            for key in ("OPENAI_API_KEY", "CODEX_API_KEY"):
+                env.pop(key, None)
+            home = config.CODEX_LOGIN_HOME or env.get("CODEX_HOME")
+            if home:
+                home = str(Path(home).expanduser().absolute())
+                env["CODEX_HOME"] = home
+                env["HARNESS2_CODEX_HOME"] = home
+            env["HARNESS2_CODEX_BIN"] = binary
+            return env
         env["CODEX_HOME"] = str(codex_home)
         env["PATH"] = str(Path(config.CODEX_DIST) / "codex-path") + os.pathsep + env.get("PATH", "")
         return env
@@ -197,6 +226,62 @@ class CodexSubstrate:
             RunRequest(task_ref=task_ref, run_ids=tuple(run_ids), timeout=int(timeout)), install
         )
 
+    def run_session(
+        self, prompt: str, workspace: Path, model: str, output: Path, *,
+        timeout: int, reasoning_effort: str = "high", base_env: Mapping[str, str] | None = None,
+    ) -> str:
+        """Capture one native session, accepting only a completed turn with a final answer."""
+        if config.CODEX_AUTH_MODE == "api":
+            from ..install import codex_config_error
+
+            if stale := codex_config_error():
+                raise RuntimeError(stale)
+        output.mkdir(parents=True, exist_ok=True)
+        answer = output / "answer.md"
+        answer.unlink(missing_ok=True)
+        argv = self.exec_argv(prompt, workspace, model, reasoning_effort=reasoning_effort)
+        argv += ["--output-last-message", str(answer)]
+        env = self.exec_env(
+            os.environ if base_env is None else base_env, codex_home=config.CODEX_HOME_DIR
+        )
+        if config.CODEX_AUTH_MODE == "api":
+            env["VERTEX_PROXY_KEY"] = config.VERTEX_PROXY_KEY
+        result = None
+        try:
+            result = subprocess.run(
+                argv, cwd=workspace, env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            result = exc
+            raise
+        finally:
+            if result is not None:
+                for name, value in (("codex.jsonl", result.stdout),
+                                    ("codex.stderr.log", result.stderr)):
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8", errors="replace")
+                    (output / name).write_text(value or "", encoding="utf-8")
+        completed = False
+        failures = []
+        for line in result.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            completed |= event.get("type") == "turn.completed"
+            if event.get("type") in ("error", "turn.failed"):
+                failures.append(str(event.get("error") or event.get("message") or "failed turn"))
+        if result.returncode or failures or not completed:
+            detail = " | ".join(failures) or result.stderr or "no completed Codex turn"
+            raise RuntimeError(f"Codex rc={result.returncode}: {detail[-300:]}")
+        text = answer.read_text(encoding="utf-8") if answer.is_file() else ""
+        if not text.strip():
+            raise RuntimeError("Codex produced no final response")
+        return text
+
     def read_trajectory(
         self, stream_path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int = 2000
     ) -> str:
@@ -204,10 +289,40 @@ class CodexSubstrate:
             Path(stream_path), obs_trunc=obs_trunc, max_chars=max_chars, args_trunc=args_trunc
         )
 
-    def preflight(self, *, require_dist: bool = False, require_bridge: bool = False) -> None:
+    def preflight(
+        self, *, require_dist: bool = False, require_bridge: bool = False,
+        require_config: bool = False,
+    ) -> None:
         """Check the CLI and Responses endpoint, including container configuration."""
         from urllib.parse import urlparse
 
+        binary = self.binary()
+        if config.CODEX_AUTH_MODE == "chatgpt":
+            if require_bridge:
+                raise config.ConfigError(
+                    "WorkBuddy containers do not support HARNESS2_CODEX_AUTH_MODE=chatgpt; "
+                    "use api mode for WorkBuddy or a native JobBench/LAB runner"
+                )
+            resolved = shutil.which(binary)
+            if not resolved:
+                raise RuntimeError("Codex CLI not found; install it or set HARNESS2_CODEX_BIN")
+            try:
+                result = subprocess.run(
+                    [resolved, "login", "status"],
+                    env=self.exec_env(os.environ, codex_home=config.CODEX_HOME_DIR),
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError("Cannot check Codex login; run codex login status") from exc
+            if result.returncode or "chatgpt" not in (result.stdout + result.stderr).lower():
+                raise RuntimeError(
+                    "Saved ChatGPT authentication is unavailable; run codex login "
+                    "using the same CODEX_HOME or HARNESS2_CODEX_HOME"
+                )
+            return
         config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex Responses endpoint")
         config.require("HARNESS2_CODEX_API_KEY", needed_by="Codex endpoint authentication")
         url = urlparse(config.CODEX_BASE_URL)
@@ -222,6 +337,11 @@ class CodexSubstrate:
             raise RuntimeError(
                 "Set HARNESS2_CODEX_CONTAINER_URL to a container-accessible Responses endpoint"
             )
+        if require_config:
+            from ..install import codex_config_error
+
+            if stale := codex_config_error():
+                raise RuntimeError(stale)
         with socket.create_connection(
             (url.hostname, url.port or (443 if url.scheme == "https" else 80)), timeout=5
         ):

@@ -729,7 +729,8 @@ class LabAdapter:
 
             env = {
                 **_lab_env(),
-                "ADAPT_LABCX_CODEX_BIN": str(Path(config.CODEX_DIST) / "codex"),
+                "ADAPT_LABCX_CODEX_BIN": self.substrate.binary(),
+                "HARNESS2_CODEX_AUTH_MODE": config.CODEX_AUTH_MODE,
                 "ADAPT_LABCX_RESULTS": str(self._results_root),
                 "ADAPT_LABCX_SCRATCH": os.environ.get("ADAPT_LABCX_SCRATCH")
                 or str(config.RUNS / "lab" / "scratch"),
@@ -738,6 +739,9 @@ class LabAdapter:
             }
             if config.VERTEX_PROXY_KEY:
                 env["VERTEX_PROXY_KEY"] = config.VERTEX_PROXY_KEY
+            if config.CODEX_AUTH_MODE == "chatgpt":
+                env = self.substrate.exec_env(env, codex_home=config.CODEX_HOME_DIR)
+                env["PYTHONPATH"] = str(config.ROOT) + os.pathsep + env.get("PYTHONPATH", "")
 
             try:
                 run_detached(

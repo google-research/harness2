@@ -191,6 +191,14 @@ def workbuddy_models(*, dry_run=False):
 
 
 def codex(*, dry_run=False):
+    if config.CODEX_AUTH_MODE != "api":
+        from .substrate.codex import CodexSubstrate
+
+        if dry_run:
+            print("Check existing Codex CLI ChatGPT login (no credentials copied)")
+        else:
+            CodexSubstrate().preflight()
+        return
     root = config.DEPENDENCIES / "codex"
     run(
         ["npm", "install", "--prefix", root, f"@openai/codex@{config.CODEX_VERSION}"],
@@ -234,6 +242,12 @@ CODEX_PROVIDER = "harness2"
 
 
 def configure_codex(*, dry_run=False):
+    if config.CODEX_AUTH_MODE != "api":
+        from .substrate.codex import CodexSubstrate
+
+        if not dry_run:
+            CodexSubstrate().preflight()
+        return
     config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex setup")
     body = (
         f"model = {json.dumps(config.SOLVER_MODEL_CX)}\n"
@@ -257,6 +271,8 @@ def codex_config_error() -> str | None:
     endpoint is silently ignored and the run contacts the stale one. Returns None when
     the file agrees with the environment, else a message naming the remedy.
     """
+    if config.CODEX_AUTH_MODE == "chatgpt":
+        return None  # The CLI owns cached authentication; no generated provider config is used.
     path = config.CODEX_HOME_DIR / "config.toml"
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))

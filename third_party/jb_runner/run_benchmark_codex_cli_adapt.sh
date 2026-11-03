@@ -325,9 +325,7 @@ traj_file = sys.argv[6]
 # Enable editable hooks and preserve the ephemeral session as JSON.
 # Closed stdin prevents waiting for input on an inherited pipe.
 
-with open(log_file, 'a', encoding='utf-8') as log, open(traj_file, 'w', encoding='utf-8') as traj:
-    result = subprocess.run(
-        [
+command = [
             os.environ['HARNESS2_CODEX_BIN'], 'exec',
             prompt_content,
             '--model', model,
@@ -339,8 +337,22 @@ with open(log_file, 'a', encoding='utf-8') as log, open(traj_file, 'w', encoding
             '--json',
             '-C', working_dir,
             '--add-dir', working_dir,
-        ],
+        ]
+child_env = os.environ.copy()
+if os.environ.get('HARNESS2_CODEX_AUTH_MODE', 'api') == 'chatgpt':
+    from pathlib import Path
+    from harness2.substrate.codex import CodexSubstrate
+    substrate = CodexSubstrate()
+    command = substrate.exec_argv(
+        prompt_content, Path(working_dir), model, reasoning_effort=reasoning_effort
+    )
+    child_env = substrate.exec_env(child_env, codex_home=Path(working_dir))
+
+with open(log_file, 'a', encoding='utf-8') as log, open(traj_file, 'w', encoding='utf-8') as traj:
+    result = subprocess.run(
+        command,
         cwd=working_dir,
+        env=child_env,
         stdin=subprocess.DEVNULL,
         stdout=traj,
         stderr=log,
