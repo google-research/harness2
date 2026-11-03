@@ -54,7 +54,9 @@ bridge, still receive the full environment.
 
 The provided configuration uses Vertex Gemini executors and judges, and supports
 either Vertex Claude or Gemini as the improver. LAB also supports the upstream
-judge's direct providers when their credentials are configured. For WorkBuddy,
+judge's direct providers when their credentials are configured. For LAB,
+`HARNESS2_JUDGE_MODEL=anthropic/<model>` judges with Claude on Anthropic's API
+using `ANTHROPIC_API_KEY`. For WorkBuddy,
 setup generates the Gemini solver and judge routes from these settings; rerun
 setup after changing either model.
 

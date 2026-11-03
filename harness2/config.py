@@ -132,7 +132,11 @@ OPENCODE_DIR = DEPENDENCIES / "opencode"
 BUN = DEPENDENCIES / "tools" / "node_modules" / ".bin" / "bun"
 LAB_PYTHON = lab_repo() / ".venv" / "bin" / "python"
 LAB_JUDGE_MODEL = (
-    "vertex/" + JUDGE_MODEL if JUDGE_MODEL.startswith(("claude", "gemini")) else JUDGE_MODEL
+    JUDGE_MODEL.removeprefix("anthropic/")
+    if JUDGE_MODEL.startswith("anthropic/")
+    else "vertex/" + JUDGE_MODEL
+    if JUDGE_MODEL.startswith(("claude", "gemini"))
+    else JUDGE_MODEL
 )
 LAB_DELIV_CAP = 60000
 JB_JUDGE_PYTHON = jb_repo() / ".venv" / "bin" / "python"
