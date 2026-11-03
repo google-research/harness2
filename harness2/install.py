@@ -213,6 +213,20 @@ def codex(*, dry_run=False):
     configure_codex(dry_run=dry_run)
 
 
+def claude(*, dry_run=False):
+    """Install the pinned Claude Code CLI without reading or changing user configuration."""
+    run(
+        [
+            "npm",
+            "install",
+            "--prefix",
+            config.DEPENDENCIES / "claude",
+            f"@anthropic-ai/claude-code@{config.CLAUDE_VERSION}",
+        ],
+        dry_run=dry_run,
+    )
+
+
 def _share_with_containers(root: Path) -> None:
     """Make the staged dist readable by the container user it is bind-mounted for.
 

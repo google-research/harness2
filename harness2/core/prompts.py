@@ -292,6 +292,17 @@ Then reply with ONE `<notes>` block and nothing else: for each change, the momen
 trajectory that motivated it. The notes are read by a person, not applied by a machine."""
 
 
+_SURFACE_CLAUDE = (
+    _SURFACE_CODEX.replace("`AGENTS.md`", "`CLAUDE.md`")
+    .replace("`.agents/skills/", "`.claude/skills/")
+    .replace(".agents/skills/", ".claude/skills/")
+    .replace("`.codex/hooks.json`", "`.claude/settings.json`")
+    .replace(".codex/hooks.json", ".claude/settings.json")
+    .replace("named agent role", "project agent")
+    .replace("the runner installs each as a named agent\nrole", "the runner installs each as a project agent")
+)
+
+
 GENERALIZE = """\
 # GROUND IT IN THIS WORKSPACE, SHAPE IT FOR THE {DOMAIN_WORD_UPPER}
 
@@ -513,6 +524,15 @@ Hard rules, each one learned from a previous failure:
   surface."""
 
 
+_TTS_SURFACE_HEAD_CLAUDE = (
+    _TTS_SURFACE_HEAD_CODEX.replace("`AGENTS.md`", "`CLAUDE.md`")
+    .replace("`.agents/skills/", "`.claude/skills/")
+    .replace(".agents/skills/", ".claude/skills/")
+    .replace("`.codex/hooks.json`", "`.claude/settings.json`")
+    .replace(".codex/hooks.json", ".claude/settings.json")
+)
+
+
 _TTS_INV = """\
 # YOUR DIMENSION: INVARIANT -- how the agent works, independent of the subject
 
@@ -629,6 +649,13 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    cc_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_CLAUDE,
+            _surface_part(_SURFACE_CLAUDE, "A skill only exists", "THE DELIVERABLE'S SHAPE"),
+            _surface_part(_SURFACE_CLAUDE, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
     return {
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
@@ -657,6 +684,20 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "that trigger line in the same edit.",
             ),
             tts_surface=cx_tts,
+        ),
+        "claude": _SurfaceText(
+            surface_md=_SURFACE_CLAUDE,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__",
+                "hook in `.claude/settings.json` -- for example, blocking a finish before a "
+                "{deliverable} exists, with a corrective reason",
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "A skill exists only once its name appears in `CLAUDE.md` as a trigger: write "
+                "that trigger line in the same edit.",
+            ),
+            tts_surface=cc_tts,
         ),
     }
 

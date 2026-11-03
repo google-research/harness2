@@ -1,7 +1,7 @@
 # Setup guide
 
 Start with the [quick start](../README.md#install). This guide covers benchmark
-dependencies, model credentials, and the optional Codex executor. For individual
+dependencies, model credentials, and the optional Codex and Claude Code executors. For individual
 benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
@@ -146,6 +146,33 @@ changing either. `harness2-check` reports stale configuration until then.
 
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
+
+## Claude Code executor (JobBench)
+
+Claude Code is currently supported for JobBench only. It runs through Vertex AI
+with a pinned CLI and a fresh `CLAUDE_CONFIG_DIR` for every attempt; user-level
+Claude configuration, MCP servers, plugins, hooks, memory, and authentication are
+not inherited.
+
+Set a bare Claude model ID and install the JobBench cell:
+
+```bash
+HARNESS2_CLAUDE_MODEL=<bare-vertex-claude-model-id>
+harness2-setup jb --substrate cc
+harness2-check --bench jb --substrate cc
+harness2 --bench jb --substrate cc --k 1 --mode parallel --max-tasks 1
+```
+
+The editable surface is native Claude Code configuration: `CLAUDE.md`, project
+skills under `.claude/skills/`, project agents generated under
+`.claude/agents/`, scripts, and command hooks in `.claude/settings.json`.
+Harness² installs only the candidate's `hooks` setting; candidates cannot add
+permissions, environment variables, MCP servers, or other authority-expanding
+settings.
+
+Claude Code runs with permission prompts bypassed inside the benchmark workspace.
+Restrict executor network access before evaluation and do not point a run at an
+untrusted task set.
 
 ## Network access during setup
 
