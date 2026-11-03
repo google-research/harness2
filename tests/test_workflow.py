@@ -237,7 +237,8 @@ class WorkflowTests(unittest.TestCase):
             side_effect=RuntimeError("recursion failed on rerun"),
         ):
             failed_mode = self.run_stream(k=1)
-        self.assertEqual([row["status"] for row in failed_mode["tasks"]], ["partial", "skipped"])
+        # ledger-2 reads ledger-1's library entry, so it re-runs whenever that entry changes.
+        self.assertEqual([row["status"] for row in failed_mode["tasks"]], ["partial", "partial"])
         after_mode_err = json.loads(summary_path.read_text())
         for mode in ("agg", "seq"):
             self.assertFalse(after_mode_err["modes"][mode]["ok"])
@@ -264,20 +265,20 @@ class WorkflowTests(unittest.TestCase):
 
         with patch.object(Library, "add", autospec=True, side_effect=fail_ledger1):
             failed_lib = self.run_stream(k=1, proposer=PaidReflectionProposer(self.proposer.spec))
-        self.assertEqual([row["status"] for row in failed_lib["tasks"]], ["partial", "skipped"])
+        self.assertEqual([row["status"] for row in failed_lib["tasks"]], ["partial", "ok"])
         after_lib_err = json.loads(summary_path.read_text())
         for mode in ("agg", "seq"):
             self.assertFalse(after_lib_err["selections"][mode]["ok"])
             self.assertEqual(after_lib_err["selections"][mode]["usd"], 4.0)
 
         repaired = self.run_stream(k=1)
-        self.assertEqual([row["status"] for row in repaired["tasks"]], ["ok", "skipped"])
+        self.assertEqual([row["status"] for row in repaired["tasks"]], ["ok", "ok"])
         restored = json.loads(summary_path.read_text())
         (Path(restored["selections"]["agg"]["chosen_run_dir"]) / "answer.txt").unlink()
         with patch.object(self.adapter, "execute", side_effect=RuntimeError("executor down")):
             failed_base = self.run_stream(k=1)
         self.assertEqual(
-            [row["status"] for row in failed_base["tasks"]], ["base-failed", "skipped"]
+            [row["status"] for row in failed_base["tasks"]], ["base-failed", "base-failed"]
         )
         after_base_err = json.loads(summary_path.read_text())
         self.assertEqual(after_base_err["status"], "base-failed")

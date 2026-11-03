@@ -63,6 +63,9 @@ class Selection:
     experience: dict = field(default_factory=dict)
     trivial: bool = False
     evidence: str = "deliverable"
+    pool_kind: str = ""
+    asset_names: dict[str, list[str]] = field(default_factory=dict)
+    experience_prompted: bool = False
 
     def to_dict(self) -> dict:
         return {k: v for k, v in self.__dict__.items()}
@@ -111,6 +114,12 @@ def selection_pool(
     return {lbl: rollouts[lbl] for lbl in labels if lbl in rollouts}
 
 
+_TRAJECTORY_PREAMBLE = (
+    "(this task produced no file deliverable; the candidate is "
+    "shown as its own session transcript)\n\n"
+)
+
+
 def _render_pool(
     candidates: dict[str, RunView], adapter: BenchmarkAdapter, sel: Selection
 ) -> tuple[dict[str, RunView], dict[str, str]]:
@@ -143,10 +152,7 @@ def _render_pool(
             if not body.strip() or body.startswith("(no trajectory"):
                 continue
             pool[lbl] = rv
-            artifacts[lbl] = (
-                "(this task produced no file deliverable; the candidate is "
-                "shown as its own session transcript)\n\n" + body
-            )
+            artifacts[lbl] = _TRAJECTORY_PREAMBLE + body
         if pool:
             sel.evidence = "trajectory"
             sel.dropped = [d for d in sel.dropped if d not in pool]
@@ -186,14 +192,13 @@ def _write_candidates(
     pool: dict[str, RunView],
     cand_dir: Path,
     adapter: BenchmarkAdapter,
-) -> set[str]:
-    """Write one anonymised, untrimmed file per candidate; returns the asset names copied in.
+) -> None:
+    """Write one anonymised, untrimmed file per candidate; records the asset names copied in.
 
     The adapter names the asset files explicitly and only those are copied: a path into the
     run dir would also carry the grader's own output.
     """
     asset_fn = getattr(adapter, "deliverable_assets", None)
-    asset_names: set[str] = set()
     for anon, lbl in sel.id_map.items():
         text = artifacts[lbl]
         assets: list[Path] = []
@@ -208,15 +213,23 @@ def _write_candidates(
                 shutil.copy2(a, adir / a.name)
                 names.append(a.name)
             note = _assets_note(adapter, anon, names)
-            asset_names.update(names)
-        header = (
-            f"<!-- candidate {anon}: {len(text):,} chars, {text.count(chr(10)) + 1:,} lines. "
-            f"COMPLETE -- nothing trimmed. Navigate with grep/offsets; evaluating a "
-            f"candidate means opening the part that determines whether it works.\n"
-            f"{note}-->\n"
+            sel.asset_names[anon] = names
+        (cand_dir / f"{anon}.md").write_text(
+            _candidate_header(anon, text, note) + text, encoding="utf-8"
         )
-        (cand_dir / f"{anon}.md").write_text(header + text, encoding="utf-8")
-    return asset_names
+
+
+def _all_asset_names(per_candidate: dict[str, list[str]]) -> set[str]:
+    return {name for names in per_candidate.values() for name in names}
+
+
+def _candidate_header(anon: str, text: str, note: str) -> str:
+    return (
+        f"<!-- candidate {anon}: {len(text):,} chars, {text.count(chr(10)) + 1:,} lines. "
+        f"COMPLETE -- nothing trimmed. Navigate with grep/offsets; evaluating a "
+        f"candidate means opening the part that determines whether it works.\n"
+        f"{note}-->\n"
+    )
 
 
 def _evidence_block(
@@ -232,6 +245,86 @@ def _evidence_block(
         + f": {shown}\n"
     )
     return _assets_line(adapter, shown), a_evid
+
+
+def _select_mission(
+    bp: BenchPrompts,
+    adapter: BenchmarkAdapter,
+    n_candidates: int,
+    ids: str,
+    *,
+    pool_kind: str,
+    asset_names: set[str],
+) -> str:
+    reference_only = bool(getattr(adapter, "deliverable_assets_reference_only", False))
+    a_line, a_evid = _evidence_block(asset_names, adapter, reference_only)
+    return "\n\n".join(
+        [
+            P.select(bp, n_candidates, pool_kind=pool_kind, assets_note=a_line),
+            "# YOUR EVIDENCE\n\nIt is on disk. Read it -- do not answer from this message alone.\n\n"
+            "context/task.md                 the instructions\n"
+            "context/source/                 task source materials, when supplied\n"
+            f"context/candidates/<id>.md      one file per candidate: {ids}\n"
+            + a_evid
+            + (
+                "\nOpen every candidate before choosing"
+                + (
+                    ", INCLUDING the rendered evidence in its directory"
+                    if asset_names and not reference_only
+                    else ""
+                )
+                + f". Choose exactly one of: {ids}."
+            ),
+        ]
+    )
+
+
+def _experience_mission(bp: BenchPrompts, chosen_label: str, why: str, layout: str) -> str:
+    return "\n\n".join(
+        [
+            P.experience(bp),
+            "# WHAT HAPPENED\n\n"
+            f"Harness {chosen_label} was adopted. The selection reasoning was:\n\n{why}\n\n"
+            "context/adoption.json maps any anonymous IDs in that reasoning to rollout labels. "
+            "Compare context/harness/ with context/base_harness/ and the candidates in "
+            "context/pool/. Read the decisions and execution contrasts before writing.\n\n"
+            + layout,
+        ]
+    )
+
+
+def prompts_digest(task_id: str, adapter: BenchmarkAdapter, sel: dict, *, experience: bool) -> str:
+    """A digest of the selection and experience prompt templates one recorded selection was sent.
+
+    Task data (candidate text, reasoning, layout) is replaced by placeholders, and every other
+    input comes from the record, so the same record digests the same until a template changes.
+    """
+    bp = resolve_prompts(adapter, task_id)
+    h = hashlib.sha256()
+    n = int(sel.get("n_candidates") or 0)
+    if not sel.get("trivial") and n > 0:
+        per_candidate = sel.get("asset_names") or {}
+        names = _all_asset_names(per_candidate)
+        ids = ", ".join(sorted(_anon_id(i) for i in range(n)))
+        h.update(b"select\0")
+        h.update(
+            _select_mission(
+                bp, adapter, n, ids, pool_kind=str(sel.get("pool_kind") or ""), asset_names=names
+            ).encode()
+        )
+        h.update(b"\0")
+        if sel.get("evidence") == "trajectory":
+            h.update(_TRAJECTORY_PREAMBLE.encode())
+        for anon in sorted(_anon_id(i) for i in range(n)):
+            own = per_candidate.get(anon) or []
+            note = _assets_note(adapter, "{anon}", own) if own else ""
+            h.update(_candidate_header("{anon}", "", note).encode())
+            h.update(b"\0")
+    if experience:
+        h.update(b"experience\0")
+        h.update(_experience_mission(bp, "{label}", "{why}", "{layout}").encode())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 
 
 def _fallback(sel: Selection, pool: dict[str, RunView], pool_kind: str, exc: Exception) -> bool:
@@ -282,7 +375,7 @@ def run_selection(
     `pool_kind="finals"` adjusts only the wording shown to the selector and the failure
     fallback; the default is byte-identical to the mixed-pool behaviour.
     """
-    sel = Selection(task_id=task_id, mode=mode, k=k)
+    sel = Selection(task_id=task_id, mode=mode, k=k, pool_kind=pool_kind)
     bp = resolve_prompts(adapter, task_id)
 
     pool, artifacts = _render_pool(candidates, adapter, sel)
@@ -302,29 +395,12 @@ def run_selection(
 
     cand_dir = root / "candidates"
     cand_dir.mkdir(exist_ok=True)
-    asset_names = _write_candidates(sel, artifacts, pool, cand_dir, adapter)
+    _write_candidates(sel, artifacts, pool, cand_dir, adapter)
+    asset_names = _all_asset_names(sel.asset_names)
 
     ids = ", ".join(sorted(sel.id_map))
-    reference_only = bool(getattr(adapter, "deliverable_assets_reference_only", False))
-    a_line, a_evid = _evidence_block(asset_names, adapter, reference_only)
-    mission = "\n\n".join(
-        [
-            P.select(bp, len(pool), pool_kind=pool_kind, assets_note=a_line),
-            "# YOUR EVIDENCE\n\nIt is on disk. Read it -- do not answer from this message alone.\n\n"
-            "context/task.md                 the instructions\n"
-            "context/source/                 task source materials, when supplied\n"
-            f"context/candidates/<id>.md      one file per candidate: {ids}\n"
-            + a_evid
-            + (
-                "\nOpen every candidate before choosing"
-                + (
-                    ", INCLUDING the rendered evidence in its directory"
-                    if asset_names and not reference_only
-                    else ""
-                )
-                + f". Choose exactly one of: {ids}."
-            ),
-        ]
+    mission = _select_mission(
+        bp, adapter, len(pool), ids, pool_kind=pool_kind, asset_names=asset_names
     )
 
     context.assert_no_grader_verdicts(root)
@@ -443,6 +519,7 @@ def reflect_adoption(
     )
     context.assert_no_leak_paths(root, adapter.spec.leak_globs)
     context.assert_no_grader_verdicts(root)
+    sel.experience_prompted = True
     experience = _distil(
         task_id, sel, candidates, adapter=adapter, prop=prop, root=root, layout=evidence.layout
     )
@@ -463,16 +540,8 @@ def _distil(
     layout: str = "",
 ) -> dict:
     """Extract a supported lesson from the complete task-local improvement record."""
-    mission = "\n\n".join(
-        [
-            P.experience(bp or resolve_prompts(adapter, task_id)),
-            "# WHAT HAPPENED\n\n"
-            f"Harness {sel.chosen_label} was adopted. The selection reasoning was:\n\n{sel.why}\n\n"
-            "context/adoption.json maps any anonymous IDs in that reasoning to rollout labels. "
-            "Compare context/harness/ with context/base_harness/ and the candidates in "
-            "context/pool/. Read the decisions and execution contrasts before writing.\n\n"
-            + layout,
-        ]
+    mission = _experience_mission(
+        bp or resolve_prompts(adapter, task_id), sel.chosen_label, sel.why, layout
     )
     exp_root = root.with_name(root.name + ".experience")
     shutil.rmtree(exp_root, ignore_errors=True)
