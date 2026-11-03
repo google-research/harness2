@@ -23,14 +23,28 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
-def expected_rollouts(k: int) -> int:
-    """R = 4k: k shared base + 2k candidates + k finals."""
-    return 4 * int(k)
+def expected_labels(mode: str, k: int) -> tuple[set[str], set[str]]:
+    """(rollout labels, session labels) the plan for `mode` produces.
 
+    The budget identity is these STAGES, not a pair of counts: R = 4k rollouts (k
+    shared base + 2k dimension candidates + k finals) and P = 3k sessions (k INV +
+    k DOM + k finals). The finals are `agg1..aggk` in the parallel mode and
+    `c1..ck` in the sequential one.
 
-def expected_sessions(k: int) -> int:
-    """P = 3k: k INV + k DOM + k compositions (parallel: agg1..aggk; sequential: c1..ck)."""
-    return 3 * int(k)
+    Stating the plan once is what lets the ledger say that a run produced the right
+    number of stages under the wrong names -- a candidate the ledger counts that was
+    never actually produced.
+    """
+    n = int(k)
+    if mode == "agg":
+        finals = {f"agg{i}" for i in range(1, n + 1)}
+    elif mode == "seq":
+        finals = {f"c{i}" for i in range(1, n + 1)}
+    else:
+        raise ValueError(f"unknown mode {mode!r}; expected 'agg' or 'seq'")
+    candidates = {f"inv{i}" for i in range(1, n + 1)} | {f"dom{i}" for i in range(1, n + 1)}
+    base = {f"base{i}" for i in range(1, n + 1)}
+    return base | candidates | finals, candidates | finals
 
 
 class BudgetError(AssertionError):
@@ -87,23 +101,40 @@ class Ledger:
         return [e.label for e in self.entries if e.kind == kind]
 
     def assert_identity(self) -> None:
-        """Raise unless the recorded entries show exactly R=4k and P=3k with no duplicate
-        label. Duplicates are checked before the counts, because a duplicate can satisfy them.
+        """Raise unless the recorded entries are exactly the stages the plan produces.
+
+        Checking the labels, not the counts, is the point: a run that recorded the
+        right NUMBER of stages under the wrong names has lost a candidate, and a count
+        cannot see that. Comparing sets also covers the duplicate case, because a
+        repeated label means one expected stage is missing.
         """
-        want_r, want_p = expected_rollouts(self.k), expected_sessions(self.k)
+        want_rollouts, want_sessions = expected_labels(self.mode, self.k)
+        got_rollouts = {e.label for e in self.entries if e.kind == "rollout"}
+        got_sessions = {e.label for e in self.entries if e.kind == "session"}
+        if got_rollouts == want_rollouts and got_sessions == want_sessions:
+            return
         rl, sl = self.labels("rollout"), self.labels("session")
+        detail = [
+            f"{self.mode}-{self.k} {self.task_id}: "
+            f"R={self.R} (want {len(want_rollouts)}), P={self.P} (want {len(want_sessions)})",
+            f"  rollouts: {', '.join(rl) or '(none)'}",
+            f"  sessions: {', '.join(sl) or '(none)'}",
+        ]
+        for kind, want, got in (
+            ("rollout", want_rollouts, got_rollouts),
+            ("session", want_sessions, got_sessions),
+        ):
+            missing = sorted(want - got)
+            extra = sorted(got - want)
+            if missing or extra:
+                detail.append(
+                    f"  {kind} labels: missing {missing or '(none)'}, "
+                    f"unexpected {extra or '(none)'}"
+                )
         dupes = sorted(
             {label for label in rl if rl.count(label) > 1}
             | {label for label in sl if sl.count(label) > 1}
         )
-        if not dupes and self.R == want_r and self.P == want_p:
-            return
-        detail = [
-            f"{self.mode}-{self.k} {self.task_id}: "
-            f"R={self.R} (want {want_r}), P={self.P} (want {want_p})",
-            f"  rollouts: {', '.join(self.labels('rollout')) or '(none)'}",
-            f"  sessions: {', '.join(self.labels('session')) or '(none)'}",
-        ]
         if dupes:
             detail.append(
                 f"  DUPLICATE labels: {dupes} -- a repeated label means two stages "
@@ -113,17 +144,18 @@ class Ledger:
         raise BudgetError("\n".join(detail))
 
     def to_dict(self) -> dict:
+        want_rollouts, want_sessions = expected_labels(self.mode, self.k)
         return {
             "mode": self.mode,
             "task_id": self.task_id,
             "k": self.k,
             "R": self.R,
-            "expected_R": expected_rollouts(self.k),
+            "expected_R": len(want_rollouts),
             "P": self.P,
             "session_attempts": sum(
                 entry.attempts for entry in self.entries if entry.kind == "session"
             ),
-            "expected_P": expected_sessions(self.k),
+            "expected_P": len(want_sessions),
             "usd": self.usd,
             "rollout_usd": self.rollout_usd,
             "session_usd": self.session_usd,
