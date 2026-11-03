@@ -20,6 +20,7 @@ globs over one. Scheme: <bench>-<substrate>-<mode><k>[-s<seed>][-<tag>].
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -452,6 +453,26 @@ def _resume(
             fingerprint = sel.get("harness_fingerprint")
             if fingerprint and runmark.fingerprint(harness_dir) != fingerprint:
                 raise ValueError("adopted harness has changed")
+            if sel.get("library_fingerprint") != _library_fingerprint(mode_libs.get(mode), task_id):
+                raise ValueError("the library it read has changed")
+            try:
+                want_prompts = selection.prompts_digest(
+                    task_id, adapter, sel, experience=bool(sel.get("experience_prompted"))
+                )
+            except Exception as exc:
+                if sel.get("prompts_digest") != "":
+                    raise ValueError(
+                        f"prompts digest failed ({type(exc).__name__}: {exc})"
+                    ) from exc
+                # It also failed when recorded, so a re-run would pay again and fail the same way.
+                print(
+                    f"  [{task_id}] {mode}: prompts digest failed again "
+                    f"({type(exc).__name__}: {exc}); prompts not checked",
+                    flush=True,
+                )
+                want_prompts = ""
+            if sel.get("prompts_digest") != want_prompts:
+                raise ValueError("selection/experience prompts changed")
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"  [{task_id}] cannot resume {mode}: {exc}; re-running", flush=True)
             return False
@@ -520,6 +541,23 @@ def _roll_bases(
         return {rv.label: rv for rv in pool_r.map(_one, pending)}
 
 
+def _library_fingerprint(lib: library_store.Library | None, task_id: str) -> str:
+    """A digest of the library entries a task reads; "base" when there are none.
+
+    The task's own entry is left out: it is written after the task runs, so counting it would
+    make every resume of a finished task look like a library change. INDEX.md is left out too:
+    it is rebuilt from the entries, so only its fixed wording goes unchecked.
+    """
+    own = library_store.slug(task_id)
+    entries = [e for e in lib.entries() if e != own] if lib and lib.context_dir() else []
+    if not entries:
+        return "base"
+    h = hashlib.sha1()
+    for entry in entries:
+        h.update(f"{entry}\0{runmark.fingerprint(lib.dir / 'harnesses' / entry)}\0".encode())
+    return h.hexdigest()[:16]
+
+
 def _run_one_mode(
     mode: str,
     task_id: str,
@@ -540,6 +578,7 @@ def _run_one_mode(
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
     lib_dir = mode_lib.context_dir() if mode_lib else None
+    lib_fingerprint = _library_fingerprint(mode_lib, task_id)
     r = recursion.run_mode(
         mode,
         task_id,
@@ -599,6 +638,18 @@ def _run_one_mode(
     d["chosen_tree_is_base"] = chosen_tree_is_base
     if sel.chosen_label:
         d["harness_fingerprint"] = runmark.fingerprint(work_dir / "harnesses" / sel.chosen_label)
+    d["library_fingerprint"] = lib_fingerprint
+    try:
+        d["prompts_digest"] = selection.prompts_digest(
+            task_id, adapter, d, experience=d["experience_prompted"]
+        )
+    except Exception as exc:
+        # Bookkeeping only: the paid sessions succeeded, so warn; a resume re-runs only if the
+        # digest then succeeds.
+        d["prompts_digest"] = ""
+        print(
+            f"  [{task_id}] {mode}: prompts digest failed: {type(exc).__name__}: {exc}", flush=True
+        )
     res.selections[mode] = d
     if not sel.ok:
         res.errors.append(f"{mode}: selection failed: {sel.error}")
