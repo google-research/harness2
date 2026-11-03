@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -56,8 +57,10 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
+        else:
+            # An unquoted value ends at a comment: a `#` that starts the value, or one
+            # preceded by whitespace. `KEY=  # note` is an EMPTY value, not "# note".
+            value = re.split(r"(?:^|\s)#", value, maxsplit=1)[0].rstrip()
         os.environ.setdefault(key, value)
 
 
