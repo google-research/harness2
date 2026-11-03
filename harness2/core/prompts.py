@@ -672,8 +672,10 @@ def _st(surface: SurfaceSpec | str) -> _SurfaceText:
     return got
 
 
-def _tts_propose(bp: BenchPrompts, dim: str, st: _SurfaceText, *, k: int, index: int) -> str:
-    """propose(), in the tts pack's words."""
+def _tts_propose(
+    bp: BenchPrompts, dim: str, st: _SurfaceText, *, k: int, index: int, round_t: int | None = None
+) -> str:
+    """propose(), in the tts pack's words. `round_t` set => sequential mode, pass t."""
     block = (_TTS_INV if dim == "INV" else _TTS_DOM).format(
         deliverable=bp.deliverable_word,
         domain=bp.domain_word,
@@ -684,10 +686,20 @@ def _tts_propose(bp: BenchPrompts, dim: str, st: _SurfaceText, *, k: int, index:
         "most defensible version of your dimension. A later stage compares and merges."
     )
     if k > 1:
+        # a round candidate IS shown the earlier rounds, so the "never shown the others"
+        # claim only holds for the parallel arm.
+        others = "" if round_t else " and never shown the others"
         where = (
             f"You are candidate {index} of {k} on this dimension, drawn independently from "
-            f"the same evidence and never shown the others. "
+            f"the same evidence{others}. "
         ) + where
+    if round_t:
+        where += (
+            f"\n\nThis is round {round_t}. You are editing the checkpoint the previous "
+            f"round produced, not the original harness, and the evidence includes every "
+            f"earlier round. In this stage `KEEP_BASE` means leave that CURRENT checkpoint "
+            f"unchanged; it never resets to the original harness."
+        )
     parts = [
         f"You are the {'INVARIANT' if dim == 'INV' else 'DOMAIN'} harness editor for one "
         f"task in this {bp.domain_word}. You have the CURRENT real task, FULL rollouts of "
@@ -830,13 +842,17 @@ def propose(
     index: int = 1,
     round_t: int | None = None,
 ) -> str:
-    """The job for one INV or DOM candidate. `round_t` set => sequential mode, pass t."""
+    """The job for one INV or DOM candidate. `round_t` set => sequential mode, pass t.
+
+    The pack is chosen by the BENCHMARK (`bp.prompt_pack`), never by the mode: the two
+    arms of a parallel-vs-sequential comparison are always prompted in the same pack.
+    """
     if dim not in ("INV", "DOM"):
         raise ValueError(f"unknown proposal dimension {dim!r}; expected 'INV' or 'DOM'")
     st = _st(surface)
 
-    if bp.prompt_pack == "tts" and round_t is None:
-        return _tts_propose(bp, dim, st, k=k, index=index)
+    if bp.prompt_pack == "tts":
+        return _tts_propose(bp, dim, st, k=k, index=index, round_t=round_t)
     block = (st.inv if dim == "INV" else st.dom).format(
         deliverable=bp.deliverable_word,
         domain=bp.domain_word,
@@ -961,45 +977,85 @@ def aggregate(bp: BenchPrompts, surface: SurfaceSpec | str, *, k: int = 1, index
     )
 
 
-def compose_round(bp: BenchPrompts, surface: SurfaceSpec | str, *, t: int, k: int) -> str:
-    """seq-k: compose checkpoint C_t from this round's candidates and every earlier round."""
-    st = _st(surface)
+def _round_body(*, t: int, k: int) -> str:
+    """What the round composer has, and what it must emit.
+
+    The same in every prompt pack: the packs differ in voice, surface and notes format,
+    not in the method's rules about what a round is.
+    """
     final = t >= k
+    return "\n\n".join(
+        [
+            "# WHAT YOU HAVE\n\n"
+            "The rollouts under the unmodified harness (the shared evidence, which does not change "
+            "between rounds), this round's INV and DOM candidates with their rollouts, and every "
+            "earlier round's candidates, checkpoints and trajectories. The previous checkpoint's "
+            "own rollout is this round's on-policy evidence: it shows what the harness you are "
+            "editing actually does."
+            + (
+                "\n\nThis is the FIRST round, so the only evidence is the base rollouts and this "
+                "round's two candidates."
+                if t == 1
+                else ""
+            ),
+            "# YOUR JOB\n\n"
+            + (
+                "Compose THE FINAL harness, from the WHOLE history rather than just this round.\n"
+                if final
+                else f"Compose checkpoint {t}, which the next round will build on.\n"
+            )
+            + "All of these are valid:\n"
+            "- MERGE across rounds -- including a candidate REJECTED earlier, if a later rollout "
+            "now argues for it.\n"
+            "- REPRODUCE an earlier checkpoint verbatim, if that state was simply the best one "
+            "and later rounds drifted away from it.\n"
+            "- ADOPT this round's best candidate.\n"
+            "- KEEP_BASE.\n\n"
+            + _KEEP_BASE
+            + "\n\nHere `KEEP_BASE` means keep the CURRENT checkpoint in `context/harness/` "
+            "unchanged; it does not restore the original harness. In `<notes>`, identify which "
+            "rounds' edits survive and which were dropped or restored.",
+        ]
+    )
+
+
+def _tts_compose_round(bp: BenchPrompts, st: _SurfaceText, *, t: int, k: int) -> str:
+    """compose_round(), in the tts pack's words."""
+    parts = [
+        "You are the integration judge and synthesizer for one checkpoint of a sequential "
+        "adaptation loop. What you emit is what gets ADOPTED: it runs on this task, and if "
+        "selected it enters this area's library where later tasks read it. Every rule that "
+        "bound the candidate proposers binds you -- merging an edit does not launder it.",
+        _work(bp),
+        _lens(bp),
+        _round_body(t=t, k=k),
+        ANSWER_FREE,
+        EVIDENCE_BOUNDARY,
+        st.tts_surface,
+        "# NOTES FORMAT\n\n"
+        "In your single `<notes>` block, one line per decision:\n\n"
+        "    kept|revised|dropped -> <which edit> -> <the evidence: what the trajectories "
+        "showed, with counts where sets are involved>\n\n"
+        "A decision without evidence attached is a decision the next reader cannot audit.",
+    ]
+    return _tidy("\n\n".join(parts))
+
+
+def compose_round(bp: BenchPrompts, surface: SurfaceSpec | str, *, t: int, k: int) -> str:
+    """seq-k: compose checkpoint C_t from this round's candidates and every earlier round.
+
+    The pack is chosen by the BENCHMARK, never by the mode.
+    """
+    st = _st(surface)
+    if bp.prompt_pack == "tts":
+        return _tts_compose_round(bp, st, t=t, k=k)
     return _tidy(
         "\n\n".join(
             [
                 f"You are composing checkpoint {t} of {k} in a sequential adaptation loop.",
                 _work(bp),
                 _lens(bp),
-                "# WHAT YOU HAVE\n\n"
-                "The rollouts under the unmodified harness (the shared evidence, which does not change "
-                "between rounds), this round's INV and DOM candidates with their rollouts, and every "
-                "earlier round's candidates, checkpoints and trajectories. The previous checkpoint's "
-                "own rollout is this round's on-policy evidence: it shows what the harness you are "
-                "editing actually does."
-                + (
-                    "\n\nThis is the FIRST round, so the only evidence is the base rollouts and this "
-                    "round's two candidates."
-                    if t == 1
-                    else ""
-                ),
-                "# YOUR JOB\n\n"
-                + (
-                    "Compose THE FINAL harness, from the WHOLE history rather than just this round.\n"
-                    if final
-                    else f"Compose checkpoint {t}, which the next round will build on.\n"
-                )
-                + "All of these are valid:\n"
-                "- MERGE across rounds -- including a candidate REJECTED earlier, if a later rollout "
-                "now argues for it.\n"
-                "- REPRODUCE an earlier checkpoint verbatim, if that state was simply the best one "
-                "and later rounds drifted away from it.\n"
-                "- ADOPT this round's best candidate.\n"
-                "- KEEP_BASE.\n\n"
-                + _KEEP_BASE
-                + "\n\nHere `KEEP_BASE` means keep the CURRENT checkpoint in `context/harness/` "
-                "unchanged; it does not restore the original harness. In `<notes>`, identify which "
-                "rounds' edits survive and which were dropped or restored.",
+                _round_body(t=t, k=k),
                 ANSWER_FREE,
                 EVIDENCE_BOUNDARY,
                 st.surface_md,
