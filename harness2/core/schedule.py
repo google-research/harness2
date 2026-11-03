@@ -64,7 +64,7 @@ def validate_tag(tag: str) -> None:
             f"tag {tag!r} must be [A-Za-z0-9_.-] with no leading '-' and "
             f"no '/': it becomes a path segment and a run-id segment"
         )
-    if re.match(r"s\d+(-|$)", tag):
+    if re.match(r"s-?\d+(-|$)", tag):
         raise ValueError(
             f"tag {tag!r} spells a seed segment; pass --seed instead so "
             f"seeded and tagged namespaces can never collide"
