@@ -1,8 +1,9 @@
 # Bundled third-party code
 
-This package contains the derived benchmark runners, compatibility patches, and
-upstream license notices distributed with Harness². It is included in wheels
-so setup works outside a source checkout.
+This source tree contains the derived benchmark runners, compatibility patches,
+and upstream license notices distributed with Harness². Source distributions
+include these assets; wheels currently ship only the Python package. Benchmark
+setup needs a source checkout or an extracted source distribution.
 
 | Directory | Source |
 |---|---|
