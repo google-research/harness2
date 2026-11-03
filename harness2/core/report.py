@@ -49,8 +49,9 @@ class Summary:
 
     def line(self, bench: str = "") -> str:
         """LAB reports partial credit and all-criteria pass; the others report one score."""
+        sp = f" | spend ${self.usd:.2f}" if self.usd else ""
         if not self.n:
-            return f"  {self.name}: no graded task"
+            return f"  {self.name}: no graded task{sp}"
         figures = (
             f"partial {self.score:6.2f}% | pass {self.all_pass:5.1f}%"
             if bench == "lab"
@@ -62,7 +63,7 @@ class Summary:
         )
         fb = f" | fell back {self.fell_back}" if self.fell_back else ""
         ug = f" | ungraded {self.n_ungraded}" if self.n_ungraded else ""
-        return f"  {self.name}: n={self.n:>3} | {figures}{pick}{fb}{ug}"
+        return f"  {self.name}: n={self.n:>3} | {figures}{pick}{fb}{ug}{sp}"
 
 
 def _kind(r: Scored) -> str:
