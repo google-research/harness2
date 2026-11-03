@@ -408,8 +408,10 @@ parser.add_argument("--extra-tools", nargs="*", default=[], metavar="TOOL",
                          "'task' for subagents. Empty by default: the base gate is tool-matched "
                          "to the native harness, and anything added here breaks that match, so "
                          "such runs are not comparable to native baselines.")
-parser.add_argument("--doc-parser", choices=["sandbox", "host"], default="sandbox",
-                    help="Where scripts/read_doc.py parses binary documents (default: %(default)s)")
+parser.add_argument("--doc-parser", choices=["sandbox", "host", "drex"],
+                    default=os.environ.get("LAB_DOC_PARSER", "sandbox"),
+                    help="Where scripts/read_doc.py parses binary documents; drex needs "
+                         "DREX_API_KEY (default: %(default)s)")
 parser.add_argument("--opencode-dir", default=DEFAULT_OPENCODE_DIR, help="OpenCode checkout root")
 parser.add_argument("--bun", default=DEFAULT_BUN, help="Path to the bun binary")
 

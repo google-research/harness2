@@ -38,6 +38,14 @@ unscored and writes its output to `judge.log` in the run directory; a Vertex
 Changing the judge model changes the measurement. Outputs are under
 `runs/lab/`.
 
+To read binary source documents through [Nace's Drex Documents
+API](https://drex.nace.ai/docs/guides/documents) instead of the local parser, run
+`export LAB_DOC_PARSER=drex DREX_API_KEY=nace_sk_...` before `harness2`; set
+`DREX_BASE_URL` to override the default `https://drex.nace.ai`. `read_doc.py`
+uploads each document to the caller's Drex workspace and the parse is billed per
+job; results are cached under `~/.cache/harness2/drex/` by content hash. Rollout
+caches do not key on the parser, so give each parser its own `HARNESS2_RUNS_DIR`.
+
 ## JobBench
 
 Upstream: [Job-Bench/job-bench-eval](https://github.com/Job-Bench/job-bench-eval).

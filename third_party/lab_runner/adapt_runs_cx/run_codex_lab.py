@@ -380,10 +380,10 @@ parser.add_argument("--timeout", type=int, default=int(os.environ.get(
 parser.add_argument("--harness-dir", default=None,
                     help="Rendered codex_root harness tree to install at the workspace root "
                          "(AGENTS.md, .agents/, scripts/, .codex/). Omit for a bare workspace.")
-parser.add_argument("--doc-parser", choices=["sandbox", "host"],
+parser.add_argument("--doc-parser", choices=["sandbox", "host", "drex"],
                     default=os.environ.get("LAB_DOC_PARSER", "sandbox"),
-                    help="Where scripts/read_doc.py parses binary documents "
-                         "(default: %(default)s)")
+                    help="Where scripts/read_doc.py parses binary documents; drex needs "
+                         "DREX_API_KEY (default: %(default)s)")
 parser.add_argument("--reap-hours", type=float, default=None,
                     help="Instead of running a task: remove per-rollout scratch dirs under "
                          "$ADAPT_LABCX_SCRATCH/{lab,codex_home} older than this many hours")

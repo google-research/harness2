@@ -951,6 +951,11 @@ class LabAdapter:
     def preflight(self) -> None:
         """Everything money-adjacent, checked before a rollout is paid for."""
         self.substrate.preflight()
+        if os.environ.get("LAB_DOC_PARSER") == "drex" and not os.environ.get("DREX_API_KEY"):
+            raise RuntimeError(
+                "LAB_DOC_PARSER=drex needs DREX_API_KEY; export a nace_sk_ key from "
+                "https://drex.nace.ai, or unset LAB_DOC_PARSER to use the local parser"
+            )
         if not config.LAB_PYTHON.is_file():
             raise RuntimeError(
                 f"LAB interpreter missing at {config.LAB_PYTHON}; run python scripts/setup_benchmark.py lab"
