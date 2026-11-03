@@ -71,6 +71,12 @@ def main(argv=None):
     )
     p.add_argument("--port", type=int, default=0, help="default: the saved port, else a free one")
     args = p.parse_args(argv)
+    if not args.model.strip():
+        p.exit(
+            1,
+            "No model to serve; set HARNESS2_CODEX_MODEL or HARNESS2_SOLVER_MODEL in .env, "
+            "or pass --model\n",
+        )
 
     litellm = Path(sys.executable).with_name("litellm")
     if not litellm.is_file():
