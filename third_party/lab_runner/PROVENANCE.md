@@ -9,3 +9,6 @@ log paths use the `harness2` namespace. Setup installs these runners into the LA
 
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.
+
+Repeated Codex run IDs clear the prior output directory and completion metrics before
+starting the next attempt, so stale deliverables cannot become current-run evidence.

@@ -232,6 +232,10 @@ def main(args) -> int:
     label = args.run_id.replace("/", "__")
     run_dir = run_dir_for(args.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
+    # A repeated run id starts a new attempt, not a merge with prior artifacts.
+    (run_dir / "metrics.json").unlink(missing_ok=True)
+    if (run_dir / "output").exists():
+        shutil.rmtree(run_dir / "output")
     tmp_root, ws, codex_home = scratch_paths(label)
 
     def _die(signum, _frame):
