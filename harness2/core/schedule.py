@@ -554,7 +554,11 @@ def _run_one_mode(
     )
     res.modes[mode] = r.to_dict()
     res.errors.extend(
-        f"{mode}: {stage.label}: proposer execution failed: {stage.error}"
+        # A stage that failed before its first session (evidence could not be built) states its
+        # own reason; only a stage that reached the proposer failed in the proposer.
+        f"{mode}: {stage.label}: {stage.error}"
+        if not stage.attempts
+        else f"{mode}: {stage.label}: proposer execution failed: {stage.error}"
         for stage in r.stages
         if stage.execution_failed
     )

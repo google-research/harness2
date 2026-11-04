@@ -18,6 +18,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from harness2.core import recursion, schedule, tree
 from harness2.core.proposer import ProposerError, Reply
@@ -159,6 +160,50 @@ class ProposerFailureTests(unittest.TestCase):
                             self.assertTrue(result.selections[recorded_mode]["ok"])
                             self.assertEqual(record["ledger"]["R"], 4 * k)
                             self.assertEqual(record["ledger"]["P"], 3 * k)
+
+    def test_evidence_build_failure_is_partial_then_healthy_rerun_succeeds(self):
+        build = recursion.context.build
+        failed = []
+
+        def build_fails_once(ctx_dir, *args, **kwargs):
+            if "demo-oc-agg1" in Path(ctx_dir).parts and Path(ctx_dir).name == "inv1":
+                if not failed:
+                    failed.append(ctx_dir)
+                    raise OSError(28, "No space left on device")
+            return build(ctx_dir, *args, **kwargs)
+
+        def run(proposer):
+            return schedule.run_task(
+                "ledger-1",
+                1,
+                adapter=self.adapter,
+                prop=proposer,
+                selector_prop=proposer,
+                runs_root=self.adapter.spec.runs_root,
+            )
+
+        with patch.object(recursion.context, "build", build_fails_once):
+            result = run(DemoProposer(self.spec))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(
+            result.errors,
+            ["agg: inv1: could not build evidence: OSError: [Errno 28] No space left on device"],
+        )
+        self.assertFalse(result.modes["agg"]["ok"])
+        self.assertTrue(result.modes["seq"]["ok"])
+        (stage,) = [s for s in result.modes["agg"]["stages"] if s["label"] == "inv1"]
+        self.assertTrue(stage["execution_failed"])
+        self.assertTrue(stage["fell_back"])
+        self.assertEqual(stage["attempts"], 0)
+
+        proposer = DemoProposer(self.spec)
+        healthy = run(proposer)
+        self.assertEqual(healthy.status, "ok")
+        self.assertEqual(healthy.errors, [])
+        calls = len(proposer._calls)
+        self.assertEqual(run(proposer).status, "skipped")
+        self.assertEqual(len(proposer._calls), calls)
 
     def test_rejected_edits_keep_successful_fallback_and_resume(self):
         class InvalidEdits(DemoProposer):

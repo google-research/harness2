@@ -170,6 +170,8 @@ def _run_stage(
         )
         mission = context.mission(tree, job=job)
     except Exception as exc:
+        # No session ran, so this is an execution failure like an improver outage: the mode
+        # must not be saved as `ok`, or resume would never retry the stage.
         return Stage(
             label=label,
             dim=dim,
@@ -177,6 +179,7 @@ def _run_stage(
             fell_back=True,
             error=f"could not build evidence: {type(exc).__name__}: {exc}"[:400],
             attempts=0,
+            execution_failed=True,
         )
 
     err = ""
