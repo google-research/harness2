@@ -282,15 +282,23 @@ class Proposer:
         ]
         if self.spec.effort:
             cmd += ["--variant", self.spec.effort]
-        p = subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=wall,
-        )
+        try:
+            p = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=wall,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # Every step that finished before the wall clock was billed; keep its cost. On POSIX
+            # the partial output arrives as bytes even with text=True.
+            partial = exc.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            return "", _opencode_cost(partial), f"timeout after {wall}s"
         cost = _opencode_cost(p.stdout)
         text, err = _opencode_stdout(p.stdout)
         if err:
