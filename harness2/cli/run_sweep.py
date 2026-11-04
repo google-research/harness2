@@ -122,13 +122,20 @@ def main(argv: list[str] | None = None) -> int:
     """Parse, then run `_main`, printing a misconfiguration as one remediation line."""
     args = _build_parser().parse_args(argv)
     try:
+        if args.substrate == "qw" and not args.dry_run:
+            adapter = C.make_adapter(args.bench, args.subset, args.substrate, args.split_file)
+            with adapter.qwen_runner.scope():
+                return _main(args, adapter=adapter)
         return _main(args)
+    except KeyboardInterrupt:
+        print("Execution interrupted; incomplete runs can be resumed.", file=sys.stderr)
+        return 130
     except (config.ConfigError, RuntimeError, ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
 
-def _main(args: argparse.Namespace) -> int:
+def _main(args: argparse.Namespace, *, adapter=None) -> int:
     if args.k < 1 or args.workers < 1:
         raise ValueError("--k and --workers must be positive")
     modes = C.parse_modes(args.modes)
@@ -138,7 +145,7 @@ def _main(args: argparse.Namespace) -> int:
             C.make_adapter(args.bench, args.subset, args.substrate, args.split_file), args, modes
         )
 
-    adapter = C.make_adapter(args.bench, args.subset, args.substrate, args.split_file)
+    adapter = adapter or C.make_adapter(args.bench, args.subset, args.substrate, args.split_file)
     _stream_for(adapter, args)
     from ..preflight import require_ready
 
@@ -223,6 +230,9 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    if args.substrate == "qw":
+        qwen = adapter.substrate.execution_identity()
+        identity.update(executor=qwen["model"], endpoint=qwen["endpoint"], qwen=qwen)
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

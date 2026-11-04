@@ -109,6 +109,81 @@ These checks do not test model availability. Access to an executor, improver, or
 judge model is tested when that model is first called. Refinement and judging
 return a nonzero exit status when incomplete.
 
+## Qwen Code executor (experimental)
+
+Qwen Code is available for **JobBench only** with `--substrate qw`. The
+implementation has local protocol, lifecycle, recursion and published-CLI
+coverage; a real Linux JobBench run with live models remains unvalidated.
+The improver still uses OpenCode. LAB, WorkBuddy and subagents are not enabled.
+
+Use Node.js **22 or newer**. Setup installs the pinned
+`@qwen-code/qwen-code@0.25.3` package under `dependencies/qwen/`; it does not use
+a globally installed `qwen`. Configure the executor and improver independently:
+
+```dotenv
+HARNESS2_QWEN_MODEL=<model-id-accepted-by-your-endpoint>
+HARNESS2_QWEN_BASE_URL=https://your-openai-endpoint.example/v1
+HARNESS2_QWEN_API_KEY=<executor-key>
+HARNESS2_IMPROVER_MODEL=<opencode-provider/model>
+HARNESS2_JUDGE_MODEL=<judge-model>
+HARNESS2_JUDGE_BASE_URL=https://your-judge-endpoint.example/v1
+HARNESS2_JUDGE_API_KEY=<judge-key>
+```
+
+The executor currently supports OpenAI Chat Completions with an explicit key.
+It does not inherit OAuth or personal Qwen settings. Configure the improver's
+provider credentials separately; Vertex improvers need ADC as described above.
+An OpenCode executor model is not required when an explicit improver model is set.
+Keep credentials in the shell or untracked `.env`, not in harness files.
+
+```bash
+harness2-setup jb --substrate qw
+harness2-check --bench jb --substrate qw
+harness2 --bench jb --substrate qw --k 1 --mode parallel --dry-run
+```
+
+Choose exactly one installed profession from the dry-run output, then run:
+
+```bash
+harness2 --bench jb --substrate qw --k 1 --mode parallel \
+  --only-domains <profession> --max-tasks 1
+harness2-judge --bench jb --substrate qw --k 1 --mode parallel --bases
+harness2-judge --bench jb --substrate qw --k 1 --mode parallel
+harness2-report --bench jb --substrate qw --k 1 --mode parallel
+```
+
+For acceptance, expand this smoke run to two consecutive tasks in both modes,
+then add `k=2` runs for actual candidate selection and multi-step recursion. See
+the [recommended Linux acceptance matrix](design/qwen-code.md#recommended-linux-acceptance).
+
+Each attempt uses a fresh Git workspace and `QWEN_HOME`. A generated empty
+`.qwen/.env` stops ancestor dotenv lookup. Personal `~/.env` or `~/.qwen/.env`
+settings cause preflight to fail with their source path; run under a clean
+benchmark account instead of importing them into an experiment. Supplemental instructions,
+`QWEN.md`, project skills, Python helpers and synchronous PreToolUse/PostToolUse
+command hooks form the editable harness. Other skill frontmatter, subagents,
+arbitrary settings and OpenCode plugins are rejected. See the
+[design](design/qwen-code.md) ([中文](design/qwen-code.zh-CN.md)) for the mapping.
+
+The initial runtime profile honors system policy but supports only empty or
+UI/telemetry-only system settings in strict JSON. Other system settings fail
+preflight with their source path; they are not overwritten. This intentionally
+conservative check does not establish endpoint/model availability.
+
+A run is reusable only after normal exit, validated terminal success, complete
+tool results and copied deliverables. Failed attempts stay unmarked; rerunning
+archives the latest three invalidated attempts under `model_traj/_failed_attempts/`.
+Changing the model, endpoint, package, Node, policy or runtime profile requires a
+new experiment root. Missing executor USD cost remains unknown; report spend
+does not include a complete Qwen executor bill.
+
+Local integration verification, without paid model calls:
+
+```bash
+python -m unittest discover -s tests -v
+HARNESS2_TEST_QWEN_CLI=1 python -m unittest discover -s tests -p test_qwen.py -v
+```
+
 ## Codex executor
 
 The Codex executor connects to a Responses API endpoint. For Gemini on Vertex

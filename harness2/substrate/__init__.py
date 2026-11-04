@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The two solver substrates behind one interface (substrate/base.py).
+"""The solver substrates behind one interface (substrate/base.py).
 
 `OpencodeSubstrate` carries OPENCODE_SURFACE and three install modes; `CodexSubstrate`
-carries CODEX_SURFACE and one. Benchmark adapters supply the launcher body.
+carries CODEX_SURFACE and one. QwenSubstrate carries QWEN_SURFACE and qwen_root.
+Benchmark adapters supply the launcher body.
 """
 
 from .base import Install, Launcher, RunRequest, Substrate
 from .codex import CODEX_SURFACE, CodexSubstrate
 from .opencode import OPENCODE_SURFACE, OpencodeSubstrate
+from .qwen import QWEN_SURFACE, QwenSubstrate
 
 __all__ = [
     "Install",
@@ -31,4 +33,6 @@ __all__ = [
     "OPENCODE_SURFACE",
     "CodexSubstrate",
     "CODEX_SURFACE",
+    "QwenSubstrate",
+    "QWEN_SURFACE",
 ]

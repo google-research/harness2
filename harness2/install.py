@@ -190,6 +190,22 @@ def workbuddy_models(*, dry_run=False):
             path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def qwen(*, dry_run=False):
+    run(
+        [
+            "npm", "install", "--prefix", config.QWEN_DIR, "--save-exact",
+            "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund",
+            "--registry=https://registry.npmjs.org/",
+            f"@qwen-code/qwen-code@{config.QWEN_VERSION}",
+        ],
+        dry_run=dry_run,
+    )
+    if not dry_run:
+        from .substrate.qwen import installed_identity
+
+        installed_identity()
+
+
 def codex(*, dry_run=False):
     root = config.DEPENDENCIES / "codex"
     run(

@@ -3,6 +3,7 @@
 
 # Python environments and build outputs.
 .venv/
+.ruff_cache/
 __pycache__/
 *.py[cod]
 *.egg-info/

@@ -25,6 +25,7 @@ separated by benchmark, executor, mode, budget, and seed.
 | `--k K --mode sequential` | Refine the harness through `K` successive steps |
 | `--workers N` | Run `N` domains concurrently; tasks within each domain stay ordered |
 | `--substrate cx` | Use Codex instead of the default OpenCode executor |
+| `--substrate qw` | Experimental Qwen Code executor for JobBench; the improver remains OpenCode |
 | `--seed N` | Shuffle the task stream reproducibly; does not control model sampling |
 
 Use the same benchmark, executor, subset, `k`, mode, and seed for refinement,

@@ -31,6 +31,9 @@ include; setup copies the LAB and WorkBuddy overlays into the upstream checkouts
 
 The upstream dependency locks are used for Python installations. OpenCode uses
 Bun 1.3.11 and the patched lock. Codex uses the version in `config.CODEX_VERSION`.
+The experimental JobBench Qwen executor installs `@qwen-code/qwen-code@0.25.3`
+with Node >=22 and checks `config.QWEN_INTEGRITY` against the local npm lock.
+Execution identity also records a fingerprint of installed files and the Node version.
 JobBench's Hugging Face revision is resolved once for a download and recorded in
 `dataset/main/.harness2-download.json`. WorkBuddy's dataset fetcher, as patched
 by setup, verifies each archive against the dataset repository's `SHA256SUMS` and

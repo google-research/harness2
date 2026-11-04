@@ -47,6 +47,11 @@ task-level recursion budget brings further gains.
 The release supports **parallel and sequential recursion**, **OpenCode and
 Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
 
+An experimental **Qwen Code executor for JobBench** is available with
+`--substrate qw`; see [setup](docs/SETUP.md#qwen-code-executor-experimental) and
+the [design](docs/design/qwen-code.md) ([中文](docs/design/qwen-code.zh-CN.md)).
+Local integration is tested; live Linux benchmark validation remains pending.
+
 ## Video overview
 
 https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56

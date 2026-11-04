@@ -163,6 +163,16 @@ CODEX_CONTAINER_URL = env("HARNESS2_CODEX_CONTAINER_URL", CODEX_BASE_URL)
 VERTEX_PROXY_KEY = env("HARNESS2_CODEX_API_KEY", "")
 CODEX_HOME_DIR = DEPENDENCIES / "codex" / "home"
 
+QWEN_VERSION = "0.25.3"
+QWEN_INTEGRITY = (
+    "sha512-oEQlxLRQHqIMO/zgE9CVqesZpJA6FrpiJMDLC8tl4c5ARicyYP4A5EfOK/F/"
+    "6c6NXuVhLLNirloIGA+ivqZpiw=="
+)
+QWEN_DIR = DEPENDENCIES / "qwen"
+QWEN_MODEL = env("HARNESS2_QWEN_MODEL", "")
+QWEN_BASE_URL = env("HARNESS2_QWEN_BASE_URL", "")
+QWEN_API_KEY = env("HARNESS2_QWEN_API_KEY", "")
+
 WB_SOLVER_MODEL = "harness2/solver"
 WB_WEB_JUDGE = "harness2/judge"
 WB_RENDER_PY = sys.executable
@@ -179,11 +189,16 @@ TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2
 
 
-def validate_models(*, judge: bool = False) -> None:
-    require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
-    if "/" not in SOLVER_MODEL_OC or "/" not in IMPROVER_MODEL:
+def validate_models(*, judge: bool = False, substrate: str = "oc") -> None:
+    if substrate == "qw":
+        require("HARNESS2_QWEN_MODEL", needed_by="Qwen executor rollouts")
+        models = (IMPROVER_MODEL,)
+    else:
+        require("HARNESS2_SOLVER_MODEL", needed_by="executor rollouts")
+        models = (SOLVER_MODEL_OC, IMPROVER_MODEL)
+    if any("/" not in model for model in models):
         raise ConfigError("Executor and improver models must use OpenCode's provider/model syntax")
-    if any(m.startswith("google-vertex") for m in (SOLVER_MODEL_OC, IMPROVER_MODEL)):
+    if any(m.startswith("google-vertex") for m in models):
         if not VERTEX_PROJECT:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:
@@ -195,6 +210,7 @@ SCRUB_ENV = frozenset(
         "HARNESS2_JUDGE_API_KEY",
         "HARNESS2_BRIDGE_KEY",
         "HARNESS2_CODEX_API_KEY",
+        "HARNESS2_QWEN_API_KEY",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",

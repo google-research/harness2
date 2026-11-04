@@ -41,6 +41,9 @@ from ..install import codex_config_error
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CodexSubstrate
 from ..substrate.opencode import OUTPUT_TOKEN_MAX, OpencodeSubstrate
+from ..substrate.qwen import BASE_PROMPT, QWEN_SURFACE, QwenSubstrate
+from ..substrate.qwen import validate_tree as validate_qwen_tree
+from . import jb_qwen_runner as QW
 from .tasks import discover, select
 
 _RUNNER_DIR = config.THIRD_PARTY / "jb_runner"
@@ -494,9 +497,9 @@ def render_opencode_tree(staged: Path, render_dir: Path, ctx: dict) -> None:
             shutil.copy(p, rd / ".opencode" / "plugin" / p.name)
 
 
-_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root"}
+_INSTALL_MODE = {"oc": "workspace_agents_md", "cx": "codex_root", "qw": "qwen_root"}
 
-_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600}
+_DEFAULT_TIMEOUT = {"oc": 2400, "cx": 3600, "qw": 3600}
 
 
 def _channels() -> dict:
@@ -507,7 +510,9 @@ def _channels() -> dict:
 
 def make_spec(substrate: str) -> BenchSpec:
     if substrate not in _INSTALL_MODE:
-        raise ValueError(f"JobBench substrate must be 'oc' or 'cx', got {substrate!r}")
+        raise ValueError(
+            f"JobBench substrate must be one of {tuple(_INSTALL_MODE)}, got {substrate!r}"
+        )
     return BenchSpec(
         name="jb",
         runs_root=config.RUNS / "jb",
@@ -625,7 +630,7 @@ def _parse_details(got: dict) -> dict | None:
 
 
 class JobBenchAdapter:
-    """JobBench behind the BenchmarkAdapter protocol, on either substrate."""
+    """JobBench behind the BenchmarkAdapter protocol, on OpenCode, Codex or Qwen."""
 
     def __init__(
         self,
@@ -637,12 +642,13 @@ class JobBenchAdapter:
     ):
         self.split_file = split_file
         self.spec = make_spec(substrate)
-        launcher = self._launch_opencode if substrate == "oc" else self._launch_codex
-        self.substrate = (
-            OpencodeSubstrate(launcher=launcher)
-            if substrate == "oc"
-            else CodexSubstrate(launcher=launcher)
-        )
+        if substrate == "qw":
+            self.substrate = QwenSubstrate(launcher=self._launch_qwen)
+            self.qwen_runner = QW.QwenRunner(self.substrate)
+        elif substrate == "oc":
+            self.substrate = OpencodeSubstrate(launcher=self._launch_opencode)
+        else:
+            self.substrate = CodexSubstrate(launcher=self._launch_codex)
         self.timeout = int(timeout or _DEFAULT_TIMEOUT[substrate])
         self.store = Path(store_root) if store_root else config.RUNS / "jb" / "dataset"
 
@@ -724,6 +730,10 @@ class JobBenchAdapter:
     ) -> Path:
         """One rollout; the label carries the whole namespace (run_id, / rewritten __)."""
         label = run_id.replace("/", "__")
+        if self.substrate.name == "qw" and (
+            not label or label in (".", "..") or "\\" in label or any(ord(c) < 32 for c in label)
+        ):
+            raise ValueError("Invalid Qwen run_id")
         out = self._out_dir(task_id, label)
         mark = self._traj_dir(task_id, label)
         inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
@@ -739,6 +749,8 @@ class JobBenchAdapter:
                 f"  [jb-{self.substrate.name}] re-rolling {label}: {reason}",
                 flush=True,
             )
+        if self.substrate.name == "qw":
+            QW.archive_attempt(out, mark)
         shutil.rmtree(out, ignore_errors=True)
         shutil.rmtree(mark, ignore_errors=True)
         _EXTRACT_CACHE.pop(str(out.resolve()), None)
@@ -755,12 +767,16 @@ class JobBenchAdapter:
         finally:
             shutil.rmtree(install.staging_dir, ignore_errors=True)
         out.mkdir(parents=True, exist_ok=True)
+        extra = {"output_fingerprint": self._output_fingerprint(out)}
+        if self.substrate.name == "qw":
+            status = json.loads((mark / "qwen-status.json").read_text())
+            extra.update(qwen_identity=status["identity"], **QW.capture_identity(mark))
         RM.mark_complete(
             mark,
             run_id=run_id,
             harness_dir=harness_dir,
             inputs=inputs,
-            extra={"output_fingerprint": self._output_fingerprint(out)},
+            extra=extra,
         )
         return dirs[0]
 
@@ -771,6 +787,10 @@ class JobBenchAdapter:
         task_id, label = self._task_and_label(run_dir)
         trajectory_dir = self._traj_dir(task_id, label)
         marker = RM.read_mark(trajectory_dir) or {}
+        if self.substrate.name == "qw" and not QW.reusable(
+            trajectory_dir, self.substrate.execution_identity()
+        ):
+            return False
         return (
             "output_fingerprint" in marker
             and marker["output_fingerprint"] == self._output_fingerprint(run_dir)
@@ -812,6 +832,20 @@ class JobBenchAdapter:
         }
         self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
+
+    def _launch_qwen(self, req: RunRequest, install: Install) -> list[Path]:
+        task_id, label, timeout = self._launch_common(req)
+        self.substrate.preflight()
+        return [
+            self.qwen_runner.run(
+                task_folder=self._dataset_task(task_id) / "task_folder",
+                install=install,
+                out=self._out_dir(task_id, label),
+                trajectory=self._traj_dir(task_id, label),
+                timeout=timeout,
+                identity=self.substrate.execution_identity(),
+            )
+        ]
 
     def _launch_codex(self, req: RunRequest, install: Install) -> list[Path]:
         task_id, label, t = self._launch_common(req)
@@ -957,6 +991,12 @@ class JobBenchAdapter:
         return str(self._extract(d)["flat"]) if d.is_dir() else ""
 
     def base_harness(self) -> Path:
+        if self.substrate.name == "qw":
+            base = self.spec.runs_root / f"_base_harness_qw_{os.getpid()}"
+            with _STORE_SEED_LOCK:
+                if not HT.is_tree(QWEN_SURFACE, base):
+                    HT.write_tree(QWEN_SURFACE, {"systemprompt.md": BASE_PROMPT}, base)
+            return base
         base = OC_BASE_HARNESS if self.substrate.name == "oc" else CX_BASE_HARNESS
         if not HT.is_tree(self.substrate.surface(), base):
             raise FileNotFoundError(
@@ -968,6 +1008,8 @@ class JobBenchAdapter:
 
     def validate_tree(self, tree: dict) -> None:
         """JobBench adds no environment invariant beyond the framework rules."""
+        if self.substrate.name == "qw":
+            validate_qwen_tree(tree)
         return None
 
     def preflight(self) -> None:
@@ -1155,6 +1197,8 @@ class JobBenchAdapter:
     def score(self, run_dir: Path, task_id: str) -> dict | None:
         """Judge one run. None means the judge FAILED, which is not a zero."""
         run_dir = Path(run_dir)
+        if self.substrate.name == "qw" and not self.artifacts_intact(run_dir):
+            return None
         label = run_dir.name
         reporting, own = self._details_candidates(task_id, label)
         for details in (reporting, own):

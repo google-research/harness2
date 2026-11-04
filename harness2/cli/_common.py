@@ -29,7 +29,17 @@ from ..core.spec import BenchmarkAdapter
 
 BENCHES = ("jb", "wb", "lab")
 WB_SUBSETS = ("office", "web", "code")
-SUBSTRATES = ("oc", "cx")
+SUBSTRATES = ("oc", "cx", "qw")
+
+
+def validate_cell(bench: str, substrate: str) -> None:
+    if bench not in BENCHES:
+        raise ValueError(f"unknown bench {bench!r}; expected one of {BENCHES}")
+    if substrate not in SUBSTRATES:
+        raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
+    if substrate == "qw" and bench != "jb":
+        raise ValueError("Qwen Code (--substrate qw) currently supports JobBench (--bench jb) only")
+
 
 MODES_DEFAULT = "parallel"
 MODES_HELP = (
@@ -46,10 +56,7 @@ def make_adapter(
     bench: str, subset: str | None, substrate: str, split_file: Path | None = None
 ) -> BenchmarkAdapter:
     """The one place a CLI turns (--bench, --subset, --substrate) into an adapter."""
-    if bench not in BENCHES:
-        raise ValueError(f"unknown bench {bench!r}; expected one of {BENCHES}")
-    if substrate not in SUBSTRATES:
-        raise ValueError(f"unknown substrate {substrate!r}; expected one of {SUBSTRATES}")
+    validate_cell(bench, substrate)
     if bench == "wb":
         if subset not in WB_SUBSETS:
             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
@@ -104,7 +111,7 @@ def add_cell_args(p: argparse._ActionsContainer) -> None:
         "--substrate",
         default="oc",
         choices=SUBSTRATES,
-        help="task-executor substrate: oc (opencode) | cx (codex)",
+        help="task-executor substrate: oc (opencode) | cx (codex) | qw (qwen-code, JB only)",
     )
 
 
