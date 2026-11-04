@@ -384,10 +384,10 @@ def _images(adapter, run_dir: Path) -> list[Path]:
 
 
 def _copy_tree(src: Path, dst: Path) -> int:
-    """Copy a component tree, dropping byte-compiled files; return the file count."""
+    """Copy a component tree, dropping byte-compiled files and symlinks; return the file count."""
     n = 0
     for p in sorted(src.rglob("*")):
-        if not p.is_file() or "__pycache__" in p.parts or p.suffix == ".pyc":
+        if not harness_tree.is_plain_file(p) or "__pycache__" in p.parts or p.suffix == ".pyc":
             continue
         t = dst / p.relative_to(src)
         t.parent.mkdir(parents=True, exist_ok=True)

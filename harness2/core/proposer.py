@@ -34,6 +34,7 @@ from pathlib import Path
 
 from .. import config
 from .spec import ChannelSpec
+from .tree import is_plain_file
 
 SYSTEM_ARG_MAX = 120_000
 
@@ -75,6 +76,17 @@ class Reply:
 
     def __bool__(self) -> bool:
         return self.ok
+
+
+def _copy_unlinked(src: str, dst: str) -> str:
+    """Copy one harvested file; a hard-linked one becomes a symlink so `read_tree` rejects it,
+    and FIFOs, sockets and devices are left out."""
+    if not Path(src).is_file():
+        return dst
+    if Path(src).lstat().st_nlink > 1:
+        Path(dst).symlink_to(src)
+        return dst
+    return shutil.copy2(src, dst)
 
 
 @dataclass
@@ -296,7 +308,12 @@ class Proposer:
         if err:
             return "", cost, err
         ans = out / "answer.md"
-        if ans.is_file() and ans.read_text(errors="replace").strip():
+        if (
+            not out.is_symlink()
+            and is_plain_file(ans)
+            and ans.lstat().st_nlink == 1
+            and ans.read_text(errors="replace").strip()
+        ):
             return ans.read_text(errors="replace"), cost, ""
         if text.strip():
             return text, cost, ""
@@ -306,15 +323,17 @@ class Proposer:
     def _harvest(self, tmp: Path, sub: str, label: str, cache_key: str = "") -> Path | None:
         """Copy `tmp/<sub>` somewhere durable before the session directory is removed."""
         src = tmp / sub
-        if not src.is_dir():
-            return None
+        if not src.is_dir() or src.resolve() != tmp.resolve() / sub:
+            return None  # a link somewhere on the path leads outside the session
         dest = Path(self.audit_dir or tempfile.mkdtemp(prefix="harness2-harvest-"))
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
         if cache_key:
             safe = f"{safe}.{cache_key}"
         dest = dest / f"{safe}.workspace"
         shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(src, dest)
+        # Keep links as links: the harvest is an audit copy, and following a link could copy
+        # files from outside the session. Trees read back from it go through the surface checks.
+        shutil.copytree(src, dest, symlinks=True, copy_function=_copy_unlinked)
         return dest
 
     def _paths(self, label: str, cache_key: str = "") -> dict[str, Path] | None:
