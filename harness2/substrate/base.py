@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
@@ -42,6 +45,40 @@ class RunRequest:
 
 
 Launcher = Callable[[RunRequest, Install], list[Path]]
+
+
+def stage_entries(tree_dir: Path, entries: tuple[str, ...], prefix: str) -> Path:
+    """Copy the named top-level entries of a harness tree into a fresh staging dir."""
+    staged = Path(tempfile.mkdtemp(prefix=prefix))
+    for entry in entries:
+        src = Path(tree_dir) / entry
+        if src.is_dir():
+            shutil.copytree(src, staged / entry)
+        elif src.is_file():
+            shutil.copy2(src, staged / entry)
+    return staged
+
+
+def read_events(path: Path) -> list[dict]:
+    """Every JSON-object line of a CLI's stdout, in order; anything else is skipped.
+
+    Split on LF only: str.splitlines also breaks on U+2028/U+2029 inside JSON strings.
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return [{"type": "_read_error", "message": str(e)}]
+    events = []
+    for ln in raw.replace("\x00", "").split("\n"):
+        if not ln.lstrip().startswith("{"):
+            continue
+        try:
+            ev = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(ev, dict):
+            events.append(ev)
+    return events
 
 
 @runtime_checkable
@@ -80,4 +117,4 @@ class Substrate(Protocol):
         command and never starts any part of the model chain."""
 
 
-__all__ = ["Install", "RunRequest", "Launcher", "Substrate"]
+__all__ = ["Install", "RunRequest", "Launcher", "Substrate", "stage_entries", "read_events"]

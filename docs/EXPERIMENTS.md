@@ -25,6 +25,7 @@ separated by benchmark, executor, mode, budget, and seed.
 | `--k K --mode sequential` | Refine the harness through `K` successive steps |
 | `--workers N` | Run `N` domains concurrently; tasks within each domain stay ordered |
 | `--substrate cx` | Use Codex instead of the default OpenCode executor |
+| `--substrate cc` / `pi` | Use Claude Code or Pi (JobBench only) |
 | `--seed N` | Shuffle the task stream reproducibly; does not control model sampling |
 
 Use the same benchmark, executor, subset, `k`, mode, and seed for refinement,
@@ -115,8 +116,11 @@ The default output roots are `runs/lab/`, `runs/jb/`, and
 harnesses, reflection notes, and graded results.
 
 Repeat the same command to resume. Failed evaluations remain unscored rather
-than being counted as zero. Use a new `HARNESS2_RUNS_DIR` when changing models or
-task selection.
+than being counted as zero. On JobBench, an executor attempt that crashes or
+reports a model error is retried rather than scored; its partial files stay
+beside its trajectory as `<attempt>.partial/`. A timeout still delivers what the
+agent wrote. Use a new `HARNESS2_RUNS_DIR` when changing models or task
+selection.
 
 Refinement, judging, and reporting use `harness2`, `harness2-judge`, and
 `harness2-report`; each supports `--help`.

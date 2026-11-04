@@ -604,6 +604,49 @@ and you cite it in your notes. If you cannot name the moment, the edit is specul
 context for nothing."""
 
 
+def _swap(text: str, *pairs: tuple[str, str]) -> str:
+    """Replace each anchor; a drifted anchor fails at import, never in a paid run."""
+    for old, new in pairs:
+        if old not in text:
+            raise AssertionError(f"surface anchor missing: {old!r}")
+        text = text.replace(old, new)
+    return text
+
+
+# Claude Code reads the hook schema and skill format the codex text already describes.
+_CLAUDE_PATHS = (
+    ("AGENTS.md", "CLAUDE.md"),
+    (".agents/skills", ".claude/skills"),
+    (".codex/hooks.json", ".claude/settings.json"),
+)
+_SURFACE_CLAUDE = _swap(_SURFACE_CODEX, *_CLAUDE_PATHS)
+_TTS_SURFACE_HEAD_CLAUDE = _swap(_TTS_SURFACE_HEAD_CODEX, *_CLAUDE_PATHS)
+
+# Pi differs from codex only in its in-loop lever: a TypeScript extension, not a hooks file.
+_PI_LEVER = """\
+`.pi/extensions/<name>.ts` -- ONE TypeScript module per file exporting `default function
+(pi) { ... }`, loaded with no build step. `pi.on("tool_call", ...)` sees `event.toolName` and
+`event.input` BEFORE the call runs; returning `{ block: true, reason: "..." }` stops it and sends
+the reason back to the model. `pi.on("tool_result", ...)` can rewrite what the model sees after a
+call. The only component that acts in the tool loop rather than in the prompt -- the only way to
+enforce something the model cannot skip. Keep handlers fast; put real logic in a `scripts/`
+helper the handler runs."""
+
+
+def _pi(text: str, row: str) -> str:
+    """Codex text with its hooks row and hooks paragraph replaced by the extension lever."""
+    text = _swap(
+        text, (f"| `.codex/hooks.json` | {row} |", f"| `.pi/extensions/<name>.ts` | {row} |")
+    )
+    start = text.index("`.codex/hooks.json` -- ONE JSON file")
+    end = text.index("calls.", start) + len("calls.")
+    return text[:start] + _PI_LEVER + text[end:]
+
+
+_SURFACE_PI = _pi(_SURFACE_CODEX, "lifecycle hooks")
+_TTS_SURFACE_HEAD_PI = _pi(_TTS_SURFACE_HEAD_CODEX, "c8 lifecycle hooks")
+
+
 @dataclass(frozen=True)
 class _SurfaceText:
     """The per-substrate prompt fragments, resolved once at module load."""
@@ -629,6 +672,26 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
         ]
     )
+
+    def root_surface(surface_md: str, tts_head: str, always_on: str, lever: str) -> _SurfaceText:
+        """A codex-shaped surface (Claude Code, Pi): one always-on file at the workspace root."""
+        return _SurfaceText(
+            surface_md=surface_md,
+            inv=_INV_TEMPLATE.replace("__LOOP_LEVER__", lever),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                f"A skill exists only once its name appears in `{always_on}` as a trigger: write "
+                "that trigger line in the same edit.",
+            ),
+            tts_surface="\n\n".join(
+                [
+                    tts_head,
+                    _surface_part(surface_md, "A skill only exists", "THE DELIVERABLE'S SHAPE"),
+                    _surface_part(surface_md, "# HOW TO MAKE A CHANGE"),
+                ]
+            ),
+        )
+
     return {
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
@@ -657,6 +720,20 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "that trigger line in the same edit.",
             ),
             tts_surface=cx_tts,
+        ),
+        "claude": root_surface(
+            _SURFACE_CLAUDE,
+            _TTS_SURFACE_HEAD_CLAUDE,
+            "CLAUDE.md",
+            "`Stop` hook in `.claude/settings.json` -- for example, blocking a finish before "
+            "a {deliverable} exists, with a corrective reason",
+        ),
+        "pi": root_surface(
+            _SURFACE_PI,
+            _TTS_SURFACE_HEAD_PI,
+            "AGENTS.md",
+            "`.pi/extensions/<name>.ts` extension -- for example, a `tool_call` handler that "
+            "blocks a known-bad call with a reason that teaches the fix",
         ),
     }
 

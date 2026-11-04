@@ -3,7 +3,9 @@
 Complete the [installation and credentials](SETUP.md) first. Each
 benchmark installs separately; install the ones you intend to run. Every command
 below takes `--substrate cx` to use the
-[Codex executor](SETUP.md#codex-executor) instead of OpenCode. Choose the
+[Codex executor](SETUP.md#codex-executor) instead of OpenCode; JobBench also takes
+`--substrate cc` or `--substrate pi` for
+[Claude Code or Pi](SETUP.md#claude-code-and-pi-executors). Choose the
 recursion mode with `--mode parallel` or `--mode sequential` and the task-level
 recursion budget with `--k`. Keep both identical across the run, judge, and
 report commands.

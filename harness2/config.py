@@ -163,6 +163,18 @@ CODEX_CONTAINER_URL = env("HARNESS2_CODEX_CONTAINER_URL", CODEX_BASE_URL)
 VERTEX_PROXY_KEY = env("HARNESS2_CODEX_API_KEY", "")
 CODEX_HOME_DIR = DEPENDENCIES / "codex" / "home"
 
+# Pinned from the npm "latest" channel; releases:
+# https://www.npmjs.com/package/@anthropic-ai/claude-code?activeTab=versions
+CLAUDE_VERSION = "2.1.302"
+CLAUDE_BIN = DEPENDENCIES / "claude" / "node_modules" / ".bin" / "claude"
+CLAUDE_MODEL = env("HARNESS2_CLAUDE_MODEL", "")
+
+# Pinned from the npm "latest" channel; releases:
+# https://www.npmjs.com/package/@earendil-works/pi-coding-agent?activeTab=versions
+PI_VERSION = "1.4.0"
+PI_BIN = DEPENDENCIES / "pi" / "node_modules" / ".bin" / "pi"
+PI_MODEL = env("HARNESS2_PI_MODEL", SOLVER_MODEL_OC)  # same `provider/model` form as OpenCode
+
 WB_SOLVER_MODEL = "harness2/solver"
 WB_WEB_JUDGE = "harness2/judge"
 WB_RENDER_PY = sys.executable

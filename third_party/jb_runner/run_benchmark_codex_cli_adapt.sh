@@ -390,8 +390,14 @@ PYTHON_EXEC
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempt $attempt session: ${session_id:-unknown}" | tee -a "$log_file"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempt $attempt structured trajectory saved to: $attempt_traj_file" | tee -a "$log_file"
 
+    # A crash (not a timeout) never delivers: keep its partial files beside the
+    # trajectory, so the next launch re-rolls instead of skipping the task as done.
+    if [[ $exit_code -ne 0 && $exit_code -ne 124 && $exit_code -ne 137 ]] \
+        && [[ -n "$(ls -A "$temp_output_dir" 2>/dev/null)" ]]; then
+        mv "$temp_output_dir" "${attempt_traj_file%.jsonl}.partial"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Partial output kept at: ${attempt_traj_file%.jsonl}.partial" | tee -a "$log_file"
     # Task done: move the output directory to its final location
-    if [[ -d "$temp_output_dir" ]] && [[ -n "$(ls -A "$temp_output_dir" 2>/dev/null)" ]]; then
+    elif [[ -d "$temp_output_dir" ]] && [[ -n "$(ls -A "$temp_output_dir" 2>/dev/null)" ]]; then
         mkdir -p "$final_output_dir"
         mv "$temp_output_dir"/* "$final_output_dir"/
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Output moved to: $final_output_dir" | tee -a "$log_file"

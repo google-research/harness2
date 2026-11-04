@@ -190,6 +190,14 @@ def workbuddy_models(*, dry_run=False):
             path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def npm_cli(package: str, version: str, name: str, *flags: str, dry_run=False):
+    """Pin an npm-distributed agent CLI into dependencies/<name>; nothing global."""
+    run(
+        ["npm", "install", "--prefix", config.DEPENDENCIES / name, *flags, f"{package}@{version}"],
+        dry_run=dry_run,
+    )
+
+
 def codex(*, dry_run=False):
     root = config.DEPENDENCIES / "codex"
     run(
