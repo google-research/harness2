@@ -90,3 +90,39 @@ class ProposerSessionErrorsTests(unittest.TestCase):
                     self.assertTrue(reply.ok)
                     self.assertEqual(reply.text, "partial or final answer")
                     self.assertEqual(reply.cost_usd, 0.25)
+
+    def test_timed_out_session_keeps_the_cost_of_its_finished_steps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            entry = root / "opencode/packages/opencode/src/index.ts"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("")
+            events = [
+                {"type": "step_finish", "part": {"type": "step-finish", "cost": 0.75}},
+                {"type": "step_finish", "part": {"type": "step-finish", "cost": 1.25}},
+            ]
+            executable = root / "protocol-standin"
+            executable.write_text(
+                "#!/usr/bin/env python3\nimport time\n"
+                + "print("
+                + repr("\n".join(json.dumps(e) for e in events))
+                + ", flush=True)\n"
+                + "time.sleep(60)\n"
+            )
+            executable.chmod(0o700)
+            audit = root / "audit"
+            proposer = Proposer(
+                ChannelSpec("opencode", "local/protocol-fixture"), audit_dir=audit, attempts=1
+            )
+            with (
+                patch.object(config, "BUN", executable),
+                patch.object(config, "OPENCODE_DIR", root / "opencode"),
+            ):
+                with self.assertRaises(ProposerError) as caught:
+                    proposer.call("Read the local protocol fixture", None, "fixture", timeout=2)
+            self.assertIn("timeout after 2s", str(caught.exception))
+            self.assertEqual(caught.exception.cost_usd, 2.0)
+            self.assertFalse(proposer._calls[-1].ok)
+            self.assertEqual(proposer._calls[-1].cost_usd, 2.0)
+            (meta,) = audit.glob("*.meta.json")
+            self.assertEqual(json.loads(meta.read_text())["cost_usd"], 2.0)
