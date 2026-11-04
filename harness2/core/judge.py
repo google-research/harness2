@@ -29,6 +29,11 @@ from typing import Sequence
 from .spec import BenchmarkAdapter
 
 
+def has_grade(n_passed: int | None, n_criteria: int | None) -> bool:
+    """A score needs a numerator and a positive denominator; zero passes is valid."""
+    return n_passed is not None and n_criteria is not None and n_criteria > 0
+
+
 @dataclass
 class Scored:
     task_id: str
@@ -37,6 +42,7 @@ class Scored:
     label: str
     run_id: str
     chosen_is_base: bool
+    selected_at: str = ""
     n_passed: int | None = None
     n_criteria: int | None = None
     all_pass: bool = False
@@ -46,7 +52,7 @@ class Scored:
     @property
     def graded(self) -> bool:
         """Whether the judge succeeded, not whether the run did well."""
-        return self.n_criteria is not None and self.n_criteria > 0
+        return has_grade(self.n_passed, self.n_criteria)
 
     @property
     def frac(self) -> float | None:
@@ -68,9 +74,16 @@ def judge_one(
     run_dir: Path,
     *,
     chosen_is_base: bool = False,
+    selected_at: str = "",
 ) -> Scored:
     s = Scored(
-        task_id=task_id, mode=mode, k=k, label=label, run_id=run_id, chosen_is_base=chosen_is_base
+        task_id=task_id,
+        mode=mode,
+        k=k,
+        label=label,
+        run_id=run_id,
+        chosen_is_base=chosen_is_base,
+        selected_at=selected_at,
     )
     try:
         got = adapter.score(run_dir, task_id)
@@ -107,6 +120,7 @@ def judge_selections(
                         label=sel.get("chosen_label", ""),
                         run_id=sel.get("chosen_run_id", ""),
                         chosen_is_base=bool(sel.get("chosen_is_base")),
+                        selected_at=sel.get("selected_at", ""),
                         error="selection did not complete successfully",
                     )
                 )
@@ -122,6 +136,7 @@ def judge_selections(
                     sel.get("chosen_run_id", ""),
                     Path(rd),
                     chosen_is_base=bool(sel.get("chosen_is_base")),
+                    selected_at=sel.get("selected_at", ""),
                 )
             ] = sel
         for f in as_completed(futs):
@@ -137,6 +152,7 @@ def judge_selections(
                         label=sel.get("chosen_label", ""),
                         run_id=sel.get("chosen_run_id", ""),
                         chosen_is_base=bool(sel.get("chosen_is_base")),
+                        selected_at=sel.get("selected_at", ""),
                         error=f"{type(exc).__name__}: {exc}",
                     )
                 )

@@ -571,7 +571,12 @@ def _extractor_lacks_deps(got: dict) -> bool:
     )
 
 
-_JUDGE_FAILURE_PREFIXES = ("opus judge failed", "failed after", "failed to get judge response")
+_JUDGE_FAILURE_PREFIXES = (
+    "opus judge failed",
+    "failed after",
+    "failed to get judge response",
+    "judge raised an exception:",
+)
 
 
 def _has_events(p: Path) -> bool:
@@ -734,11 +739,13 @@ class JobBenchAdapter:
         label = run_id.replace("/", "__")
         out = self._out_dir(task_id, label)
         mark = self._traj_dir(task_id, label)
-        if RM.is_complete(mark, harness_dir=harness_dir) and self.artifacts_intact(out):
+        inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        reusable = RM.is_complete(mark, harness_dir=harness_dir, inputs=inputs)
+        if reusable and self.artifacts_intact(out):
             out.mkdir(parents=True, exist_ok=True)
             return out
         if out.is_dir() or mark.is_dir():
-            reason = RM.why_not(mark, harness_dir=harness_dir)
+            reason = RM.why_not(mark, harness_dir=harness_dir, inputs=inputs)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -765,6 +772,7 @@ class JobBenchAdapter:
             mark,
             run_id=run_id,
             harness_dir=harness_dir,
+            inputs=inputs,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return dirs[0]
@@ -802,7 +810,7 @@ class JobBenchAdapter:
         render_dir = Path(tempfile.mkdtemp(prefix=f"hrender_{label}_"))
         render_opencode_tree(install.staging_dir, render_dir, _render_ctx(self.domain_of(task_id)))
         env = {
-            **os.environ,
+            **config.scrub_env(keep=config.provider_keys(config.SOLVER_MODEL_OC)),
             "TASK_IDS": task_id,
             "LABEL": label,
             "HARNESS_RENDER_DIR": str(render_dir),
@@ -925,6 +933,7 @@ class JobBenchAdapter:
                     capture_output=True,
                     text=True,
                     timeout=900,
+                    env=config.scrub_env(),
                 )
                 if r.returncode == 0:
                     got = json.loads(r.stdout)
@@ -1169,7 +1178,7 @@ class JobBenchAdapter:
             label,
         ]
         env = {
-            **os.environ,
+            **config.scrub_env(),
             "JUDGE_API_KEY": token,
             "JUDGE_REASONING_EFFORT": config.JB_JUDGE_REASONING_EFFORT,
             "VERTEXAI_LOCATION": config.VERTEX_REGION,

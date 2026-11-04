@@ -224,6 +224,92 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
+    def test_failed_rerun_clears_stale_selections_in_summary(self):
+        self.run_stream(k=1)
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg1/ledger-1/summary.json"
+        initial = json.loads(summary_path.read_text())
+        self.assertTrue(initial["selections"]["agg"]["ok"])
+        self.assertTrue(initial["selections"]["seq"]["ok"])
+
+        (Path(initial["selections"]["agg"]["chosen_run_dir"]) / "answer.txt").unlink()
+        with patch(
+            "harness2.core.recursion.run_mode",
+            side_effect=RuntimeError("recursion failed on rerun"),
+        ):
+            failed_mode = self.run_stream(k=1)
+        self.assertEqual([row["status"] for row in failed_mode["tasks"]], ["partial", "skipped"])
+        after_mode_err = json.loads(summary_path.read_text())
+        for mode in ("agg", "seq"):
+            self.assertFalse(after_mode_err["modes"][mode]["ok"])
+            self.assertFalse(after_mode_err["selections"][mode]["ok"])
+            self.assertEqual(after_mode_err["selections"][mode]["chosen_label"], "")
+        self.adapter.score = Mock(return_value={"n_passed": 1, "n_criteria": 1})
+        rows = judge.judge_selections(self.adapter, list(after_mode_err["selections"].values()))
+        self.adapter.score.assert_not_called()
+        self.assertTrue(all(not r.graded for r in rows))
+
+        class PaidReflectionProposer(DemoProposer):
+            def call(self, mission, context_dir, label, **kwargs):
+                reply = super().call(mission, context_dir, label, **kwargs)
+                if label.startswith("experience."):
+                    reply.cost_usd = 4.0
+                return reply
+
+        orig_add = Library.add
+
+        def fail_ledger1(lib_self, task_id, *a, **kw):
+            if task_id == "ledger-1":
+                raise RuntimeError("library write failed")
+            return orig_add(lib_self, task_id, *a, **kw)
+
+        with patch.object(Library, "add", autospec=True, side_effect=fail_ledger1):
+            failed_lib = self.run_stream(k=1, proposer=PaidReflectionProposer(self.proposer.spec))
+        self.assertEqual([row["status"] for row in failed_lib["tasks"]], ["partial", "skipped"])
+        after_lib_err = json.loads(summary_path.read_text())
+        for mode in ("agg", "seq"):
+            self.assertFalse(after_lib_err["selections"][mode]["ok"])
+            self.assertEqual(after_lib_err["selections"][mode]["usd"], 4.0)
+
+        repaired = self.run_stream(k=1)
+        self.assertEqual([row["status"] for row in repaired["tasks"]], ["ok", "skipped"])
+        restored = json.loads(summary_path.read_text())
+        (Path(restored["selections"]["agg"]["chosen_run_dir"]) / "answer.txt").unlink()
+        with patch.object(self.adapter, "execute", side_effect=RuntimeError("executor down")):
+            failed_base = self.run_stream(k=1)
+        self.assertEqual(
+            [row["status"] for row in failed_base["tasks"]], ["base-failed", "skipped"]
+        )
+        after_base_err = json.loads(summary_path.read_text())
+        self.assertEqual(after_base_err["status"], "base-failed")
+        for mode in ("agg", "seq"):
+            self.assertFalse(after_base_err["modes"][mode]["ok"])
+            self.assertFalse(after_base_err["selections"][mode]["ok"])
+    def test_failed_rejudge_keeps_grade_only_for_same_selection(self):
+        from harness2.cli import judge as judge_cli
+
+        def selections():
+            return {s["task_id"]: s for s in judge_cli.collect_selections(ns_dir, ("agg",))}
+
+        self.run_stream(k=1)
+        ns_dir = self.adapter.spec.runs_root / "demo-oc-agg1"
+        first = selections()
+        self.assertTrue(all(sel["selected_at"] for sel in first.values()))
+        self.adapter.score = Mock(return_value={"n_passed": 1, "n_criteria": 1})
+        graded = judge.judge_selections(self.adapter, list(first.values()))
+        self.adapter.score = Mock(side_effect=RuntimeError("judge endpoint unavailable"))
+        failed = judge.judge_selections(self.adapter, list(first.values()))
+        self.assertTrue(all(r.graded for r in judge_cli._merge(graded, failed)))
+
+        (Path(first["ledger-1"]["chosen_run_dir"]) / "answer.txt").unlink()
+        self.run_stream(k=1)
+        again = selections()
+        self.assertEqual(again["ledger-1"]["chosen_run_id"], first["ledger-1"]["chosen_run_id"])
+        self.assertNotEqual(again["ledger-1"]["selected_at"], first["ledger-1"]["selected_at"])
+        self.assertEqual(again["ledger-2"]["selected_at"], first["ledger-2"]["selected_at"])
+        failed = judge.judge_selections(self.adapter, list(again.values()))
+        merged = {r.task_id: r.graded for r in judge_cli._merge(graded, failed)}
+        self.assertEqual(merged, {"ledger-1": False, "ledger-2": True})
+
 
 if __name__ == "__main__":
     unittest.main()
