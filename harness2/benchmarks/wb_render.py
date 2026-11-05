@@ -285,6 +285,22 @@ def _bridge_interpreter() -> str:
 _BINARY_HANDLERS = {".xlsx": ("openpyxl", _xlsx_text), ".pptx": ("pptx", _pptx_text)}
 
 
+def _render_binary(path: Path, name: str) -> str:
+    """One xlsx/pptx as text. A file its reader rejects, such as CSV text saved as .xlsx,
+    renders as that failure: it is what the agent produced, and raising would discard the
+    rollout's other artifacts with it. A missing reader still raises."""
+    _, fn = _BINARY_HANDLERS[path.suffix.lower()]
+    try:
+        return fn(path, name)
+    except ImportError:
+        raise
+    except Exception as exc:
+        return (
+            f"({path.suffix} file, {path.stat().st_size:,} bytes -- unreadable: "
+            f"{type(exc).__name__}: {str(exc)[:200]})"
+        )
+
+
 def _render_binaries(
     trial: Path, subset: str, items: list[tuple[str, Path, str]]
 ) -> dict[str, str]:
@@ -299,8 +315,7 @@ def _render_binaries(
 
     out: dict[str, str] = {}
     for key, path, name in local:
-        _, fn = _BINARY_HANDLERS[path.suffix.lower()]
-        out[key] = fn(path, name)
+        out[key] = _render_binary(path, name)
 
     if remote:
         payload = {
@@ -552,8 +567,7 @@ def _bridge_main() -> None:
         p = Path(it["path"])
 
         _admit(trial, p, subset)
-        _, fn = _BINARY_HANDLERS[p.suffix.lower()]
-        texts[it["key"]] = fn(p, it["name"])
+        texts[it["key"]] = _render_binary(p, it["name"])
     print(json.dumps({"texts": texts}))
 
 
