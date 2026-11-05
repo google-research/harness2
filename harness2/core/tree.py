@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -124,23 +125,32 @@ def _stub_paths(surface: SurfaceSpec) -> frozenset[str]:
     return frozenset(rel for rel, _ in surface.stubs)
 
 
+def is_plain_file(p: Path) -> bool:
+    """A regular file, not a symlink. Hard links pass: operators copy trees with them."""
+    try:
+        return stat.S_ISREG(p.lstat().st_mode)
+    except OSError:
+        return False
+
+
 def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None = None) -> Tree:
     """rel -> content for every file on the editable surface, README stubs excluded.
 
-    Pass `rejected` to collect paths that exist on disk but are off the surface.
+    Pass `rejected` to collect paths that exist on disk but are symlinks or off the surface.
     """
     d = Path(d)
     out: Tree = {}
-    if not d.is_dir():
+    if not d.is_dir() or d.is_symlink():
         return out
     stubs = _stub_paths(surface)
     for p in sorted(d.rglob("*")):
-        if not p.is_file() or "__pycache__" in p.parts:
+        # Directories, FIFOs and sockets are skipped; links stay in so they can be rejected.
+        if not (p.is_file() or p.is_symlink()) or "__pycache__" in p.parts:
             continue
         rel = str(p.relative_to(d))
         if rel in stubs:
             continue
-        if not is_allowed(surface, rel):
+        if not is_plain_file(p) or not is_allowed(surface, rel):
             if rejected is not None:
                 rejected.append(rel)
             continue
@@ -149,19 +159,34 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
 
 
 def is_tree(surface: SurfaceSpec, d: Path | str) -> bool:
+    """A real directory with an always-on file and no symlink anywhere under it."""
     d = Path(d)
-    return d.is_dir() and any((d / a).is_file() for a in surface.always_on)
+    if not d.is_dir() or d.is_symlink():
+        return False
+    if not any(is_plain_file(d / a) for a in surface.always_on):
+        return False
+    return not any(p.is_symlink() for p in d.rglob("*"))
 
 
 def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: bool = True) -> Path:
     """Materialise an exact editable tree, with always-on files and optional stubs present.
 
-    Files outside the editable surface are preserved; editable files already there are not.
+    Regular files outside the editable surface are preserved; editable files already there
+    are not. Symlinks anywhere under `dest` are removed, whether on the surface or not, and a
+    path off the surface raises `ValueError`.
     """
     dest = Path(dest)
+    if dest.is_symlink():
+        raise ValueError(f"destination root is a symlink: {dest}")
+    bad = [rel for rel in tree if not is_allowed(surface, rel)]
+    if bad:
+        raise ValueError(f"path is off the editable surface: {bad[0]!r}")
     dest.mkdir(parents=True, exist_ok=True)
     stub_set = _stub_paths(surface)
     for p in sorted(dest.rglob("*"), reverse=True):
+        if p.is_symlink():
+            p.unlink()
+            continue
         if not p.is_file():
             continue
         rel = str(p.relative_to(dest))

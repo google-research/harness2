@@ -72,6 +72,10 @@ guardrails, memory, tool guidance, subagents, skills, scripts, and plugins**.
 They control context construction, the tool interface, delegation, and behavior
 inside the tool loop.
 
+Proposals may only change files on this editable surface. A proposal that
+writes outside it or puts a symlink or hard link on it is not applied and goes
+back to the proposer to fix.
+
 <p align="center">
   <a href="assets/components.png">
     <img src="assets/components.png" alt="Eight harness components grouped by runtime role: system prompt, guardrails, memory, and skills construct context; tool guidance and scripts define the tool interface; subagents orchestrate delegated work; plugins control middleware." width="100%">
