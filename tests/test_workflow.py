@@ -205,6 +205,23 @@ class WorkflowTests(unittest.TestCase):
         selections = json.loads(summary_path.read_text())["selections"]
         self.assertEqual([selections[mode]["usd"] for mode in ("agg", "seq")], [1, 2])
 
+    def test_experience_fields_may_continue_on_following_lines(self):
+        class MultiLineExperience(DemoProposer):
+            def call(self, mission, context_dir, label, **kwargs):
+                reply = super().call(mission, context_dir, label, **kwargs)
+                if label.startswith("experience."):
+                    reply.text = reply.text.replace("evidence: ", "evidence:\n- ").replace(
+                        "confidence: ", "confidence: high\n  because "
+                    )
+                return reply
+
+        self.run_stream(k=1, proposer=MultiLineExperience(self.proposer.spec))
+        library = Library(self.root / "library/1/seq", "accounting", self.adapter.substrate.surface())
+        self.assertTrue(library.entries())
+        text = (library.entry_dir("ledger-1") / "EXPERIENCE.md").read_text()
+        self.assertIn("- **evidence**: - The scripts/summarize.py row", text)
+        self.assertIn("- **confidence**: high\n    because high for", text)
+
     def test_failed_selection_is_never_judged(self):
         class FailedSelector(DemoProposer):
             def call(self, mission, context_dir, label, **kwargs):
