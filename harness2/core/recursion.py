@@ -200,7 +200,7 @@ def _run_stage(
                 max_attempts=TRANSPORT_ATTEMPTS,
             )
         except ProposerError as exc:
-            err = str(exc)
+            err = f"{err} | {exc}" if err else str(exc)
             execution_failed = True
             spent_calls += exc.attempts or TRANSPORT_ATTEMPTS
             spent_usd += exc.cost_usd
