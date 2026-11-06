@@ -506,8 +506,14 @@ def _roll_bases(
         label, rid = label_rid
         try:
             rd = adapter.execute(task_id, None, rid)
+            exists = Path(rd).exists()
             return RunView(
-                label=label, run_id=rid, run_dir=rd, ok=True, delivered=adapter.delivered(rd)
+                label=label,
+                run_id=rid,
+                run_dir=rd,
+                ok=exists,
+                delivered=exists and adapter.delivered(rd),
+                error="" if exists else "adapter returned a missing run directory",
             )
         except Exception as exc:
             return _dead(label, rid, dead_dir, f"{type(exc).__name__}: {exc}")
