@@ -491,12 +491,16 @@ def _distil(
     if not m:
         return {}
     out: dict = {}
+    current = None
     for line in m.group(1).strip().splitlines():
-        if ":" in line:
-            key, _, val = line.partition(":")
-            key = key.strip().lower()
-            if key in ("cue", "lesson", "evidence", "confidence"):
-                out[key] = val.strip()
+        key, sep, val = line.partition(":")
+        key = key.strip().lower()
+        if sep and key in ("cue", "lesson", "evidence", "confidence"):
+            current = key
+            out[key] = val.strip()
+        elif current is not None and line.strip():
+            # A value may continue on the following lines, e.g. `evidence:` and then bullets.
+            out[current] = (out[current] + "\n" + line.rstrip()).strip()
     if not all(out.get(key) for key in ("cue", "lesson", "evidence")):
         return {}
     if edits:

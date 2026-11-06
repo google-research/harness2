@@ -142,7 +142,7 @@ class Library:
         if exp.get("lesson"):
             lines += ["## Transferable lesson"]
             lines += [
-                f"- **{f}**: {str(exp[f]).strip()}"
+                f"- **{f}**: " + str(exp[f]).strip().replace("\n", "\n  ")
                 for f in ("cue", "lesson", "evidence", "confidence")
                 if exp.get(f)
             ]
