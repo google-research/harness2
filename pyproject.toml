@@ -35,6 +35,9 @@ harness2-bridge = "harness2.cli.bridge:main"
 [tool.setuptools.packages.find]
 include = ["harness2*"]
 
+[tool.setuptools.package-data]
+harness2 = ["third_party/**"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
