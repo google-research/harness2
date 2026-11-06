@@ -149,7 +149,9 @@ def _render_pool(
             )
         if pool:
             sel.evidence = "trajectory"
-            sel.dropped = [d for d in sel.dropped if d not in pool]
+            sel.dropped = [
+                d for d in sel.dropped if d.split(" (render failed")[0].split(" (trajectory failed")[0] not in pool
+            ]
     return pool, artifacts
 
 
