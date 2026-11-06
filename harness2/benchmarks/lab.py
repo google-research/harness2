@@ -983,6 +983,13 @@ class LabAdapter:
         nothing is cached. The ABSOLUTE run dir is passed: run_eval joins its own
         RESULTS_DIR with it, and an absolute right-hand side wins that join."""
         p = Path(run_dir) / "scores.json"
+        s = _json_or_none(p)
+        if s is None and p.is_file():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+            s = None
         if not p.is_file():
             cmd = [
                 str(config.LAB_PYTHON),
