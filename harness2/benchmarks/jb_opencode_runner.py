@@ -25,6 +25,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -207,22 +208,51 @@ def _timeout_seconds(raw: str, *, floor: int = 30) -> int:
     return max(floor, int(float(match.group(1)) * scale))
 
 
-def _terminate_process(proc: subprocess.Popen, *, grace: float = 30) -> int:
-    """Stop the process group, preserving GNU timeout's 124/137 exit statuses."""
+def _signal_group(pgid: int, sig: int) -> None:
+    """Signal a whole process group, tolerating one that has already gone."""
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
         pass
+    except PermissionError:
+        pass
+
+
+def _group_alive(pgid: int) -> bool:
+    """Whether any member of the process group is still running."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process(proc: subprocess.Popen, *, grace: float = 30, reap: float = 5.0) -> int:
+    """Stop the process group, preserving GNU timeout's 124/137 exit statuses.
+
+    The executor exiting is not the end of the rollout: a descendant that ignores
+    SIGTERM outlives `bun`, and would keep writing into the workspace after the
+    caller has cleaned it up. So the group is probed once the parent is gone and
+    killed if anything is left, which is also what makes the status honest --
+    124 means the group really did shut down on SIGTERM.
+    """
+    _signal_group(proc.pid, signal.SIGTERM)
+    code = 124
     try:
         proc.wait(timeout=grace)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        code = 137
+    if _group_alive(proc.pid):
+        _signal_group(proc.pid, signal.SIGKILL)
+        code = 137
+        deadline = time.monotonic() + reap
+        while _group_alive(proc.pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    if proc.poll() is None:
         proc.wait()
-        return 137
-    return 124
+    return code
 
 
 def _attempt(

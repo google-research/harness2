@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,62 @@ class TerminateProcessTests(unittest.TestCase):
         proc = self._start("signal.SIG_IGN")
 
         self.assertEqual(runner._terminate_process(proc, grace=1), 137)
+
+    def test_a_child_that_outlives_its_parent_is_killed_and_reported_as_137(self):
+        """A descendant ignoring SIGTERM must not survive the parent's exit."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        flag = Path(temporary.name) / "child-ready"
+        child_source = (
+            "import pathlib,signal,sys,time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "pathlib.Path(sys.argv[1]).write_text('ready')\n"
+            "time.sleep(120)\n"
+        )
+        parent_source = (
+            "import pathlib,subprocess,sys,time\n"
+            f"c = subprocess.Popen([sys.executable,'-u','-c',{child_source!r}, sys.argv[1]])\n"
+            # Only exit once the child's SIGTERM handler is installed, so the test
+            # measures the orphan case and not a startup race.
+            "deadline = time.monotonic() + 30\n"
+            "while not pathlib.Path(sys.argv[1]).exists() and time.monotonic() < deadline:\n"
+            "    time.sleep(0.02)\n"
+            "print(c.pid, flush=True)\n"
+            "sys.exit(0)\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "-c", parent_source, str(flag)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        self.addCleanup(self._cleanup, proc)
+        child_pid = int(proc.stdout.readline().strip())
+        self.addCleanup(self._kill, child_pid)
+        self.assertTrue(flag.is_file(), "the child never reported readiness")
+
+        # The parent is already gone, so a plain `proc.wait()` returns at once.
+        self.assertEqual(runner._terminate_process(proc, grace=2), 137)
+        self.assertFalse(self._alive(child_pid), "the orphaned child survived the time limit")
+
+    @staticmethod
+    def _alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def _kill(cls, pid: int) -> None:
+        if cls._alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def test_an_already_dead_process_still_reports_the_time_limit(self):
         proc = self._start("signal.SIG_DFL")
