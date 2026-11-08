@@ -19,10 +19,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -177,9 +180,6 @@ def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
 
 def _command(cfg: Settings, workspace: Path, prompt: str, title: str) -> list[str]:
     cmd = [
-        "timeout",
-        "--kill-after=30s",
-        cfg.timeout_per_task,
         "bun",
         "run",
         "--cwd",
@@ -196,6 +196,63 @@ def _command(cfg: Settings, workspace: Path, prompt: str, title: str) -> list[st
     if cfg.variant:
         cmd += ["--variant", cfg.variant]
     return cmd + ["--model", cfg.model_id, "--title", title, "--format", "json"]
+
+
+def _timeout_seconds(raw: str, *, floor: int = 30) -> int:
+    """Seconds from a GNU timeout DURATION ("3600", "90s", "30m"); the floor on anything else."""
+    text = str(raw).strip()
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([smhd]?)", text)
+    if not match:
+        return floor
+    scale = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+    return max(floor, int(float(match.group(1)) * scale))
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    """Signal a whole process group, tolerating one that has already gone."""
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        pass
+
+
+def _group_alive(pgid: int) -> bool:
+    """Whether any member of the process group is still running."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process(proc: subprocess.Popen, *, grace: float = 30, reap: float = 5.0) -> int:
+    """Stop the process group, preserving GNU timeout's 124/137 exit statuses.
+
+    The executor exiting is not the end of the rollout: a descendant that ignores
+    SIGTERM outlives `bun`, and would keep writing into the workspace after the
+    caller has cleaned it up. So the group is probed once the parent is gone and
+    killed if anything is left, which is also what makes the status honest --
+    124 means the group really did shut down on SIGTERM.
+    """
+    _signal_group(proc.pid, signal.SIGTERM)
+    code = 124
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        code = 137
+    if _group_alive(proc.pid):
+        _signal_group(proc.pid, signal.SIGKILL)
+        code = 137
+        deadline = time.monotonic() + reap
+        while _group_alive(proc.pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    if proc.poll() is None:
+        proc.wait()
+    return code
 
 
 def _attempt(
@@ -220,17 +277,27 @@ def _attempt(
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
-            _command(cfg, workspace, prompt, title),
-            cwd=cfg.opencode_dir,
-            env={
-                **os.environ,
-                **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
-                "OPENCODE_PERMISSION": _permission(workspace),
-            },
-            stdout=out,
-            stderr=err,
-        ).returncode
+        try:
+            proc = subprocess.Popen(
+                _command(cfg, workspace, prompt, title),
+                cwd=cfg.opencode_dir,
+                env={
+                    **os.environ,
+                    **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
+                    "OPENCODE_PERMISSION": _permission(workspace),
+                },
+                stdout=out,
+                stderr=err,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            print(f"Could not start the executor: {type(exc).__name__}: {exc}", file=err)
+            code = 127
+        else:
+            try:
+                code = proc.wait(timeout=_timeout_seconds(cfg.timeout_per_task))
+            except subprocess.TimeoutExpired:
+                code = _terminate_process(proc)
     with open(raw, encoding="utf-8", errors="replace") as src:
         traj_file.write_text(
             "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
