@@ -722,6 +722,8 @@ class JobBenchAdapter:
             except OSError:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if not dst.is_dir():
+                    if stale.is_dir():
+                        os.rename(stale, dst)  # the previous folder stays readable
                     raise
             shutil.rmtree(stale, ignore_errors=True)
         return dst

@@ -21,6 +21,7 @@ re-rolls, so the store copy the runner reads must change with it.
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -85,6 +86,24 @@ class StoreTaskInputsTests(unittest.TestCase):
         first = self.answer()
         self.assertEqual(self.answer(), first)
         self.assertEqual(self.rolls, 1)
+
+    def test_failed_swap_puts_the_previous_folder_back(self):
+        self.answer()
+        self.instructions.write_text("Reconcile the April ledger.")
+        real_rename = os.rename
+
+        def rename(src, dst, *args, **kwargs):
+            if Path(src).name.startswith(".task_folder.tmp"):
+                raise PermissionError("the new folder cannot be moved into place")
+            return real_rename(src, dst, *args, **kwargs)
+
+        with patch("os.rename", rename), self.assertRaises(PermissionError):
+            self.answer()
+        store = self.adapter.store / TASK
+        kept = (store / "task_folder/TASK_INSTRUCTIONS.txt").read_text()
+        self.assertEqual(kept, "Reconcile the March ledger.")
+        self.assertEqual([p.name for p in store.iterdir() if p.name.startswith(".task_folder")], [])
+        self.assertEqual(self.answer()["TASK_INSTRUCTIONS.txt"], "Reconcile the April ledger.")
 
 
 if __name__ == "__main__":
