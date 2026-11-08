@@ -1,8 +1,8 @@
 # Setup guide
 
 Start with the [quick start](../README.md#install). This guide covers benchmark
-dependencies, model credentials, and the optional Codex executor. For individual
-benchmarks, see the [benchmark guides](BENCHMARKS.md).
+dependencies, model credentials, the optional Codex executor, and the pi
+substrate. For individual benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
 
@@ -146,6 +146,23 @@ changing either. `harness2-check` reports stale configuration until then.
 
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
+
+## pi substrate
+
+`harness2.substrate.PiSubstrate` stages a harness tree as a project-local pi
+overlay with the `pi_project` install mode: `.pi/APPEND_SYSTEM.md`, skills under
+`.pi/skills/`, extensions under `.pi/extensions/`, subagent prompt templates
+under `.pi/prompts/`, and helper scripts under `scripts/`. It is not selected
+with `--substrate`; use it directly from code, as the end-to-end test does.
+
+The substrate's reference argv (`run_argv`) invokes the pi CLI, resolved from
+`PI_BIN` or `~/.pi/agent/bin/pi`. Its end-to-end check runs a real pi agent and
+needs a working pi installation and model credentials:
+
+```bash
+. .venv/bin/activate
+python tests/test_pi_substrate.py
+```
 
 ## Network access during setup
 
