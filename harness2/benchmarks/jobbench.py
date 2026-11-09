@@ -695,10 +695,13 @@ class JobBenchAdapter:
         return "/".join(parts[i - 2 : i]), p.name
 
     def _ensure_store_task(self, task_id: str, inputs: str) -> Path:
-        """Copy the clean task inputs from the dataset into the run store, atomically.
+        """Copy the clean task inputs from the dataset into the run store.
 
         The runner reads this copy, not the dataset, so it is replaced whenever it no longer
-        digests to `inputs`, the dataset digest that `execute` marks the rollout with.
+        digests to `inputs`, the dataset digest that `execute` marks the rollout with. A first
+        copy appears all at once. A replacement moves the old folder aside before the new one
+        goes in, so a runner that is already opening the old folder can miss it for an instant,
+        and a failed second rename puts the old folder back.
         """
         dst = self.store / task_id / "task_folder"
         src = self._dataset_task(task_id) / "task_folder"
