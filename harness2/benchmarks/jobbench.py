@@ -694,11 +694,16 @@ class JobBenchAdapter:
         i = parts.index("model_output")
         return "/".join(parts[i - 2 : i]), p.name
 
-    def _ensure_store_task(self, task_id: str) -> Path:
-        """Copy the clean task inputs from the dataset into the run store, once, atomically."""
+    def _ensure_store_task(self, task_id: str, inputs: str) -> Path:
+        """Copy the clean task inputs from the dataset into the run store.
+
+        The runner reads this copy, not the dataset, so it is replaced whenever it no longer
+        digests to `inputs`, the dataset digest that `execute` marks the rollout with. A first
+        copy appears all at once. A replacement moves the old folder aside before the new one
+        goes in, so a runner that is already opening the old folder can miss it for an instant,
+        and a failed second rename puts the old folder back.
+        """
         dst = self.store / task_id / "task_folder"
-        if dst.is_dir():
-            return dst
         src = self._dataset_task(task_id) / "task_folder"
         if not src.is_dir():
             raise FileNotFoundError(
@@ -707,16 +712,23 @@ class JobBenchAdapter:
             )
         dst.parent.mkdir(parents=True, exist_ok=True)
         with _STORE_SEED_LOCK:
-            if dst.is_dir():
+            if dst.is_dir() and RM.inputs_fingerprint(self.task_prompt(task_id), dst) == inputs:
                 return dst
-            tmp = dst.parent / f".task_folder.tmp.{os.getpid()}.{threading.get_ident()}"
+            tag = f"{os.getpid()}.{threading.get_ident()}"
+            tmp = dst.parent / f".task_folder.tmp.{tag}"
             shutil.copytree(src, tmp, dirs_exist_ok=True)
+            stale = dst.parent / f".task_folder.stale.{tag}"
+            if dst.is_dir():
+                os.rename(dst, stale)
             try:
                 os.rename(tmp, dst)
             except OSError:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if not dst.is_dir():
+                    if stale.is_dir():
+                        os.rename(stale, dst)  # the previous folder stays readable
                     raise
+            shutil.rmtree(stale, ignore_errors=True)
         return dst
 
     def execute(
@@ -747,7 +759,7 @@ class JobBenchAdapter:
             reporting.unlink(missing_ok=True)
         if own.parent.is_dir():
             shutil.rmtree(own.parent)
-        self._ensure_store_task(task_id)
+        self._ensure_store_task(task_id, inputs)
         src = Path(harness_dir) if harness_dir is not None else self.base_harness()
         install = self.substrate.materialise(src, self.spec, {})
         try:
