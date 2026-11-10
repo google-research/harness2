@@ -26,6 +26,35 @@ from harness2.demo import DemoAdapter, DemoProposer
 
 
 class RequestedModeResumeTests(unittest.TestCase):
+    def test_unreadable_summary_is_replaced_and_can_resume_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = DemoAdapter(root)
+            proposer = DemoProposer(adapter.spec.channels["proposer"])
+
+            def run():
+                return schedule.run_task(
+                    "ledger-1",
+                    1,
+                    adapter=adapter,
+                    prop=proposer,
+                    runs_root=adapter.spec.runs_root,
+                    modes=("seq",),
+                )
+
+            self.assertEqual(run().status, "ok")
+            summary = adapter.spec.runs_root / "demo-oc-agg1/ledger-1/summary.json"
+            for bad_summary in (b"null", b"[]", b'"not a summary"', b"{", b"\xff"):
+                with self.subTest(summary=bad_summary):
+                    summary.write_bytes(bad_summary)
+                    count = adapter.execution_count
+                    self.assertEqual(run().status, "ok")
+                    self.assertGreater(adapter.execution_count, count)
+                    self.assertTrue(json.loads(summary.read_text())["modes"]["seq"]["ok"])
+                    count = adapter.execution_count
+                    self.assertEqual(run().status, "skipped")
+                    self.assertEqual(adapter.execution_count, count)
+
     def test_valid_parallel_mode_resumes_when_sequential_selection_failed(self):
         class SequentialFailure(DemoProposer):
             def call(self, mission, context_dir, label, **kwargs):
