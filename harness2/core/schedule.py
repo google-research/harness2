@@ -296,11 +296,11 @@ def _merged_status(merged: dict) -> str:
     return "ok" if ok else "partial"
 
 
-def _load_old(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
+def _read_summary(path: Path) -> dict:
+    summary = json.loads(path.read_text())
+    if not isinstance(summary, dict):
+        raise ValueError("expected a JSON object")
+    return summary
 
 
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
@@ -316,7 +316,10 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
         try:
             merged = res.to_dict()
             if summary_path.is_file():
-                old = _load_old(summary_path)
+                try:
+                    old = _read_summary(summary_path)
+                except (OSError, ValueError):
+                    old = {}
                 inputs_changed = (
                     res.inputs is not None
                     and old.get("inputs") is not None
@@ -396,8 +399,8 @@ def _resume(
     answers to a different question, so they are re-derived rather than reported as complete.
     """
     try:
-        got = json.loads(summary_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        got = _read_summary(summary_path)
+    except (OSError, ValueError) as exc:
         print(
             f"  [{task_id}] unreadable summary.json ({type(exc).__name__}: {exc}); re-running",
             flush=True,
