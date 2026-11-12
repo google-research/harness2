@@ -155,13 +155,16 @@ overlay with the `pi_project` install mode: `.pi/APPEND_SYSTEM.md`, skills under
 under `.pi/prompts/`, and helper scripts under `scripts/`. It is not selected
 with `--substrate`; use it directly from code, as the end-to-end test does.
 
-The substrate's reference argv (`run_argv`) invokes the pi CLI, resolved from
-`PI_BIN` or `~/.pi/agent/bin/pi`. Its end-to-end check runs a real pi agent and
-needs a working pi installation and model credentials:
+The substrate's model defaults to the upstream reference route
+(`zai/glm-5.3`). Set `PI_SUBSTRATE_MODEL` in `.env` or the shell to use another
+pi `provider/model` route (for example, a local LiteLLM gateway). The end-to-end
+check runs a real pi agent and needs a working pi installation plus credentials
+for that model:
 
 ```bash
 . .venv/bin/activate
-python tests/test_pi_substrate.py
+python tests/test_pi_substrate_unit.py              # deterministic interface checks
+PI_SUBSTRATE_MODEL=... python tests/test_pi_substrate.py  # real-agent e2e
 ```
 
 ## Network access during setup

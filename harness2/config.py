@@ -174,6 +174,10 @@ WB_MODEL_CONNECTION = "local_proxy"
 
 DEFAULT_PROPOSER_CHANNEL = "opencode"
 PROPOSER_MODEL_BY_CHANNEL = {"opencode": IMPROVER_MODEL, "claude_cli": IMPROVER_MODEL}
+# Pi substrate model for programmatic/e2e use. The reference route is the direct
+# provider; set PI_SUBSTRATE_MODEL to any pi `provider/model` (for example a local
+# LiteLLM gateway) without changing benchmark configuration.
+PI_SUBSTRATE_MODEL = env("PI_SUBSTRATE_MODEL", "zai/glm-5.3")
 PHASE_WIDTH = 2
 TRANSPORT_ATTEMPTS = 2
 PROPOSER_CONCURRENCY = 2

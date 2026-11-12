@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from harness2 import config
 from harness2.substrate.pi import PI_SURFACE, PiSubstrate
 
 TREE = {
@@ -101,7 +102,7 @@ def main() -> int:
             "Use the helper script to compute 19 + 23, then double-check it with the "
             "sum-verify skill. Reply with the verified number only, on one line.",
             ws,
-            "zai/glm-5.3",
+            config.PI_SUBSTRATE_MODEL,
             title="pi-substrate-e2e",
         )
         print(f"[ok] argv: {' '.join(argv[:6])} ... (cwd={ws})")

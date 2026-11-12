@@ -32,9 +32,11 @@ argv passes `-a` because the overlay is staged by this harness, not by a human.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Mapping
@@ -144,6 +146,104 @@ def pi_bin() -> Path:
     return Path(os.environ.get("PI_BIN", str(Path.home() / ".pi" / "agent" / "bin" / "pi")))
 
 
+_TRUNC_FMT = "…(+{n} chars — render truncation)"
+
+
+def _clip(value: object, n: int) -> str:
+    text = "" if value is None else str(value)
+    if n <= 0 or len(text) <= n:
+        return text
+    return text[:n] + _TRUNC_FMT.format(n=len(text) - n)
+
+
+def _jsonish(value: object) -> str:
+    if value is None or isinstance(value, str):
+        return str(value or "")
+    return json.dumps(value, default=str, ensure_ascii=False)
+
+
+def _tool_result(value: object) -> str:
+    """Unwrap the common pi result envelope while preserving complex payloads."""
+    if not isinstance(value, dict):
+        return _jsonish(value)
+    content = value.get("content", value)
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        )
+    return _jsonish(content)
+
+
+def render_pi_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int = 400) -> str:
+    """Render pi's JSON event stream into the shared trajectory grammar.
+
+    The stream is JSONL: tool_execution_start/end, message_update, and the final
+    assistant message_end. Tool start/end records are merged so one call becomes
+    one ACTION/OBSERVATION pair.
+    """
+    try:
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"(failed to read trajectory: {e})"
+
+    lines: list[str] = []
+    starts: dict[str, tuple[str, object]] = {}
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if isinstance(event.get("error"), dict):
+            error = event["error"]
+            msg = error.get("message") or _jsonish(error)
+            lines.append(f"[ERROR] {_clip(msg, obs_trunc)}")
+            continue
+
+        etype = event.get("type")
+        call_id = str(event.get("toolCallId") or event.get("id") or "")
+        if etype == "tool_execution_start":
+            name = str(event.get("toolName") or "tool")
+            if call_id:
+                starts[call_id] = (name, event.get("args"))
+            else:
+                lines.append(f"[ACTION] {name}({_clip(_jsonish(event.get('args')), args_trunc)})")
+        elif etype == "tool_execution_end":
+            name, args = starts.pop(call_id, (str(event.get("toolName") or "tool"), None))
+            if call_id and call_id in starts:
+                name, args = starts[call_id]
+                starts.pop(call_id, None)
+            lines.append(f"[ACTION] {name}({_clip(_jsonish(args), args_trunc)})")
+            if event.get("isError"):
+                lines.append(f"[OBSERVATION ERROR] {_clip(_tool_result(event.get('result')), obs_trunc)}")
+            else:
+                lines.append(f"[OBSERVATION] {_clip(_tool_result(event.get('result')), obs_trunc)}")
+        elif etype == "message_end" and isinstance(event.get("message"), dict):
+            message = event["message"]
+            if message.get("role") == "assistant" and isinstance(message.get("content"), list):
+                text = "".join(
+                    block.get("text", "")
+                    for block in message["content"]
+                    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+                )
+                if text.strip():
+                    lines.append(f"[ASSISTANT] {_clip(text, obs_trunc)}")
+
+    rendered = "\n".join(lines).strip()
+    if not rendered:
+        return "(no parseable events in trajectory)"
+    if len(rendered) > max_chars:
+        dropped = len(rendered) - max_chars
+        rendered = rendered[:max_chars] + "\n" + _TRUNC_FMT.format(n=dropped)
+    return rendered
+
+
 class PiSubstrate:
     """pi behind the one Substrate interface; the launcher body is benchmark-supplied."""
 
@@ -154,6 +254,15 @@ class PiSubstrate:
 
     def surface(self) -> SurfaceSpec:
         return PI_SURFACE
+
+    def execute(
+        self, task_ref: str, install: Install, run_ids: list[str], timeout: int
+    ) -> list[Path]:
+        if self._launcher is None:
+            raise RuntimeError("PiSubstrate.execute requires a benchmark-supplied launcher")
+        return self._launcher(
+            RunRequest(task_ref=task_ref, run_ids=tuple(run_ids), timeout=int(timeout)), install
+        )
 
     def materialise(self, tree_dir: Path, spec, ctx: Mapping[str, str]) -> Install:
         mode = spec.install_mode
@@ -248,3 +357,27 @@ class PiSubstrate:
             prompt,
         ]
         return argv
+
+    def read_trajectory(
+        self, stream_path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int = 400
+    ) -> str:
+        return render_pi_events(
+            Path(stream_path), obs_trunc=obs_trunc, max_chars=max_chars, args_trunc=args_trunc
+        )
+
+    def preflight(self) -> None:
+        """Check that the pi CLI is present and runnable; starts no model call."""
+        binary = pi_bin()
+        if not binary.is_file():
+            raise RuntimeError(
+                f"pi CLI missing at {binary}: install pi.dev or set PI_BIN to its executable"
+            )
+        try:
+            proc = subprocess.run(
+                [str(binary), "--version"], capture_output=True, text=True, timeout=10, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise RuntimeError(f"pi CLI at {binary} is not runnable: {e}") from e
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "no output").strip()
+            raise RuntimeError(f"pi --version failed ({proc.returncode}): {detail}")
