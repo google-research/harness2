@@ -99,7 +99,7 @@ class Namespace:
         return f"{self}/{task_id}/{label}"
 
     def task_dir(self, root: Path, task_id: str) -> Path:
-        return Path(root) / str(self) / task_id.replace("/", "__")
+        return Path(root) / str(self) / library_store.slug(task_id)
 
     @classmethod
     def glob(cls, benchmark: str, substrate: str, k: int, *, mode: str = "*") -> tuple[str, str]:
@@ -303,6 +303,28 @@ def _load_old(path: Path) -> dict:
         return {}
 
 
+def _validate_task_ids(task_ids: Sequence[str]) -> None:
+    """Reject distinct IDs sharing a run/library path, before any task is dispatched."""
+    seen: dict[str, str] = {}
+    for task_id in task_ids:
+        name = library_store.slug(task_id)
+        previous = seen.setdefault(name, task_id)
+        if previous != task_id:
+            raise ValueError(
+                f"task IDs {previous!r} and {task_id!r} map to the same directory {name!r}; "
+                "use unambiguous task IDs"
+            )
+
+
+def _check_summary_identity(record: dict, task_id: str, path: Path) -> None:
+    """Legacy summaries may lack an ID, but a different recorded ID is never this task."""
+    if isinstance(record, dict) and "task_id" in record and record["task_id"] != task_id:
+        raise ValueError(
+            f"task {task_id!r} maps to {path.parent}, already used by task "
+            f"{record['task_id']!r}; use unambiguous task IDs or a different run namespace"
+        )
+
+
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
     """Merge `res` into the summary under an flock, atomically, deriving the merged status.
 
@@ -317,6 +339,7 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             merged = res.to_dict()
             if summary_path.is_file():
                 old = _load_old(summary_path)
+                _check_summary_identity(old, res.task_id, summary_path)
                 inputs_changed = (
                     res.inputs is not None
                     and old.get("inputs") is not None
@@ -403,6 +426,7 @@ def _resume(
             flush=True,
         )
         return False
+    _check_summary_identity(got, task_id, summary_path)
     if got.get("status") not in ("ok", "partial"):
         return False
     recorded_inputs = got.get("inputs")
@@ -750,6 +774,11 @@ def run_domain(
     pool_policy: str = "finals",
 ) -> dict:
     """Every task in one domain, in `stream_order()` order, threading the library forward."""
+    _validate_task_ids(task_ids)
+    namespace = Namespace(adapter.spec.name, adapter.substrate.name, "agg", k, seed, tag)
+    for task_id in task_ids:
+        summary = namespace.task_dir(runs_root, task_id) / "summary.json"
+        _check_summary_identity(_load_old(summary), task_id, summary)
     surface = adapter.substrate.surface()
     libs = {
         mode: library_store.Library(root=Path(library_root) / mode, domain=domain, surface=surface)
@@ -842,6 +871,8 @@ def task_stream(
         if max_tasks is not None and len(ordered_tasks[d]) >= int(max_tasks):
             continue
         ordered_tasks[d].append(t)
+    # Run directories omit the domain, so validate the whole selected stream.
+    _validate_task_ids([t for tasks in ordered_tasks.values() for t in tasks])
     return dict(ordered_tasks)
 
 
