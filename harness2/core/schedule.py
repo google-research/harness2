@@ -303,10 +303,17 @@ def _load_old(path: Path) -> dict:
         return {}
 
 
-def _write_summary(summary_path: Path, res: TaskResult) -> None:
+def _write_summary(
+    summary_path: Path,
+    res: TaskResult,
+    *,
+    latest_mode: str | None = None,
+    first_error: int = 0,
+) -> None:
     """Merge `res` into the summary under an flock, atomically, deriving the merged status.
 
     Modes may be written by separate processes, so records accumulate per mode.
+    When earlier modes are still recorded, only merge the mode that just finished.
     """
     import fcntl
 
@@ -323,13 +330,20 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
                     and old.get("inputs") != res.inputs
                 )
                 if not inputs_changed:
-                    for key in ("modes", "selections"):
-                        prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
-                        prev.update(merged.get(key) or {})
-                        merged[key] = prev
-
-                    merged["errors"] = list(merged.get("errors") or [])
-                    seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
+                    previous_modes = _modes_of(old)
+                    modes, selections, errors = res.modes, res.selections, res.errors
+                    latest_only = (
+                        latest_mode is not None
+                        and (res.modes.keys() - {latest_mode}) <= previous_modes.keys()
+                    )
+                    if latest_only:
+                        modes = {latest_mode: res.modes[latest_mode]}
+                        selections = {latest_mode: res.selections[latest_mode]}
+                        errors = errors[first_error:]
+                    merged["modes"] = previous_modes | modes
+                    merged["selections"] = dict(old.get("selections") or {}) | selections
+                    seen = {json.dumps(e, sort_keys=True, default=str) for e in errors}
+                    retained_errors = []
                     for e in old.get("errors") or []:
                         if e == "no base rollout produced anything" and res.status in (
                             "ok",
@@ -338,13 +352,16 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
                             continue
                         mode = str(e).partition(":")[0]
                         if (
-                            (res.modes.get(mode) or {}).get("ok")
-                            and (res.selections.get(mode) or {}).get("ok")
-                            and (res.selections.get(mode) or {}).get("chosen_label")
+                            (modes.get(mode) or {}).get("ok")
+                            and (selections.get(mode) or {}).get("ok")
+                            and (selections.get(mode) or {}).get("chosen_label")
                         ):
                             continue
                         if json.dumps(e, sort_keys=True, default=str) not in seen:
-                            merged["errors"].append(e)
+                            retained_errors.append(e)
+                    merged["errors"] = (
+                        retained_errors + errors if latest_only else errors + retained_errors
+                    )
                     if merged.get("status") in ("ok", "partial"):
                         merged["status"] = _merged_status(merged)
                 # else: the previous summary answered a different question. Its mode
@@ -692,7 +709,8 @@ def run_task(
         _write_summary(summary_path, res)
         return res
 
-    for mode in modes:
+    for index, mode in enumerate(modes):
+        first_error = len(res.errors)
         n = Namespace(bench, sub, mode, k, seed, tag)
         try:
             _run_one_mode(
@@ -726,11 +744,10 @@ def run_task(
                 usd=float((res.selections.get(mode) or {}).get("usd") or 0.0),
             ).to_dict()
             res.errors.append(f"{mode}: {err}")
-        res.status = "partial"
-        _write_summary(summary_path, res)
-
-    res.status = _merged_status(res.to_dict())
-    _write_summary(summary_path, res)
+        res.status = _merged_status(res.to_dict()) if index == len(modes) - 1 else "partial"
+        _write_summary(
+            summary_path, res, latest_mode=mode if index else None, first_error=first_error
+        )
     return res
 
 
