@@ -834,6 +834,20 @@ def task_stream(
     if max_tasks is not None and int(max_tasks) < 1:
         raise ValueError(f"max_tasks must be positive, got {max_tasks!r}")
 
+    # Independent selected domains must not prune the same experience library.
+    # A positive per-domain max_tasks limit cannot remove a selected domain.
+    seen: dict[str, str] = {}
+    for domain, tasks in by_domain.items():
+        if only_tasks and not wanted.intersection(tasks):
+            continue
+        directory = library_store.domain_dir(domain)
+        previous = seen.setdefault(directory, domain)
+        if previous != domain:
+            raise ValueError(
+                f"domains {previous!r} and {domain!r} map to the same library directory "
+                f"{directory!r}; use unambiguous domain names"
+            )
+
     stream = stream_order(by_domain, seed, _reference_domain_order(adapter, by_domain))
     ordered_tasks: dict[str, list[str]] = defaultdict(list)
     for d, t in stream:
@@ -842,16 +856,6 @@ def task_stream(
         if max_tasks is not None and len(ordered_tasks[d]) >= int(max_tasks):
             continue
         ordered_tasks[d].append(t)
-    # Independent domains must not prune or populate the same experience library.
-    seen: dict[str, str] = {}
-    for domain in ordered_tasks:
-        directory = library_store.domain_dir(domain)
-        previous = seen.setdefault(directory, domain)
-        if previous != domain:
-            raise ValueError(
-                f"domains {previous!r} and {domain!r} map to the same library directory "
-                f"{directory!r}; use unambiguous domain names"
-            )
     return dict(ordered_tasks)
 
 
