@@ -169,7 +169,7 @@ class LocalBenchmarkTests(unittest.TestCase):
         outside.write_text("external secret", encoding="utf-8")
 
         meta_path = run_dir / "_task_meta.json"
-        unsafe_outputs = ("../outside.txt", str(outside))
+        unsafe_outputs = (os.path.relpath(outside, workspace), str(outside))
         for output in unsafe_outputs:
             with self.subTest(output=output):
                 meta_path.write_text(
