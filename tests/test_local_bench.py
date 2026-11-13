@@ -14,6 +14,7 @@
 
 """Unit and regression tests for the Local Benchmark Adapter (--bench local)."""
 
+import json
 import os
 import sys
 import tempfile
@@ -137,6 +138,71 @@ class LocalBenchmarkTests(unittest.TestCase):
             # Crucial test: original files/ in task directory were NOT modified
             orig_ledger = (self.t1 / "files" / "ledger.csv").read_text(encoding="utf-8")
             self.assertNotIn("MODIFIED", orig_ledger)
+
+    def test_task_metadata_rejects_unsafe_output_paths(self):
+        adapter = LocalAdapter(self.tasks_dir, substrate="oc")
+        toml_path = self.t1 / "task.toml"
+
+        unsafe_outputs = (
+            "/etc/hosts",
+            "../outside.txt",
+            r"C:\Windows\System32\drivers\etc\hosts",
+            r"..\outside.txt",
+        )
+        for output in unsafe_outputs:
+            with self.subTest(output=output):
+                toml_path.write_text(
+                    f"outputs = [{json.dumps(output)}]\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ValueError, "Invalid output path"):
+                    adapter.task_meta("accounting/reconcile")
+
+    def test_declared_outputs_cannot_escape_workspace(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-path-escape")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        outside = self.root / "outside.txt"
+        outside.write_text("external secret", encoding="utf-8")
+
+        meta_path = run_dir / "_task_meta.json"
+        unsafe_outputs = ("../outside.txt", str(outside))
+        for output in unsafe_outputs:
+            with self.subTest(output=output):
+                meta_path.write_text(
+                    json.dumps({"outputs": [output]}), encoding="utf-8"
+                )
+                self.assertFalse(adapter.delivered(run_dir))
+                self.assertEqual(adapter.deliverable_files(run_dir), {})
+                self.assertNotIn("external secret", adapter.deliverable_text(run_dir))
+
+    def test_declared_output_symlink_cannot_escape_workspace(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-symlink-escape")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        outside = self.root / "outside-through-symlink.txt"
+        outside.write_text("external symlink secret", encoding="utf-8")
+        link = workspace / "leaked.txt"
+
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Symlink creation is unavailable: {exc}")
+
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": ["leaked.txt"]}), encoding="utf-8"
+        )
+        self.assertFalse(adapter.delivered(run_dir))
+        self.assertEqual(adapter.deliverable_files(run_dir), {})
+        self.assertNotIn(
+            "external symlink secret", adapter.deliverable_text(run_dir)
+        )
 
     def test_score_not_configured_vs_check_command(self):
         adapter = LocalAdapter(self.tasks_dir, substrate="oc")
