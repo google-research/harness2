@@ -35,7 +35,7 @@ import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
 
 from .. import config
@@ -229,6 +229,42 @@ class LocalAdapter:
         files_dir = self._task_dir(task_id) / "files"
         return files_dir if files_dir.is_dir() else None
 
+    @staticmethod
+    def _is_safe_output_relpath(out_rel: str) -> bool:
+        """Return whether an output declaration is a safe relative path."""
+        if not isinstance(out_rel, str) or not out_rel or "\x00" in out_rel:
+            return False
+
+        path = Path(out_rel)
+        windows_path = PureWindowsPath(out_rel)
+        if (
+            path.is_absolute()
+            or windows_path.is_absolute()
+            or windows_path.root
+            or windows_path.drive
+            or ".." in path.parts
+            or ".." in windows_path.parts
+        ):
+            return False
+        return True
+
+    def _resolve_output_path(self, workspace: Path, out_rel: str) -> Path | None:
+        """Resolve a declared output only when it remains inside the workspace.
+
+        Resolving the candidate before checking containment also rejects symlinks
+        that point outside the rollout workspace.
+        """
+        if not self._is_safe_output_relpath(out_rel):
+            return None
+
+        try:
+            root = workspace.resolve()
+            target = (root / Path(out_rel)).resolve()
+            target.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return target
+
     def task_meta(self, task_id: str) -> LocalTaskMeta:
         toml_path = self._task_dir(task_id) / "task.toml"
         if not toml_path.is_file():
@@ -245,7 +281,21 @@ class LocalAdapter:
         else:
             check_cmd = ()
         raw_outputs = data.get("outputs", ())
-        outputs = tuple(str(x) for x in raw_outputs)
+        if not isinstance(raw_outputs, (list, tuple)):
+            raise ValueError(
+                f"Invalid outputs for task {task_id}: expected an array of relative paths"
+            )
+        if any(not isinstance(output, str) for output in raw_outputs):
+            raise ValueError(
+                f"Invalid outputs for task {task_id}: each output path must be a string"
+            )
+        outputs = tuple(raw_outputs)
+        for output in outputs:
+            if not self._is_safe_output_relpath(output):
+                raise ValueError(
+                    f"Invalid output path for task {task_id}: {output!r}. "
+                    "Output paths must be relative and must not contain '..' components."
+                )
         timeout = int(data.get("timeout", self.timeout))
         return LocalTaskMeta(outputs=outputs, check=check_cmd, timeout=timeout)
 
@@ -532,8 +582,13 @@ class LocalAdapter:
 
         if outputs:
             for out_rel in outputs:
-                target = workspace / out_rel
-                if not target.is_file() or target.stat().st_size == 0:
+                target = self._resolve_output_path(workspace, out_rel)
+                if target is None or not target.is_file():
+                    return False
+                try:
+                    if target.stat().st_size == 0:
+                        return False
+                except OSError:
                     return False
             return True
 
@@ -571,8 +626,8 @@ class LocalAdapter:
         result: dict[str, str] = {}
         if outputs:
             for out_rel in outputs:
-                target = workspace / out_rel
-                if target.is_file():
+                target = self._resolve_output_path(workspace, out_rel)
+                if target is not None and target.is_file():
                     try:
                         result[out_rel] = target.read_text(encoding="utf-8", errors="replace")
                     except Exception:
