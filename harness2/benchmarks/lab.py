@@ -765,8 +765,11 @@ class LabAdapter:
     def _output_fingerprint(self, run_dir: Path) -> str | None:
         return RM.fingerprint(Path(run_dir) / "output") if self.delivered(run_dir) else None
 
+    def reference_marker_dir(self, run_dir: Path) -> Path:
+        return run_dir
+
     def artifacts_intact(self, run_dir: Path) -> bool:
-        marker = RM.read_mark(run_dir) or {}
+        marker = RM.read_mark(self.reference_marker_dir(run_dir)) or {}
         return (
             (run_dir / "metrics.json").is_file()
             and "output_fingerprint" in marker

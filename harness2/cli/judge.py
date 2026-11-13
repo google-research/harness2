@@ -35,10 +35,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from .. import config
 from ..core import judge as J
+from ..core import runmark
 from . import _common as C
 
 _DERIVED = ("frac", "graded")
@@ -111,34 +113,71 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
     return out
 
 
+def _score_reference(adapter, task_id: str, entry: dict, inputs: str | None) -> dict | None:
+    run_dir = Path(entry["run_dir"])
+    if not run_dir.is_dir():
+        return None
+    if "completion" not in entry:
+        return adapter.score(run_dir, task_id)
+    expected = entry["completion"]
+    if not expected or not callable(getattr(adapter, "reference_marker_dir", None)):
+        return None
+    run_id = entry.get("run_id", "")
+    if runmark.reference_identity(adapter, run_dir, run_id, inputs) != expected:
+        return None
+    score = adapter.score(run_dir, task_id)
+    if runmark.reference_identity(adapter, run_dir, run_id, inputs) != expected:
+        return None
+    return score
+
+
 def judge_bases(adapter, ns_dir: Path) -> int:
     """Score every reference execution recorded in this namespace's task summaries."""
+    # Separate judge calls share both the adapter caches and this namespace's report.
+    with runmark.lock_file(ns_dir / ".base_judge.lock"):
+        return _judge_bases(adapter, ns_dir)
+
+
+def _judge_bases(adapter, ns_dir: Path) -> int:
     rows, legacy = [], 0
+    mutable_references = callable(getattr(adapter, "reference_marker_dir", None))
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
-        try:
-            summary = json.loads(summary_path.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
-            continue
-        task_id = summary.get("task_id", "")
-        for entry in summary.get("base") or []:
-            if not isinstance(entry, dict) or not entry.get("run_dir"):
-                legacy += 1
-                continue
-            label, run_dir = entry.get("label", ""), Path(entry["run_dir"])
+        reference_lock = (
+            runmark.reference_lock(summary_path, blocking=False)
+            if mutable_references
+            else nullcontext(True)
+        )
+        with reference_lock as locked:
             try:
-                got = adapter.score(run_dir, task_id) if run_dir.is_dir() else None
-                if got is not None and not J.has_grade(got.get("n_passed"), got.get("n_criteria")):
+                summary = json.loads(summary_path.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
+                continue
+            task_id = summary.get("task_id", "")
+            if not locked:
+                print(f"  ! skipping grades while references are locked for {task_id}", flush=True)
+            for entry in summary.get("base") or []:
+                if not isinstance(entry, dict) or not entry.get("run_dir"):
+                    legacy += 1
+                    continue
+                label = entry.get("label", "")
+                try:
+                    got = (
+                        _score_reference(adapter, task_id, entry, summary.get("inputs"))
+                        if locked
+                        else None
+                    )
+                    if got is not None and not J.has_grade(got.get("n_passed"), got.get("n_criteria")):
+                        got = None
+                except Exception as exc:
                     got = None
-            except Exception as exc:
-                got = None
-                print(f"  {task_id[:52]:<52} {label} ERROR {type(exc).__name__}: {exc}", flush=True)
-            else:
-                shown = "-" if got is None else f"{got.get('n_passed')}/{got.get('n_criteria')}"
-                print(f"  {task_id[:52]:<52} {label} {shown}", flush=True)
-            rows.append(
-                {"task": task_id, "label": label, "run_id": entry.get("run_id", ""), "score": got}
-            )
+                    print(f"  {task_id[:52]:<52} {label} ERROR {type(exc).__name__}: {exc}", flush=True)
+                else:
+                    shown = "-" if got is None else f"{got.get('n_passed')}/{got.get('n_criteria')}"
+                    print(f"  {task_id[:52]:<52} {label} {shown}", flush=True)
+                rows.append(
+                    {"task": task_id, "label": label, "run_id": entry.get("run_id", ""), "score": got}
+                )
     if legacy:
         print(
             f"  {legacy} reference execution(s) predate run-directory recording and cannot be "

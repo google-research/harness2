@@ -767,9 +767,12 @@ class JobBenchAdapter:
     def _output_fingerprint(self, run_dir: Path) -> str | None:
         return RM.fingerprint(run_dir) if self.delivered(run_dir) else None
 
-    def artifacts_intact(self, run_dir: Path) -> bool:
+    def reference_marker_dir(self, run_dir: Path) -> Path:
         task_id, label = self._task_and_label(run_dir)
-        trajectory_dir = self._traj_dir(task_id, label)
+        return self._traj_dir(task_id, label)
+
+    def artifacts_intact(self, run_dir: Path) -> bool:
+        trajectory_dir = self.reference_marker_dir(run_dir)
         marker = RM.read_mark(trajectory_dir) or {}
         return (
             "output_fingerprint" in marker
