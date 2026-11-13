@@ -694,11 +694,18 @@ class JobBenchAdapter:
         i = parts.index("model_output")
         return "/".join(parts[i - 2 : i]), p.name
 
-    def _ensure_store_task(self, task_id: str) -> Path:
-        """Copy the clean task inputs from the dataset into the run store, once, atomically."""
+    def _ensure_store_task(self, task_id: str, inputs: str | None = None) -> Path:
+        """Copy clean task inputs from dataset into run store atomically, refreshing when inputs change."""
         dst = self.store / task_id / "task_folder"
-        if dst.is_dir():
-            return dst
+        fp_file = self.store / task_id / ".inputs_fingerprint"
+        if inputs is None:
+            inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        if dst.is_dir() and fp_file.is_file():
+            try:
+                if fp_file.read_text(encoding="utf-8").strip() == inputs:
+                    return dst
+            except OSError:
+                pass
         src = self._dataset_task(task_id) / "task_folder"
         if not src.is_dir():
             raise FileNotFoundError(
@@ -707,12 +714,19 @@ class JobBenchAdapter:
             )
         dst.parent.mkdir(parents=True, exist_ok=True)
         with _STORE_SEED_LOCK:
-            if dst.is_dir():
-                return dst
+            if dst.is_dir() and fp_file.is_file():
+                try:
+                    if fp_file.read_text(encoding="utf-8").strip() == inputs:
+                        return dst
+                except OSError:
+                    pass
             tmp = dst.parent / f".task_folder.tmp.{os.getpid()}.{threading.get_ident()}"
             shutil.copytree(src, tmp, dirs_exist_ok=True)
             try:
+                if dst.is_dir():
+                    shutil.rmtree(dst)
                 os.rename(tmp, dst)
+                fp_file.write_text(inputs, encoding="utf-8")
             except OSError:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if not dst.is_dir():
@@ -747,7 +761,7 @@ class JobBenchAdapter:
             reporting.unlink(missing_ok=True)
         if own.parent.is_dir():
             shutil.rmtree(own.parent)
-        self._ensure_store_task(task_id)
+        self._ensure_store_task(task_id, inputs=inputs)
         src = Path(harness_dir) if harness_dir is not None else self.base_harness()
         install = self.substrate.materialise(src, self.spec, {})
         try:
