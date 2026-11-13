@@ -842,6 +842,16 @@ def task_stream(
         if max_tasks is not None and len(ordered_tasks[d]) >= int(max_tasks):
             continue
         ordered_tasks[d].append(t)
+    # Independent domains must not prune or populate the same experience library.
+    seen: dict[str, str] = {}
+    for domain in ordered_tasks:
+        directory = library_store.domain_dir(domain)
+        previous = seen.setdefault(directory, domain)
+        if previous != domain:
+            raise ValueError(
+                f"domains {previous!r} and {domain!r} map to the same library directory "
+                f"{directory!r}; use unambiguous domain names"
+            )
     return dict(ordered_tasks)
 
 
