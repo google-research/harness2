@@ -27,6 +27,7 @@ import re
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -246,7 +247,7 @@ class TaskResult:
     inputs: str | None = None
     modes: dict = field(default_factory=dict)
     selections: dict = field(default_factory=dict)
-    base: list[str] = field(default_factory=list)
+    base: list[dict | str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -303,6 +304,31 @@ def _load_old(path: Path) -> dict:
         return {}
 
 
+def _replace_summary(summary_path: Path, payload: dict) -> None:
+    tmp = summary_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, default=str))
+    os.replace(tmp, summary_path)
+
+
+def _bind_legacy_references(summary_path: Path, adapter: BenchmarkAdapter, task_id: str) -> None:
+    """Capture the old generation before a reroll can replace its artifacts."""
+    if not summary_path.is_file():
+        return
+    with runmark.lock_file(summary_path.with_suffix(".lock")):
+        old = _load_old(summary_path)
+        if not isinstance(old, dict) or old.get("task_id", task_id) != task_id:
+            return
+        changed = False
+        for entry in old.get("base") or []:
+            if isinstance(entry, dict) and entry.get("run_dir") and "completion" not in entry:
+                entry["completion"] = runmark.reference_identity(
+                    adapter, Path(entry["run_dir"]), entry.get("run_id", ""), old.get("inputs")
+                )
+                changed = True
+        if changed:
+            _replace_summary(summary_path, old)
+
+
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
     """Merge `res` into the summary under an flock, atomically, deriving the merged status.
 
@@ -351,9 +377,7 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
                 # records and selections were derived from the old inputs and must not
                 # be re-used under the new digest, otherwise a later run would skip
                 # recomputation for results that are already stale.
-            tmp = summary_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(merged, indent=2, default=str))
-            os.replace(tmp, summary_path)
+            _replace_summary(summary_path, merged)
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
 
@@ -676,10 +700,22 @@ def run_task(
     dead_dir = work / "missing"
 
     pending = list(zip(labels, run_ids))
-    rolled = _roll_bases(task_id, adapter, pending, dead_dir)
-    base: list[RunView] = [rolled[label] for label in labels]
-
-    res.base = [{"label": b.label, "run_id": b.run_id, "run_dir": str(b.run_dir)} for b in base]
+    mutable_references = callable(getattr(adapter, "reference_marker_dir", None))
+    reference_lock = runmark.reference_lock(summary_path) if mutable_references else nullcontext()
+    with reference_lock:
+        if mutable_references:
+            _bind_legacy_references(summary_path, adapter, task_id)
+        rolled = _roll_bases(task_id, adapter, pending, dead_dir)
+        base = [rolled[label] for label in labels]
+        for run in base:
+            entry = {"label": run.label, "run_id": run.run_id, "run_dir": str(run.run_dir)}
+            if mutable_references:
+                entry["completion"] = (
+                    runmark.reference_identity(adapter, run.run_dir, run.run_id, res.inputs)
+                    if run.ok
+                    else None
+                )
+            res.base.append(entry)
     if not any(b.ok for b in base):
         err = "no base rollout produced anything"
         res.status = "base-failed"

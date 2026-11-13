@@ -22,16 +22,57 @@ answering a task that has since been corrected -- is never reused.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 MARK = ".adapt_complete"
 
 
 VERSION = 1
+
+
+@contextmanager
+def lock_file(path: Path, *, blocking: bool = True):
+    """Take an advisory lock on a stable file for the duration of the block."""
+    operation = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+    with path.open("a") as lock:
+        try:
+            fcntl.flock(lock, operation)
+        except BlockingIOError:
+            if blocking:
+                raise
+            yield False
+        else:
+            yield True
+
+
+def reference_lock(summary_path: Path, *, blocking: bool = True):
+    """Coordinate reference rollouts and their judge/cache reads for one task."""
+    return lock_file(summary_path.with_suffix(".references.lock"), blocking=blocking)
+
+
+def reference_identity(adapter, run_dir: Path, run_id: str, inputs: str | None) -> dict | None:
+    """Get the completed base generation for an adapter with mutable run paths."""
+    try:
+        marker = read_mark(adapter.reference_marker_dir(run_dir))
+        if (
+            isinstance(marker, dict)
+            and marker.get("version") == VERSION
+            and marker.get("run_id") == run_id
+            and marker.get("harness") == "base"
+            and _inputs_match(marker, inputs)
+            and adapter.artifacts_intact(run_dir)
+        ):
+            return marker
+    except (OSError, ValueError):
+        # An old entry can point at a missing or unrecognizable run directory.
+        return None
+    return None
 
 
 def _ignored(p: Path) -> bool:
