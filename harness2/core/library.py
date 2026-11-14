@@ -167,10 +167,13 @@ class Library:
         for name in names:
             ed = self.dir / "harnesses" / name
             cue = _field(ed / "EXPERIENCE.md", "cue")
-            tree = harness_tree.read_tree(self.surface, ed / "harness")
+            inv = _field(ed / "EXPERIENCE.md", "components")
+            if not inv:
+                tree = harness_tree.read_tree(self.surface, ed / "harness")
+                inv = _inventory(self.surface, tree)
             rows += [
                 f"## `harnesses/{name}/`",
-                f"- harness: `harnesses/{name}/harness/` — {_inventory(self.surface, tree)}",
+                f"- harness: `harnesses/{name}/harness/` — {inv}",
                 f"- why:     `harnesses/{name}/EXPERIENCE.md`",
             ]
             if cue:
@@ -206,8 +209,12 @@ def _inventory(surface: SurfaceSpec, tree: harness_tree.Tree) -> str:
 def _field(path: Path, name: str) -> str:
     if not path.is_file():
         return ""
+    prefix_bold = f"- **{name}**:"
+    prefix_plain = f"- {name}:"
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith(f"- **{name}**:"):
+        if line.startswith(prefix_bold):
+            return line.split(":", 1)[1].strip()
+        if line.startswith(prefix_plain):
             return line.split(":", 1)[1].strip()
     return ""
 

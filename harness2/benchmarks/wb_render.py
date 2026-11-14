@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 import tarfile
+from functools import lru_cache
 from pathlib import Path
 
 ALLOWLIST: dict[str, tuple[str, ...]] = {
@@ -457,17 +458,68 @@ def listing(trial_dir: Path | str, subset: str) -> list[str]:
     raise RenderInputError(f"wb_render has no listing for subset {subset!r}")
 
 
+def _artifact_fingerprint(trial: Path, subset: str) -> tuple:
+    """Collect (rel_path, mtime_ns, size) fingerprint to invalidate cached entries on change."""
+    if subset == "office":
+        root = trial / "verifier" / "raw_artifacts"
+    elif subset == "sec":
+        root = trial / "artifacts" / "logs" / "artifacts"
+    elif subset == "web":
+        root = trial / "verifier" / "agent.workspace.tar.gz"
+    elif subset == "code":
+        root = trial / "verifier" / "agent.patch"
+    else:
+        return ()
+
+    if not root.exists():
+        return ()
+
+    if root.is_file():
+        try:
+            st = root.stat()
+            return ((root.name, st.st_mtime_ns, st.st_size),)
+        except OSError:
+            return ()
+
+    fp = []
+    try:
+        for f in sorted(root.rglob("*")):
+            if f.is_file():
+                st = f.stat()
+                fp.append((f.relative_to(root).as_posix(), st.st_mtime_ns, st.st_size))
+    except OSError:
+        pass
+    return tuple(fp)
+
+
+@lru_cache(maxsize=1024)
+def _cached_entries(
+    trial_key: str, subset: str, fingerprint: tuple
+) -> tuple[tuple[str, int, str, bool], ...]:
+    trial = Path(trial_key)
+    if subset == "office":
+        res = _entries_dir(trial, subset, trial / "verifier" / "raw_artifacts")
+    elif subset == "sec":
+        res = _entries_dir(trial, subset, trial / "artifacts" / "logs" / "artifacts")
+    elif subset == "web":
+        res = _entries_tar(trial, subset, trial / "verifier" / "agent.workspace.tar.gz")
+    elif subset == "code":
+        res = _entries_patch(trial, subset, trial / "verifier" / "agent.patch")
+    else:
+        raise RenderInputError(f"wb_render has no handler for subset {subset!r}")
+    return tuple(res)
+
+
 def _entries(trial: Path, subset: str) -> list[tuple[str, int, str, bool]]:
     """[(name, byte size, rendered text, was-scannable-as-text)] in stable name order."""
-    if subset == "office":
-        return _entries_dir(trial, subset, trial / "verifier" / "raw_artifacts")
-    if subset == "sec":
-        return _entries_dir(trial, subset, trial / "artifacts" / "logs" / "artifacts")
-    if subset == "web":
-        return _entries_tar(trial, subset, trial / "verifier" / "agent.workspace.tar.gz")
-    if subset == "code":
-        return _entries_patch(trial, subset, trial / "verifier" / "agent.patch")
-    raise RenderInputError(f"wb_render has no handler for subset {subset!r}")
+    trial = Path(trial)
+    fp = _artifact_fingerprint(trial, subset)
+    return list(_cached_entries(str(trial.resolve()), subset, fp))
+
+
+def clear_cache() -> None:
+    """Clear the cached rendered artifact entries."""
+    _cached_entries.cache_clear()
 
 
 def _entries_dir(trial: Path, subset: str, root: Path) -> list[tuple[str, int, str, bool]]:
