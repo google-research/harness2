@@ -14,6 +14,9 @@
 
 """Tests for Library.rebuild_index O(M) scaling and wb_render._entries caching."""
 
+import io
+import os
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,6 +96,60 @@ class WbRenderEntriesCacheTests(unittest.TestCase):
             self.assertEqual(res1, res2)
             self.assertEqual(chars, len("Revenue: $1000"))
             self.assertIn("report.txt", rendered)
+
+    def test_entries_invalidates_when_artifact_is_rewritten(self):
+        wb_render.clear_cache()
+        with patch.object(wb_render, "_entries_dir", wraps=wb_render._entries_dir) as mock_dir:
+            res1 = wb_render._entries(self.trial, "office")
+            self.assertEqual(mock_dir.call_count, 1)
+            self.assertIn("Revenue: $1000", res1[0][2])
+
+            # Repeated call without modification hits cache
+            res1_cached = wb_render._entries(self.trial, "office")
+            self.assertEqual(mock_dir.call_count, 1)
+            self.assertEqual(res1, res1_cached)
+
+            # Rewrite the artifact at the same path
+            report = self.raw / "report.txt"
+            report.write_text("Revenue: $5000\n", encoding="utf-8")
+            os.utime(report, (report.stat().st_atime, report.stat().st_mtime + 1))
+
+            # Must re-read the updated content, not serve stale cache
+            res2 = wb_render._entries(self.trial, "office")
+            self.assertEqual(mock_dir.call_count, 2)
+            self.assertIn("Revenue: $5000", res2[0][2])
+
+    def test_entries_invalidates_when_tarball_is_rewritten(self):
+        wb_render.clear_cache()
+        trial = self.root / "web_trial"
+        v = trial / "verifier"
+        v.mkdir(parents=True)
+        tb = v / "agent.workspace.tar.gz"
+
+        def make_tar(content: bytes):
+            bio = io.BytesIO()
+            with tarfile.open(fileobj=bio, mode="w:gz") as tf:
+                ti = tarfile.TarInfo(name="app.js")
+                ti.size = len(content)
+                tf.addfile(ti, io.BytesIO(content))
+            tb.write_bytes(bio.getvalue())
+
+        make_tar(b"console.log('v1');")
+        res1 = wb_render._entries(trial, "web")
+        self.assertIn("v1", res1[0][2])
+
+        # Cache hit
+        with patch.object(wb_render, "_entries_tar", wraps=wb_render._entries_tar) as mock_tar:
+            res1_cached = wb_render._entries(trial, "web")
+            self.assertEqual(mock_tar.call_count, 0)
+            self.assertEqual(res1, res1_cached)
+
+            # Rewrite tarball at the same path
+            make_tar(b"console.log('v2');")
+            os.utime(tb, (tb.stat().st_atime, tb.stat().st_mtime + 1))
+            res2 = wb_render._entries(trial, "web")
+            self.assertEqual(mock_tar.call_count, 1)
+            self.assertIn("v2", res2[0][2])
 
 
 if __name__ == "__main__":
