@@ -73,6 +73,40 @@ class LibraryRebuildIndexPerfTests(unittest.TestCase):
         self.assertIn(f"- harness: `harnesses/task-2/harness/` — {expected_inv}", content)
         self.assertIn("- cue:     cue-2", content)
 
+    def test_rebuild_index_falls_back_only_for_missing_components(self):
+        lib = Library(self.root / "library", "accounting", self.surface)
+        harness = harness_tree.read_tree(self.surface, self.adapter.base_harness())
+        for task in ("cached", "legacy"):
+            lib.add(
+                task,
+                harness,
+                why="good",
+                label="c1",
+                experience={"cue": task, "lesson": "lesson", "evidence": "evidence"},
+            )
+        expected = lib.index.read_text(encoding="utf-8")
+        experience_path = lib.entry_dir("legacy") / "EXPERIENCE.md"
+        original = experience_path.read_text(encoding="utf-8")
+
+        for components_line in (None, "- components: "):
+            with self.subTest(components_line=components_line):
+                lines = [
+                    line
+                    for line in original.splitlines()
+                    if not line.startswith("- components:")
+                ]
+                if components_line is not None:
+                    lines.insert(2, components_line)
+                experience_path.write_text("\n".join(lines), encoding="utf-8")
+                with patch.object(
+                    harness_tree, "read_tree", wraps=harness_tree.read_tree
+                ) as read_tree:
+                    lib.rebuild_index()
+                read_tree.assert_called_once_with(
+                    self.surface, lib.entry_dir("legacy") / "harness"
+                )
+                self.assertEqual(lib.index.read_text(encoding="utf-8"), expected)
+
 
 class WbRenderEntriesCacheTests(unittest.TestCase):
     def setUp(self):
