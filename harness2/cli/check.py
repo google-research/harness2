@@ -24,13 +24,18 @@ from harness2.preflight import check
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--bench", choices=("jb", "lab", "wb"), required=True)
-    p.add_argument("--subset", choices=("office", "web", "code"))
-    p.add_argument("--substrate", choices=("oc", "cx"), default="oc")
+    from harness2.cli import _common as C
+    C.add_cell_args(p)
     args = p.parse_args(argv)
     try:
-        adapter = make_adapter(args.bench, args.subset, args.substrate)
-        errors = check(adapter, judge=True)
+        adapter = make_adapter(
+            args.bench,
+            args.subset,
+            args.substrate,
+            tasks_dir=getattr(args, "tasks_dir", None),
+            base_harness=getattr(args, "base_harness", None),
+        )
+        errors = check(adapter, judge=args.bench != "local")
     except (OSError, RuntimeError, ValueError) as exc:
         errors = [str(exc)]
     for error in errors:

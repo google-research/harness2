@@ -135,14 +135,33 @@ def _main(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         return _print_stream(
-            C.make_adapter(args.bench, args.subset, args.substrate, args.split_file), args, modes
+            C.make_adapter(
+                args.bench,
+                args.subset,
+                args.substrate,
+                args.split_file,
+                tasks_dir=args.tasks_dir,
+                base_harness=args.base_harness,
+            ),
+            args,
+            modes,
         )
 
-    adapter = C.make_adapter(args.bench, args.subset, args.substrate, args.split_file)
+    adapter = C.make_adapter(
+        args.bench,
+        args.subset,
+        args.substrate,
+        args.split_file,
+        tasks_dir=args.tasks_dir,
+        base_harness=args.base_harness,
+    )
     _stream_for(adapter, args)
     from ..preflight import require_ready
 
-    require_ready(adapter, judge=True)
+    has_judge = True
+    if args.bench == "local":
+        has_judge = any(bool(adapter.task_meta(t).check) for t in adapter.tasks(args.split))
+    require_ready(adapter, judge=has_judge)
 
     runs_root = C.runs_root_for(adapter)
     library_root = C.library_root_for(adapter, args.k, seed=args.seed)
