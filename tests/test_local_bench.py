@@ -204,6 +204,34 @@ class LocalBenchmarkTests(unittest.TestCase):
             "external symlink secret", adapter.deliverable_text(run_dir)
         )
 
+    def test_discovered_output_symlink_without_declared_outputs_cannot_escape_workspace(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-discovered-symlink-escape")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        outside = self.root / "outside-discovered-symlink.txt"
+        outside.write_text("external discovered symlink secret", encoding="utf-8")
+        link = workspace / "discovered_leak.txt"
+
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"Symlink creation is unavailable: {exc}")
+
+        # Note: outputs is empty / omitted, triggering the auto-discovery fallback loop
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": []}), encoding="utf-8"
+        )
+        (run_dir / "_input_files.json").write_text("[]", encoding="utf-8")
+
+        self.assertFalse(adapter.delivered(run_dir))
+        self.assertEqual(adapter.deliverable_files(run_dir), {})
+        self.assertNotIn(
+            "external discovered symlink secret", adapter.deliverable_text(run_dir)
+        )
+
     def test_score_not_configured_vs_check_command(self):
         adapter = LocalAdapter(self.tasks_dir, substrate="oc")
         run_dir = adapter._run_dir("run-test-score")

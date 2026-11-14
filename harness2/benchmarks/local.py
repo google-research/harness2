@@ -606,8 +606,14 @@ class LocalAdapter:
             rel = HT.normalize_rel(str(p.relative_to(workspace)))
             if rel in inputs or self._is_harness_file(rel):
                 continue
-            if p.stat().st_size > 0:
-                return True
+            target = self._resolve_output_path(workspace, rel)
+            if target is None or not target.is_file():
+                continue
+            try:
+                if target.stat().st_size > 0:
+                    return True
+            except OSError:
+                continue
         return False
 
     def deliverable_files(self, run_dir: Path) -> dict[str, str]:
@@ -648,10 +654,16 @@ class LocalAdapter:
             rel = HT.normalize_rel(str(p.relative_to(workspace)))
             if rel in inputs or self._is_harness_file(rel):
                 continue
+            target = self._resolve_output_path(workspace, rel)
+            if target is None or not target.is_file():
+                continue
             try:
-                result[rel] = p.read_text(encoding="utf-8", errors="replace")
+                result[rel] = target.read_text(encoding="utf-8", errors="replace")
             except Exception:
-                result[rel] = f"<{p.stat().st_size} bytes binary>"
+                try:
+                    result[rel] = f"<{target.stat().st_size} bytes binary>"
+                except OSError:
+                    continue
         return result
 
     def deliverable_text(self, run_dir: Path) -> str:
