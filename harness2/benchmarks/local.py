@@ -232,7 +232,7 @@ class LocalAdapter:
     @staticmethod
     def _is_safe_output_relpath(out_rel: str) -> bool:
         """Return whether an output declaration is a safe relative path."""
-        if not isinstance(out_rel, str) or not out_rel or "\x00" in out_rel:
+        if not isinstance(out_rel, str) or not out_rel.strip() or "\x00" in out_rel:
             return False
 
         path = Path(out_rel)
@@ -242,6 +242,8 @@ class LocalAdapter:
             or windows_path.is_absolute()
             or windows_path.root
             or windows_path.drive
+            or not path.parts
+            or not windows_path.parts
             or ".." in path.parts
             or ".." in windows_path.parts
         ):
@@ -296,7 +298,11 @@ class LocalAdapter:
                     f"Invalid output path for task {task_id}: {output!r}. "
                     "Output paths must be relative and must not contain '..' components."
                 )
-        timeout = int(data.get("timeout", self.timeout))
+        raw_timeout = data.get("timeout", self.timeout)
+        try:
+            timeout = max(1, int(raw_timeout))
+        except (ValueError, TypeError):
+            timeout = self.timeout
         return LocalTaskMeta(outputs=outputs, check=check_cmd, timeout=timeout)
 
     def task_fingerprint(self, task_id: str) -> str:
@@ -583,10 +589,10 @@ class LocalAdapter:
         if outputs:
             for out_rel in outputs:
                 target = self._resolve_output_path(workspace, out_rel)
-                if target is None or not target.is_file():
+                if target is None:
                     return False
                 try:
-                    if target.stat().st_size == 0:
+                    if not target.is_file() or target.stat().st_size == 0:
                         return False
                 except OSError:
                     return False
@@ -600,16 +606,26 @@ class LocalAdapter:
             except Exception:
                 inputs = set()
 
-        for p in workspace.rglob("*"):
-            if not p.is_file() or RM._ignored(p):
+        try:
+            candidates = list(workspace.rglob("*"))
+        except OSError:
+            candidates = []
+
+        for p in candidates:
+            try:
+                if not p.is_file() or RM._ignored(p):
+                    continue
+                rel = HT.normalize_rel(str(p.relative_to(workspace)))
+            except Exception:
                 continue
-            rel = HT.normalize_rel(str(p.relative_to(workspace)))
             if rel in inputs or self._is_harness_file(rel):
                 continue
             target = self._resolve_output_path(workspace, rel)
-            if target is None or not target.is_file():
+            if target is None:
                 continue
             try:
+                if not target.is_file():
+                    continue
                 if target.stat().st_size > 0:
                     return True
             except OSError:
@@ -633,11 +649,20 @@ class LocalAdapter:
         if outputs:
             for out_rel in outputs:
                 target = self._resolve_output_path(workspace, out_rel)
-                if target is not None and target.is_file():
+                if target is None:
+                    continue
+                try:
+                    if not target.is_file():
+                        continue
+                except OSError:
+                    continue
+                try:
+                    result[out_rel] = target.read_text(encoding="utf-8", errors="replace")
+                except Exception:
                     try:
-                        result[out_rel] = target.read_text(encoding="utf-8", errors="replace")
-                    except Exception:
                         result[out_rel] = f"<{target.stat().st_size} bytes binary>"
+                    except OSError:
+                        continue
             return result
 
         input_files_rec = run_dir / "_input_files.json"
@@ -648,14 +673,27 @@ class LocalAdapter:
             except Exception:
                 inputs = set()
 
-        for p in sorted(workspace.rglob("*")):
-            if not p.is_file() or RM._ignored(p):
+        try:
+            candidates = sorted(workspace.rglob("*"))
+        except OSError:
+            candidates = []
+
+        for p in candidates:
+            try:
+                if not p.is_file() or RM._ignored(p):
+                    continue
+                rel = HT.normalize_rel(str(p.relative_to(workspace)))
+            except Exception:
                 continue
-            rel = HT.normalize_rel(str(p.relative_to(workspace)))
             if rel in inputs or self._is_harness_file(rel):
                 continue
             target = self._resolve_output_path(workspace, rel)
-            if target is None or not target.is_file():
+            if target is None:
+                continue
+            try:
+                if not target.is_file():
+                    continue
+            except OSError:
                 continue
             try:
                 result[rel] = target.read_text(encoding="utf-8", errors="replace")

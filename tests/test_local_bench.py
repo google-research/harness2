@@ -204,6 +204,38 @@ class LocalBenchmarkTests(unittest.TestCase):
             "external symlink secret", adapter.deliverable_text(run_dir)
         )
 
+    def test_declared_output_directory_link_cannot_escape_workspace(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-declared-dir-link-escape")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        outside_dir = self.root / "outside_declared_dir"
+        outside_dir.mkdir(parents=True, exist_ok=True)
+        (outside_dir / "secret.txt").write_text(
+            "declared directory link secret", encoding="utf-8"
+        )
+        link_dir = workspace / "escaped_declared_folder"
+
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(outside_dir), str(link_dir))
+        else:
+            try:
+                os.symlink(str(outside_dir), str(link_dir), target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"Directory symlink unavailable: {exc}")
+
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": ["escaped_declared_folder/secret.txt"]}), encoding="utf-8"
+        )
+        self.assertFalse(adapter.delivered(run_dir))
+        self.assertEqual(adapter.deliverable_files(run_dir), {})
+        self.assertNotIn(
+            "declared directory link secret", adapter.deliverable_text(run_dir)
+        )
+
     def test_discovered_output_symlink_without_declared_outputs_cannot_escape_workspace(self):
         adapter = LocalAdapter(
             self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
@@ -231,6 +263,130 @@ class LocalBenchmarkTests(unittest.TestCase):
         self.assertNotIn(
             "external discovered symlink secret", adapter.deliverable_text(run_dir)
         )
+
+    def test_discovered_output_directory_link_cannot_escape_workspace(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-dir-link-escape")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        outside_dir = self.root / "outside_dir"
+        outside_dir.mkdir(parents=True, exist_ok=True)
+        (outside_dir / "outside_secret.txt").write_text(
+            "external directory link secret", encoding="utf-8"
+        )
+        link_dir = workspace / "escaped_folder"
+
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(outside_dir), str(link_dir))
+        else:
+            try:
+                os.symlink(str(outside_dir), str(link_dir), target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"Directory symlink unavailable: {exc}")
+
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": []}), encoding="utf-8"
+        )
+        (run_dir / "_input_files.json").write_text("[]", encoding="utf-8")
+
+        self.assertFalse(adapter.delivered(run_dir))
+        self.assertEqual(adapter.deliverable_files(run_dir), {})
+        self.assertNotIn(
+            "external directory link secret", adapter.deliverable_text(run_dir)
+        )
+
+    def test_internal_directory_link_within_workspace_allowed(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-internal-dir-link")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        internal_dir = workspace / "real_dir"
+        internal_dir.mkdir()
+        (internal_dir / "deliverable.txt").write_text(
+            "internal deliverable content", encoding="utf-8"
+        )
+        alias_dir = workspace / "alias_dir"
+
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(internal_dir), str(alias_dir))
+        else:
+            try:
+                os.symlink(str(internal_dir), str(alias_dir), target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"Directory symlink unavailable: {exc}")
+
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": []}), encoding="utf-8"
+        )
+        (run_dir / "_input_files.json").write_text("[]", encoding="utf-8")
+
+        self.assertTrue(adapter.delivered(run_dir))
+        files = adapter.deliverable_files(run_dir)
+        self.assertIn("real_dir/deliverable.txt", files)
+        self.assertEqual(files["real_dir/deliverable.txt"], "internal deliverable content")
+
+    def test_safe_output_relpath_comprehensive_matrix(self):
+        valid = [
+            "result.txt",
+            "sub/result.txt",
+            "deep/nested/path/artifact.csv",
+        ]
+        invalid = [
+            "",
+            "   ",
+            "\t\n",
+            ".",
+            "./",
+            "..",
+            "../outside.txt",
+            "sub/../../escape.txt",
+            "sub\\..\\..\\escape.txt",
+            "/absolute/root.txt",
+            "\\Windows\\System32\\calc.exe",
+            "C:\\secret.txt",
+            "C:drive_rel.txt",
+            "\\\\server\\share\\resource.txt",
+            "\\\\?\\C:\\file.txt",
+            "bad\x00file.txt",
+        ]
+        for path in valid:
+            with self.subTest(valid_path=path):
+                self.assertTrue(LocalAdapter._is_safe_output_relpath(path))
+        for path in invalid:
+            with self.subTest(invalid_path=path):
+                self.assertFalse(LocalAdapter._is_safe_output_relpath(path))
+
+    def test_declared_output_binary_stat_oserror_handled(self):
+        adapter = LocalAdapter(
+            self.tasks_dir, substrate="oc", runs_root=self.root / "runs"
+        )
+        run_dir = adapter._run_dir("run-stat-oserror")
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        target = workspace / "out.bin"
+        target.write_bytes(b"\x00\x01\x02")
+
+        (run_dir / "_task_meta.json").write_text(
+            json.dumps({"outputs": ["out.bin"]}), encoding="utf-8"
+        )
+
+        orig_stat = Path.stat
+        def broken_stat(self, *args, **kwargs):
+            if self.name == "out.bin":
+                raise PermissionError("Access denied")
+            return orig_stat(self, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "read_text", side_effect=UnicodeDecodeError("utf-8", b"", 0, 1, "invalid")), \
+             unittest.mock.patch.object(Path, "stat", broken_stat):
+            # deliverable_files must not raise an unhandled PermissionError / OSError
+            files = adapter.deliverable_files(run_dir)
+            self.assertEqual(files, {})
 
     def test_score_not_configured_vs_check_command(self):
         adapter = LocalAdapter(self.tasks_dir, substrate="oc")
