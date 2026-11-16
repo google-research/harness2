@@ -126,7 +126,7 @@ def _render_pool(
         except Exception as exc:
             sel.dropped.append(f"{lbl} (render failed: {type(exc).__name__}: {exc})"[:200])
             continue
-        if not rendered.strip():
+        if context.is_absent_evidence(rendered):
             sel.dropped.append(lbl)
             continue
         pool[lbl] = rv
@@ -140,7 +140,7 @@ def _render_pool(
             except Exception as exc:
                 sel.dropped.append(f"{lbl} (trajectory failed: {type(exc).__name__}: {exc})"[:200])
                 continue
-            if not body.strip() or body.startswith("(no trajectory"):
+            if context.is_absent_evidence(body):
                 continue
             pool[lbl] = rv
             artifacts[lbl] = (
