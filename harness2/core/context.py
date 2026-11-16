@@ -220,14 +220,15 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
     """Write one rollout's trajectory and deliverables; return "" or the failure detail."""
     failure = ""
     try:
-        (dest / "rollouts" / f"{r.label}.md").write_text(
-            adapter.trajectory(r.run_dir, obs_trunc=trunc), encoding="utf-8"
-        )
+        trajectory = adapter.trajectory(r.run_dir, obs_trunc=trunc)
     except Exception as exc:
-        (dest / "rollouts" / f"{r.label}.md").write_text(
-            f"(trajectory unavailable: {type(exc).__name__}: {exc})", encoding="utf-8"
-        )
+        trajectory = f"(trajectory unavailable: {type(exc).__name__}: {exc})"
         failure = f"{r.label}: {type(exc).__name__}: {exc}"
+    if is_absent_evidence(trajectory):
+        if not failure:
+            failure = f"{r.label}: {trajectory.strip()[:200]}"
+    else:
+        (dest / "rollouts" / f"{r.label}.md").write_text(trajectory, encoding="utf-8")
 
     per_file: dict[str, str] = {}
     if names_only:
@@ -318,18 +319,19 @@ def _write_pool(
             (d / "harness.diff").write_text(diff, encoding="utf-8")
         if roll is not None:
             try:
-                (d / "rollout.md").write_text(
-                    adapter.trajectory(roll.run_dir, obs_trunc=trunc), encoding="utf-8"
-                )
-
+                trajectory = adapter.trajectory(roll.run_dir, obs_trunc=trunc)
                 produced = (
                     _listing_md(label, _listing(adapter, roll.run_dir))
                     if names_only
                     else adapter.deliverable_text(roll.run_dir) or "(nothing produced)"
                 )
-                (d / "produced.md").write_text(produced, encoding="utf-8")
             except Exception as exc:
-                (d / "rollout.md").write_text(f"(unavailable: {exc})", encoding="utf-8")
+                trajectory = f"(unavailable: {exc})"
+                produced = trajectory
+            if not is_absent_evidence(trajectory):
+                (d / "rollout.md").write_text(trajectory, encoding="utf-8")
+            if not is_absent_evidence(produced):
+                (d / "produced.md").write_text(produced, encoding="utf-8")
         got.append(label)
     return got
 
@@ -414,6 +416,28 @@ def assert_no_leak_paths(root: Path | str, patterns: Sequence[str]) -> None:
     if hits:
         shown = ", ".join(sorted(hits)[:8])
         raise ValueError(f"answer-key path(s) would enter model context: {shown}")
+
+
+ABSENT_EVIDENCE_PREFIXES: tuple[str, ...] = (
+    "(no trajectory",
+    "(trajectory unavailable:",
+    "(deliverable unavailable:",
+    "(no deliverable produced)",
+    "(nothing produced)",
+    "(unavailable:",
+    "(listing unavailable:",
+)
+
+
+def is_absent_evidence(text: str) -> bool:
+    """True when `text` is a missing-evidence placeholder, not a rollout or artifact.
+
+    Adapters and this module spell that placeholder several ways. Callers that
+    decide whether evidence exists must use this predicate, so a new placeholder
+    cannot pass by missing one of the old prefixes.
+    """
+    body = text.strip()
+    return not body or body.startswith(ABSENT_EVIDENCE_PREFIXES)
 
 
 GRADER_VERDICT_MARKERS: tuple[str, ...] = (

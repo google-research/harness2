@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from . import context
 from . import library as library_store
 from . import recursion, runmark, selection
 from . import tree as harness_tree
@@ -442,7 +443,7 @@ def _resume(
                 artifact = adapter.trajectory(run_dir, obs_trunc=adapter.spec.obs_trunc)
             else:
                 artifact = adapter.deliverable_text(run_dir) if adapter.delivered(run_dir) else ""
-            if not artifact.strip() or artifact.startswith("(no trajectory"):
+            if context.is_absent_evidence(artifact):
                 raise ValueError("adopted output is missing")
             artifacts_intact = getattr(adapter, "artifacts_intact", None)
             if callable(artifacts_intact) and not artifacts_intact(run_dir):
