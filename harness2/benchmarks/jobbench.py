@@ -721,16 +721,33 @@ class JobBenchAdapter:
                 except OSError:
                     pass
             tmp = dst.parent / f".task_folder.tmp.{os.getpid()}.{threading.get_ident()}"
-            shutil.copytree(src, tmp, dirs_exist_ok=True)
+            backup = dst.parent / f".task_folder.old.{os.getpid()}.{threading.get_ident()}"
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(backup, ignore_errors=True)
             try:
-                if dst.is_dir():
-                    shutil.rmtree(dst)
+                shutil.copytree(src, tmp)
+            except Exception:
+                shutil.rmtree(tmp, ignore_errors=True)
+                raise
+
+            had_existing = dst.is_dir()
+            if had_existing:
+                os.replace(dst, backup)
+
+            try:
                 os.rename(tmp, dst)
                 fp_file.write_text(inputs, encoding="utf-8")
-            except OSError:
+            except Exception:
                 shutil.rmtree(tmp, ignore_errors=True)
-                if not dst.is_dir():
-                    raise
+                if had_existing and backup.is_dir():
+                    try:
+                        os.replace(backup, dst)
+                    except OSError:
+                        pass
+                raise
+            finally:
+                if backup.is_dir():
+                    shutil.rmtree(backup, ignore_errors=True)
         return dst
 
     def execute(

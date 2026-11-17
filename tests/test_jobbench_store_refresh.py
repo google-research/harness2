@@ -14,6 +14,9 @@
 
 """Regression test for JobBench staged store refresh when task fingerprint changes (Issue #198)."""
 
+import errno
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +99,54 @@ class JobBenchStoreRefreshTests(unittest.TestCase):
         self.assertEqual(
             (staged_updated / "data.csv").read_text(encoding="utf-8"),
             "a,b\n10,20\n30,40\n",
+        )
+
+
+class RefreshFailureTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = JobBenchStoreRefreshTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.adapter = self.fixture._make_adapter()
+
+    def test_failed_publish_retains_previous_complete_task(self):
+        staged = self.adapter._ensure_store_task(self.fixture.task_id)
+        previous = (staged / "TASK_INSTRUCTIONS.txt").read_bytes()
+        self.fixture.instruction_file.write_text("Instruction V2", encoding="utf-8")
+        rename = os.rename
+
+        def fail_publish(src, dst):
+            if Path(dst) == staged:
+                raise OSError(errno.EIO, "injected publication failure")
+            return rename(src, dst)
+
+        with patch("harness2.benchmarks.jobbench.os.rename", side_effect=fail_publish):
+            with self.assertRaises(OSError):
+                self.adapter._ensure_store_task(self.fixture.task_id)
+
+        self.assertTrue(staged.is_dir(), "a failed refresh removed the last complete task")
+        self.assertEqual((staged / "TASK_INSTRUCTIONS.txt").read_bytes(), previous)
+
+    def test_retry_after_partial_copy_does_not_publish_deleted_source_file(self):
+        self.adapter._ensure_store_task(self.fixture.task_id)
+        self.fixture.instruction_file.write_text("Instruction V2", encoding="utf-8")
+        removed = self.fixture.task_src / "removed-between-attempts.txt"
+        removed.write_text("obsolete input", encoding="utf-8")
+
+        def partial_copy(src, dst, **kwargs):
+            Path(dst).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(removed, Path(dst) / removed.name)
+            raise OSError(errno.ENOSPC, "injected partial-copy failure")
+
+        with patch("harness2.benchmarks.jobbench.shutil.copytree", side_effect=partial_copy):
+            with self.assertRaises(OSError):
+                self.adapter._ensure_store_task(self.fixture.task_id)
+
+        removed.unlink()
+        staged = self.adapter._ensure_store_task(self.fixture.task_id)
+        self.assertFalse(
+            (staged / removed.name).exists(),
+            "the successful retry published an input absent from the fingerprinted dataset",
         )
 
 
