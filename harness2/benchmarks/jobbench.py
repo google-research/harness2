@@ -734,19 +734,23 @@ class JobBenchAdapter:
             if had_existing:
                 os.replace(dst, backup)
 
+            published = False
             try:
                 os.rename(tmp, dst)
                 fp_file.write_text(inputs, encoding="utf-8")
+                published = True
             except Exception:
                 shutil.rmtree(tmp, ignore_errors=True)
                 if had_existing and backup.is_dir():
                     try:
+                        if dst.is_dir():
+                            shutil.rmtree(dst)
                         os.replace(backup, dst)
                     except OSError:
                         pass
                 raise
             finally:
-                if backup.is_dir():
+                if published and backup.is_dir():
                     shutil.rmtree(backup, ignore_errors=True)
         return dst
 

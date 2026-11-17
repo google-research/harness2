@@ -150,6 +150,63 @@ class RefreshFailureTests(unittest.TestCase):
         )
 
 
+class FingerprintPublishFailureTests(unittest.TestCase):
+    def test_failed_fingerprint_write_retains_previous_complete_task(self):
+        fixture = JobBenchStoreRefreshTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        adapter = fixture._make_adapter()
+        staged = adapter._ensure_store_task(fixture.task_id)
+        previous = (staged / "TASK_INSTRUCTIONS.txt").read_bytes()
+        fixture.instruction_file.write_text("Instruction V2", encoding="utf-8")
+        fp = adapter.store / fixture.task_id / ".inputs_fingerprint"
+        write = Path.write_text
+
+        def fail_stamp(path, *args, **kwargs):
+            if path == fp:
+                raise OSError(errno.EIO, "injected fingerprint publication failure")
+            return write(path, *args, **kwargs)
+
+        with patch.object(Path, "write_text", new=fail_stamp):
+            with self.assertRaises(OSError):
+                adapter._ensure_store_task(fixture.task_id)
+
+        self.assertTrue(staged.is_dir())
+        self.assertEqual((staged / "TASK_INSTRUCTIONS.txt").read_bytes(), previous)
+
+    def test_failed_rollback_does_not_delete_the_complete_backup(self):
+        fixture = JobBenchStoreRefreshTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        adapter = fixture._make_adapter()
+        staged = adapter._ensure_store_task(fixture.task_id)
+        previous = (staged / "TASK_INSTRUCTIONS.txt").read_bytes()
+        fixture.instruction_file.write_text("Instruction V2", encoding="utf-8")
+        fp = adapter.store / fixture.task_id / ".inputs_fingerprint"
+        write = Path.write_text
+        replace = os.replace
+
+        def fail_stamp(path, *args, **kwargs):
+            if path == fp:
+                raise OSError(errno.EIO, "injected fingerprint publication failure")
+            return write(path, *args, **kwargs)
+
+        def fail_restore(src, dst):
+            if Path(src).name.startswith(".task_folder.old."):
+                raise OSError(errno.EIO, "injected rollback failure")
+            return replace(src, dst)
+
+        with patch.object(Path, "write_text", new=fail_stamp), patch(
+            "harness2.benchmarks.jobbench.os.replace", side_effect=fail_restore
+        ):
+            with self.assertRaises(OSError):
+                adapter._ensure_store_task(fixture.task_id)
+
+        backups = list(staged.parent.glob(".task_folder.old.*"))
+        self.assertEqual(len(backups), 1, "failed rollback deleted the only previous complete task")
+        self.assertEqual((backups[0] / "TASK_INSTRUCTIONS.txt").read_bytes(), previous)
+
+
 if __name__ == "__main__":
     unittest.main()
 
