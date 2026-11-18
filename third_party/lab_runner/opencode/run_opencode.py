@@ -170,10 +170,19 @@ def invoke(args_extra: list[str], *, base: list[str], env: dict, timeout: int,
     """One `opencode run`, appending its JSON stream to session_path."""
     with open(session_path, "a" if append else "w", encoding="utf-8") as out, \
          open(log_path, "a", encoding="utf-8") as err:
-        proc = subprocess.run(
-            ["timeout", "--kill-after=30s", str(int(max(30, timeout)))] + base + args_extra,
-            stdout=out, stderr=err, env=env, cwd=str(BENCH_ROOT),
-        )
+        try:
+            proc = subprocess.run(
+                ["timeout", "--kill-after=30s", str(int(max(30, timeout)))] + base + args_extra,
+                stdout=out, stderr=err, env=env, cwd=str(BENCH_ROOT),
+            )
+        except FileNotFoundError:
+            # Missing GNU timeout (stock macOS): name the cause instead of dying
+            # before opencode starts, which read downstream as "no rollout".
+            err.write(
+                "run_opencode: the `timeout` command is not on PATH; install GNU coreutils "
+                "(brew install coreutils on macOS)\n"
+            )
+            return 127
     return proc.returncode
 
 

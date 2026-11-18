@@ -220,17 +220,26 @@ def _attempt(
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
-            _command(cfg, workspace, prompt, title),
-            cwd=cfg.opencode_dir,
-            env={
-                **os.environ,
-                **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
-                "OPENCODE_PERMISSION": _permission(workspace),
-            },
-            stdout=out,
-            stderr=err,
-        ).returncode
+        try:
+            code = subprocess.run(
+                _command(cfg, workspace, prompt, title),
+                cwd=cfg.opencode_dir,
+                env={
+                    **os.environ,
+                    **_isolation_env(workspace, os.environ.get("PATH", os.defpath)),
+                    "OPENCODE_PERMISSION": _permission(workspace),
+                },
+                stdout=out,
+                stderr=err,
+            ).returncode
+        except FileNotFoundError:
+            # Missing GNU timeout (stock macOS): name the cause instead of dying
+            # before OpenCode starts, which read downstream as "no rollout".
+            err.write(
+                "runner: the `timeout` command is not on PATH; install GNU coreutils "
+                "(brew install coreutils on macOS)\n"
+            )
+            code = 127
     with open(raw, encoding="utf-8", errors="replace") as src:
         traj_file.write_text(
             "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
