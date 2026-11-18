@@ -304,20 +304,21 @@ def _load_old(path: Path) -> dict:
 
 
 def recorded_usd(ns_dir: Path) -> float:
-    """USD the task summaries under `ns_dir` record: each mode's ledger plus its selection.
+    """USD the task summaries under `ns_dir` record: each mode's stages plus its selection.
 
-    Read from disk on every call, so tasks finished by an earlier run, a resumed task and a
-    concurrent domain all count once, with no running total to keep in step; one read per
-    summary before each task is small next to the task itself. Once executor rollouts are
-    priced, the k shared base rollouts sit in every mode's ledger, so a two-mode run counts
-    them twice and the limit stops early, never late.
+    The same figures `harness2.cli.report` totals, so the limit and the report agree; a mode
+    record that keeps its `stages` after a failure counts too, though it has no `ledger`.
+    Rollouts are not counted, as in the report. Read from disk on every call, so tasks
+    finished by an earlier run, a resumed task and a concurrent domain all count once, with
+    no running total to keep in step; one read per summary before each task is small next
+    to the task itself.
     """
     total = 0.0
     for path in Path(ns_dir).glob("*/summary.json"):
         summary = _load_old(path)
         selections = summary.get("selections") or {}
         for mode, rec in _modes_of(summary).items():
-            total += float(((rec or {}).get("ledger") or {}).get("usd") or 0.0)
+            total += sum(float(s.get("usd") or 0.0) for s in (rec or {}).get("stages") or [])
             total += float((selections.get(mode) or {}).get("usd") or 0.0)
     return round(total, 6)
 

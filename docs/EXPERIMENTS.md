@@ -54,8 +54,8 @@ review model pricing before launching a full run.
   check runs between tasks, so a task that starts always finishes, and a run can
   pass the limit by up to one task per worker. The tasks it did not start are
   listed with status `spend_limit`. To continue, run the same command with a
-  higher limit. Spend counts only what the summaries record: a rollout whose
-  executor reports no price counts as $0.
+  higher limit. Spend is the stage and selection spend that `harness2.cli.report`
+  totals for the same summaries; rollouts are not counted.
 - `--dry-run` previews selected tasks and available domains without model calls.
 
 Each benchmark also has a script that runs checks, refinement, judging, and

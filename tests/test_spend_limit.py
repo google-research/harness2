@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from harness2.cli import report as report_cli
 from harness2.core import report, schedule
 from harness2.demo import DemoAdapter, DemoProposer
 
@@ -80,6 +81,21 @@ class SpendLimitTests(unittest.TestCase):
         self.assertNotIn("spend_limit", dom)
         self.assertEqual([row["status"] for row in dom["tasks"]], ["skipped", "ok"])
         self.assertAlmostEqual(schedule.recorded_usd(self.ns_dir), 2 * spent)
+
+    def test_recorded_spend_matches_the_report_and_keeps_a_failed_modes_stages(self):
+        # A mode that failed after its stages ran keeps `stages` but has no `ledger`.
+        summary = {
+            "modes": {
+                "agg": {"ok": False, "error": "boom", "stages": [{"usd": 0.25}, {"usd": 0.25}]},
+                "seq": {"ok": True, "ledger": {"usd": 0.5}, "stages": [{"usd": 0.5}]},
+            },
+            "selections": {"seq": {"usd": 0.1}},
+        }
+        (self.ns_dir / "t1").mkdir(parents=True)
+        (self.ns_dir / "t1/summary.json").write_text(json.dumps(summary))
+        self.assertAlmostEqual(schedule.recorded_usd(self.ns_dir), 1.1)
+        _, usd = report_cli._spend_and_fallbacks(self.ns_dir, ("agg", "seq"), 1)
+        self.assertAlmostEqual(schedule.recorded_usd(self.ns_dir), sum(usd.values()))
 
     def test_without_a_limit_the_sweep_is_unchanged(self):
         rep, dom = self._sweep(None)
