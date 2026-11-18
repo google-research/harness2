@@ -34,16 +34,26 @@ from . import _common as C
 from .judge import _load_rows
 
 
-def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[dict, dict]:
-    """(fell_back, usd) keyed (mode token, k), from the summaries the sweep checkpointed."""
+def _spend_and_fallbacks(
+    ns_dir: Path, modes: tuple[str, ...], k: int
+) -> tuple[dict, dict, list[str]]:
+    """(fell_back, usd) keyed (mode token, k), from the summaries the sweep checkpointed,
+    plus the budget-identity violations those summaries carry.
+
+    A persisted ledger whose R/P breaks the budget identity means the run was
+    truncated or interrupted; the task's judged rows are stale in that case, so the
+    violation is named for the reader rather than folded into the figures.
+    """
     fell_back: dict[tuple[str, int], int] = {}
     usd: dict[tuple[str, int], float] = {}
+    violations: list[str] = []
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
             summary = json.loads(summary_path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
+        violations += SCHED.budget_violations(summary, modes).values()
         records = SCHED._modes_of(summary)
         for mode in modes:
             key = (mode, k)
@@ -52,7 +62,7 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
             spend = sum(float(s.get("usd") or 0.0) for s in rec.get("stages") or [])
             sel = (summary.get("selections") or {}).get(mode) or {}
             usd[key] = usd.get(key, 0.0) + spend + float(sel.get("usd") or 0.0)
-    return fell_back, usd
+    return fell_back, usd, violations
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--k named no scale")
 
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
-    rows, fell_back, usd = [], {}, {}
+    rows, fell_back, usd, violations = [], {}, {}, []
     for k in ks:
         ns_dir = C.runs_root_for(adapter) / C.summary_namespace(adapter, k, seed=args.seed)
         judged = ns_dir / "judged.json"
@@ -88,9 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ! no judged rows at {judged} — run cli.judge for k={k} first", flush=True)
             continue
         rows.extend(r for r in got if r.mode in modes)
-        fb, sp = _spend_and_fallbacks(ns_dir, modes, k)
+        fb, sp, notes = _spend_and_fallbacks(ns_dir, modes, k)
         fell_back.update(fb)
         usd.update(sp)
+        violations += notes
     if not rows:
         raise SystemExit("nothing to report")
 
@@ -101,6 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     summaries = R.summarise(rows, fell_back=fell_back, usd=usd)
     print(R.render(summaries, title=title, bench=adapter.spec.name))
+    if violations:
+        print(
+            "\n  WARNING  budget identity violated while reading persisted summaries; "
+            "these rows may be stale:"
+        )
+        for note in violations:
+            print(f"    - {note}")
     spend = sum(s.usd for s in summaries)
     if spend:
         print(

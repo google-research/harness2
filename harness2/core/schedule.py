@@ -81,6 +81,30 @@ def _modes_of(record: Mapping) -> dict:
     return dict(record.get("arms") or {})
 
 
+def budget_violations(summary: Mapping, modes: Sequence[str]) -> dict[str, str]:
+    """Budget-identity violations of a PERSISTED summary: mode -> one-line note.
+
+    `assert_identity` runs at the end of a mode and never sees an interrupted run;
+    this re-checks the ledger the run wrote, so a truncated or oddly-resumed task is
+    named rather than judged or reported as if its budget had completed. A record
+    without a ledger (legacy summaries) asserts nothing, the same way `_task_inputs`
+    keeps its check off rather than failing on missing data.
+    """
+    out: dict[str, str] = {}
+    for mode in modes:
+        ledger = ((_modes_of(summary).get(mode) or {}).get("ledger")) or {}
+        r_ok = ledger.get("R") == ledger.get("expected_R")
+        p_ok = ledger.get("P") == ledger.get("expected_P")
+        if ledger and not (r_ok and p_ok):
+            out[mode] = (
+                f"{summary.get('task_id', '?')} {mode}: "
+                f"R {ledger.get('R')}/{ledger.get('expected_R')}, "
+                f"P {ledger.get('P')}/{ledger.get('expected_P')} -- truncated or "
+                f"interrupted before the budget completed; re-run the task"
+            )
+    return out
+
+
 @dataclass(frozen=True)
 class Namespace:
     """Every name for one (benchmark, substrate, mode, k, seed, tag) setting."""
