@@ -55,6 +55,14 @@ class SubprocessEnvTests(unittest.TestCase):
             "GOOGLE_API_KEY": "g-key",
             "GOOGLE_GENERATIVE_AI_API_KEY": "g-genai-key",
             "GOOGLE_APPLICATION_CREDENTIALS": "/adc.json",
+            "MISTRAL_API_KEY": "sk-mistral",
+            "OPENROUTER_API_KEY": "sk-or",
+            "GROQ_API_KEY": "gsk-test",
+            "TOGETHER_API_KEY": "tgp-test",
+            "DEEPSEEK_API_KEY": "sk-ds",
+            "HF_TOKEN": "hf_test",
+            "HUGGING_FACE_HUB_TOKEN": "hf_hub_test",
+            "AZURE_CLIENT_SECRET": "azure-secret",
         }
         # A Vertex solver keeps no provider key, whatever the developer's .env configures.
         with (
@@ -85,6 +93,14 @@ class SubprocessEnvTests(unittest.TestCase):
                         "AWS_BEARER_TOKEN_BEDROCK",
                         "GOOGLE_API_KEY",
                         "GOOGLE_GENERATIVE_AI_API_KEY",
+                        "MISTRAL_API_KEY",
+                        "OPENROUTER_API_KEY",
+                        "GROQ_API_KEY",
+                        "TOGETHER_API_KEY",
+                        "DEEPSEEK_API_KEY",
+                        "HF_TOKEN",
+                        "HUGGING_FACE_HUB_TOKEN",
+                        "AZURE_CLIENT_SECRET",
                     ):
                         self.assertNotIn(key, set(env_map))
                     self.assertEqual(env_map["GOOGLE_APPLICATION_CREDENTIALS"], "/adc.json")
@@ -95,7 +111,7 @@ class SubprocessEnvTests(unittest.TestCase):
                 "claude-test": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"},
                 "gemini-test": {"GOOGLE_API_KEY"},
                 "gpt-test": {"OPENAI_API_KEY"},
-                "mistral-test": set(),
+                "mistral-test": {"MISTRAL_API_KEY"},
             }
             for model, kept in judge_cases.items():
                 with self.subTest(judge=model):
@@ -265,6 +281,11 @@ class SubprocessEnvTests(unittest.TestCase):
             "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
             "GITHUB_TOKEN": "ghp_secret",
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
+            "MISTRAL_API_KEY": "sk-mistral",
+            "OPENROUTER_API_KEY": "sk-or",
+            "GROQ_API_KEY": "gsk-test",
+            "TOGETHER_API_KEY": "tgp-test",
+            "DEEPSEEK_API_KEY": "sk-ds",
         }
         cases = {
             "openai/gpt-test": {"OPENAI_API_KEY"},
@@ -280,6 +301,11 @@ class SubprocessEnvTests(unittest.TestCase):
                 "AWS_BEARER_TOKEN_BEDROCK",
             },
             "google-vertex/gemini-test": set(),
+            "mistral/mistral-test": {"MISTRAL_API_KEY"},
+            "openrouter/any": {"OPENROUTER_API_KEY"},
+            "groq/any": {"GROQ_API_KEY"},
+            "together/any": {"TOGETHER_API_KEY"},
+            "deepseek/any": {"DEEPSEEK_API_KEY"},
         }
         with patch.dict("os.environ", host):
             for model, kept in cases.items():
