@@ -90,3 +90,38 @@ class ProposerSessionErrorsTests(unittest.TestCase):
                     self.assertTrue(reply.ok)
                     self.assertEqual(reply.text, "partial or final answer")
                     self.assertEqual(reply.cost_usd, 0.25)
+
+    def test_cached_reply_carries_the_cost_it_was_paid(self):
+        """A resume's cached session keeps its original spend, or reports it as $0 (#50)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            entry = root / "opencode/packages/opencode/src/index.ts"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("")
+            events = [
+                {"type": "text", "part": {"type": "text", "text": "final answer"}},
+                {"type": "step_finish", "part": {"type": "step-finish", "cost": 0.25}},
+            ]
+            executable = root / "protocol-standin"
+            executable.write_text(
+                "#!/usr/bin/env python3\nprint(" + repr("\n".join(json.dumps(e) for e in events)) + ")\n"
+            )
+            executable.chmod(0o700)
+            audit = root / "audit"
+            first = Proposer(
+                ChannelSpec("opencode", "local/protocol-fixture"), audit_dir=audit, attempts=1
+            )
+            with (
+                patch.object(config, "BUN", executable),
+                patch.object(config, "OPENCODE_DIR", root / "opencode"),
+            ):
+                reply = first.call("Read the local protocol fixture", None, "fixture")
+                self.assertEqual((reply.cached, reply.cost_usd), (False, 0.25))
+                # a later invocation over the same audit: the session is served, not re-paid,
+                # but what it cost the first time must still reach the caller's books
+                second = Proposer(
+                    ChannelSpec("opencode", "local/protocol-fixture"), audit_dir=audit, attempts=1
+                )
+                cached = second.call("Read the local protocol fixture", None, "fixture")
+                self.assertTrue(cached.cached)
+                self.assertEqual(cached.cost_usd, 0.25)
