@@ -39,6 +39,7 @@ from pathlib import Path
 
 from .. import config
 from ..core import judge as J
+from ..core import schedule as SCHED
 from . import _common as C
 
 _DERIVED = ("frac", "graded")
@@ -96,7 +97,11 @@ def _selection_record(sel: dict) -> dict:
 
 
 def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
-    """Every requested mode's selection record from every finished task summary."""
+    """Every requested mode's selection record from every finished task summary.
+
+    A task whose persisted ledger breaks the budget identity (a truncated or
+    interrupted run) is named and skipped, never judged as if it had completed.
+    """
     out: list[dict] = []
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
@@ -104,7 +109,12 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
+        broken = SCHED.budget_violations(summary, modes)
+        for note in broken.values():
+            print(f"  ! budget identity violated, not judging -- {note}", flush=True)
         for mode in modes:
+            if mode in broken:
+                continue
             sel = (summary.get("selections") or {}).get(mode)
             if sel:
                 out.append(_selection_record(sel))
