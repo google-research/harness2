@@ -38,6 +38,22 @@ connects two levels of recursion while keeping model weights fixed:
   </a>
 </p>
 
+## When to use Harness²
+
+Harness² pays off when the same **class of tasks recurs** and you want the
+system around the model to improve from evidence — this week's contract review
+making next week's better. For a one-off task, a normal coding agent is the
+simpler tool; for a repeated task whose shape you fully know, a deterministic
+script wins. What a run stores (adopted harnesses and evidence-backed lessons)
+feeds Harness²'s own later refinement steps — it never updates another agent
+automatically.
+
+New here? The [getting-started guide](docs/GETTING_STARTED.md) walks five
+outcome-based stages — understand a local run, change its inputs, compare
+budgets and modes, prepare one model-backed task, pilot your own workflow —
+starting credential-free in seconds with the local demo and the
+[ledger example](examples/getting_started/README.md).
+
 Across three professional benchmarks and four model–harness configurations, a
 single Harness² step improves GLM-5 and Gemini 3.5 Flash over their base
 harnesses, with gains of up to 11.5 points on WorkBuddy-Bench, 4.5 points on
@@ -53,6 +69,7 @@ https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
 
 ## Contents
 
+- [When to use Harness²](#when-to-use-harness2)
 - [Video overview](#video-overview)
 - [Harness components](#harness-components)
 - [Install](#install)
