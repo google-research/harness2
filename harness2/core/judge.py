@@ -96,7 +96,14 @@ def judge_one(
     s.raw = dict(got)
     s.n_passed = got.get("n_passed")
     s.n_criteria = got.get("n_criteria")
-    s.all_pass = bool(got.get("all_pass", s.graded and s.n_passed == s.n_criteria))
+    # A forwarded null verdict (lab.py spells every key) is an absent verdict, not a
+    # failed one: bool(None) would read a 4/4 task as a failure.
+    got_all_pass = got.get("all_pass")
+    s.all_pass = (
+        bool(got_all_pass)
+        if got_all_pass is not None
+        else s.graded and s.n_passed == s.n_criteria
+    )
     return s
 
 

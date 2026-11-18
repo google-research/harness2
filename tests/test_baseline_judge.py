@@ -139,5 +139,44 @@ class BaselineJudgeTests(unittest.TestCase):
                     self.assertIsNone(rows[0]["frac"])
 
 
+class JudgeOneTests(unittest.TestCase):
+    """A forwarded null verdict is derived, not trusted as a failure (#80)."""
+
+    class _Adapter:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def score(self, run_dir, task_id):
+            return self.payload
+
+    def _row(self, upstream_scores):
+        from harness2.core.judge import judge_one
+
+        adapter = self._Adapter(
+            # lab.py:997-1001 -- every key spelled out, .get() yields None when absent
+            {key: upstream_scores.get(key) for key in ("n_passed", "n_criteria", "all_pass")}
+        )
+        return judge_one(adapter, "contracts/task-1", "agg", 1, "agg1", "adapted-1",
+                         Path("/tmp/run"))
+
+    def test_null_all_pass_is_derived_from_the_counts(self):
+        row = self._row({"n_passed": 4, "n_criteria": 4})
+        self.assertTrue(row.graded)
+        self.assertTrue(row.all_pass)
+        row = self._row({"n_passed": 3, "n_criteria": 4})
+        self.assertFalse(row.all_pass)
+
+    def test_explicit_all_pass_verdict_is_kept(self):
+        row = self._row({"n_passed": 3, "n_criteria": 4, "all_pass": True})
+        self.assertTrue(row.all_pass)
+        row = self._row({"n_passed": 4, "n_criteria": 4, "all_pass": False})
+        self.assertFalse(row.all_pass)
+
+    def test_missing_numerator_stays_ungraded(self):
+        row = self._row({"n_criteria": 4, "all_pass": True})
+        self.assertFalse(row.graded)
+        self.assertIsNone(row.frac)
+
+
 if __name__ == "__main__":
     unittest.main()
