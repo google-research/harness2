@@ -130,6 +130,17 @@ def render(summaries: Sequence[Summary], *, title: str = "", bench: str = "") ->
             f"result -- an effect at k>=2 has to clear it.",
         ]
 
+    for k in sorted({s.k for s in summaries}):
+        rows = {s.name: s.n + s.n_ungraded for s in summaries if s.k == k}
+        if len(set(rows.values())) > 1:
+            lines += [
+                "",
+                f"  WARNING  k={k}: the modes cover different numbers of tasks "
+                f"({', '.join(f'{name} {n}' for name, n in rows.items())}), for example "
+                f"after a --max-usd stop in a run of one mode. Compare them only over the "
+                f"same tasks.",
+            ]
+
     for s in summaries:
         if s.n and s.chose_final <= 0.25 * s.n:
             lines += [
