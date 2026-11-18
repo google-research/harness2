@@ -341,11 +341,18 @@ class Proposer:
         txt = p["response"].read_text(encoding="utf-8", errors="replace")
         if not txt.strip():
             return None
+        # What this session cost when it was first run: a re-run task's mode record
+        # replaces the old one, so reporting $0 here would erase paid spend (#50).
+        usd = 0.0
+        try:
+            usd = float(json.loads(p["meta"].read_text(encoding="utf-8")).get("cost_usd") or 0.0)
+        except (OSError, ValueError):
+            pass
         return Reply(
             label=label,
             text=txt,
             ok=True,
-            cost_usd=0.0,
+            cost_usd=usd,
             cached=True,
             channel=self.spec.kind,
             audit=p["response"],
