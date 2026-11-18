@@ -713,7 +713,15 @@ def run_task(
             )
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
+            # Stages that already ran (editors, composer) were paid for: keep their
+            # record in the replaced dict or harness2-report counts their spend as $0.
+            paid = {
+                key: value
+                for key, value in (res.modes.get(mode) or {}).items()
+                if key in ("stages", "fell_back")
+            }
             res.modes[mode] = {
+                **paid,
                 "ok": False,
                 "error": err,
                 "traceback": traceback.format_exc()[-1500:],
