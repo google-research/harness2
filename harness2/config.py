@@ -213,6 +213,16 @@ SCRUB_ENV = frozenset(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
         "AWS_BEARER_TOKEN_BEDROCK",
+        # Other provider keys OpenCode-family CLIs read (#219): blocklisted credentials
+        # reach a subprocess only when that subprocess's own model keeps them.
+        "MISTRAL_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GROQ_API_KEY",
+        "TOGETHER_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "AZURE_CLIENT_SECRET",
     }
 )
 
@@ -239,6 +249,11 @@ _PROVIDER_KEYS = {
         "AWS_SESSION_TOKEN",
         "AWS_BEARER_TOKEN_BEDROCK",
     ),
+    "mistral": ("MISTRAL_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "together": ("TOGETHER_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
 }
 
 
