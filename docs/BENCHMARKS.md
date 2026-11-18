@@ -31,6 +31,13 @@ discovers all installed tasks; no separate task list is required. Setup installs
 the LAB dependency environment, the runner overlays, and the included Vertex
 judge patch.
 
+The default `HARNESS2_JUDGE_MODEL` routes by prefix (`vertex/…`, `claude…`,
+`gemini…`, `gpt…`, `mistral…`). For an OpenAI-compatible endpoint that only
+serves `chat/completions` (DeepSeek, vLLM, Ollama, most gateways), set
+`HARNESS2_JUDGE_MODEL=openai-compatible/<model>` with `OPENAI_BASE_URL` and
+`OPENAI_API_KEY`; the judge then uses chat completions with JSON-object steering
+instead of the OpenAI Responses API.
+
 The judge reads outputs only after selection. Reports use Partial (fraction of
 criteria passed) and All-pass (all criteria passed). A failed judge remains
 unscored and writes its output to `judge.log` in the run directory; a Vertex

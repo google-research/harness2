@@ -390,6 +390,7 @@ except Exception as exc:
 # evaluation/judge.py picks its provider; vertex/ models use ADC and keep none.
 _JUDGE_KEYS = (
     (("vertex/",), ()),
+    (("openai-compatible/",), ("OPENAI_API_KEY", "OPENAI_BASE_URL")),
     (("claude",), ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")),
     (("gemini",), ("GOOGLE_API_KEY", "GEMINI_API_KEY")),
     (("gpt", "o1", "o3", "o4", "o5"), ("OPENAI_API_KEY",)),
