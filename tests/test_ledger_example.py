@@ -52,11 +52,15 @@ class LedgerExampleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             inputs = Path(temporary) / "inputs"
             inputs.mkdir()
-            (inputs / "ledger-1.csv").write_text("amount\n10.00\n-3.00\n")
-            (inputs / "ledger-2.csv").write_text("amount\n5.00\n")
+            # arbitrary names: a task is whatever your CSVs are called
+            (inputs / "week-1.csv").write_text("amount\n10.00\n-3.00\n")
+            (inputs / "week-2.csv").write_text("amount\n5.00\n")
             out = Path(temporary) / "run"
-            self.assertEqual(self.run_example(inputs, out).returncode, 0)
-            (inputs / "ledger-1.csv").write_text("amount\n10.00\n-3.00\n-4.00\n")
+            first = self.run_example(inputs, out)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertIn("week-1", first.stdout)
+            self.assertIn("Total: 7.00", first.stdout)
+            (inputs / "week-1.csv").write_text("amount\n10.00\n-3.00\n-4.00\n")
             changed = self.run_example(inputs, out)
             self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
             self.assertIn("Total: 3.00", changed.stdout)  # the new sum, not the stale 7.00

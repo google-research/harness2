@@ -68,6 +68,9 @@ class LedgerAdapter(DemoAdapter):
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy(inputs / f"{task_id}.csv", dest / TASK_FILE)
 
+    def tasks(self, split: str = "all") -> list[str]:
+        return self._ids
+
 
 def signed_total(csv_path: Path) -> Decimal:
     with csv_path.open() as fh:
