@@ -224,6 +224,48 @@ class WorkflowTests(unittest.TestCase):
         self.adapter.score.assert_not_called()
         self.assertEqual((rows[0].graded, rows[0].n_passed), (False, None))
 
+    def test_failed_mode_keeps_its_paid_stages(self):
+        """A mode that dies after its stages ran keeps their spend in summary.json (#98)."""
+
+        class PricedProposer(DemoProposer):
+            def call(self, mission, context_dir, label, **kwargs):
+                reply = super().call(mission, context_dir, label, **kwargs)
+                reply.cost_usd = 0.25
+                return reply
+
+        with patch(
+            "harness2.core.selection.run_selection",
+            side_effect=RuntimeError("selection infrastructure failed"),
+        ):
+            self.run_stream(proposer=PricedProposer(self.proposer.spec))
+        summary_path = self.adapter.spec.runs_root / "demo-oc-agg2/ledger-1/summary.json"
+        summary = json.loads(summary_path.read_text())
+        for mode in ("agg", "seq"):
+            record = summary["modes"][mode]
+            self.assertFalse(record["ok"])
+            self.assertTrue(record["stages"], "a failed mode lost the stages it paid for")
+            self.assertEqual(
+                sum(float(s.get("usd") or 0) for s in record["stages"]),
+                0.25 * len(record["stages"]),
+            )
+        from harness2.cli.report import _spend_and_fallbacks
+
+        _, usd = _spend_and_fallbacks(
+            self.adapter.spec.runs_root / "demo-oc-agg2", ("agg", "seq"), 2
+        )
+        # the report must count every paid stage of both tasks' failed modes
+        for mode in ("agg", "seq"):
+            paid = sum(
+                0.25
+                for task in ("ledger-1", "ledger-2")
+                for _ in json.loads(
+                    (
+                        self.adapter.spec.runs_root / "demo-oc-agg2" / task / "summary.json"
+                    ).read_text()
+                )["modes"][mode]["stages"]
+            )
+            self.assertAlmostEqual(usd[(mode, 2)], paid)
+
     def test_failed_rerun_clears_stale_selections_in_summary(self):
         self.run_stream(k=1)
         summary_path = self.adapter.spec.runs_root / "demo-oc-agg1/ledger-1/summary.json"
