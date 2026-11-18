@@ -56,6 +56,7 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse, then run `_main`, printing a misconfiguration as one remediation line."""
     p = argparse.ArgumentParser(
         prog="harness2.cli.report", description=__doc__, formatter_class=C.HelpFormatter
     )
@@ -70,6 +71,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     C.add_modes_arg(g)
     args = p.parse_args(argv)
+    try:
+        return _main(args)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _main(args: argparse.Namespace) -> int:
     modes = C.parse_modes(args.modes)
     try:
         ks = sorted({int(s) for s in args.k.split(",") if s.strip()})

@@ -156,6 +156,7 @@ def judge_bases(adapter, ns_dir: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse, then run `_main`, printing a misconfiguration as one remediation line."""
     p = argparse.ArgumentParser(
         prog="harness2.cli.judge", description=__doc__, formatter_class=C.HelpFormatter
     )
@@ -168,6 +169,14 @@ def main(argv: list[str] | None = None) -> int:
         "instead of the selected runs",
     )
     args = p.parse_args(argv)
+    try:
+        return _main(args)
+    except (config.ConfigError, RuntimeError, ValueError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+def _main(args: argparse.Namespace) -> int:
     modes = C.parse_modes(args.modes)
 
     config.validate_models(judge=True)
