@@ -55,6 +55,13 @@ def check(adapter, *, judge=False) -> list[str]:
             errors.append(str(exc))
 
     bench = adapter.spec.name.split("-", 1)[0]
+    # The OpenCode rollout runners (JobBench runner, third_party lab_runner) shell out to
+    # GNU `timeout`; macOS does not ship it, and a missing binary died silently before.
+    if bench in ("jb", "lab") and not shutil.which("timeout"):
+        errors.append(
+            "GNU timeout missing; the OpenCode rollout runners require it "
+            "(brew install coreutils on macOS)"
+        )
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[bench]
     repo = config.DEPENDENCIES / name
     for dependency in (name, "opencode"):
