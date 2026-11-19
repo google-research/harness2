@@ -247,9 +247,9 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
 
     d = dest / "deliverables" / r.label
     d.mkdir(parents=True, exist_ok=True)
-    for img in _images(adapter, r.run_dir)[:8]:
+    for index, img in enumerate(_images(adapter, r.run_dir)[:8], 1):
         try:
-            t = d / "images" / Path(img).name
+            t = d / "images" / f"{index}-{Path(img).name}"
             t.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(img, t)
         except OSError:
