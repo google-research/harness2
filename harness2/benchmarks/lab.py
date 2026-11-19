@@ -27,6 +27,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
@@ -601,6 +602,22 @@ class LabAdapter:
 
     def _run_dir(self, run_id: str) -> Path:
         return self._results_root / run_id
+
+    @contextmanager
+    def schedule_task_lock(self, reference_id: str):
+        """Keep one scheduler in a mutable Lab result namespace at a time."""
+        import fcntl
+
+        lock = self._run_dir(reference_id).parent.resolve() / ".schedule.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        # The lock is a sibling of the rollout directories, so a reroll never
+        # removes an inode another scheduler might already have opened.
+        with lock.open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(f"Lab result namespace is already in use: {lock.parent}") from exc
+            yield
 
     def execute(
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
