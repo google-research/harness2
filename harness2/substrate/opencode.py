@@ -272,14 +272,16 @@ class OpencodeSubstrate:
         *,
         output_token_max: int = OUTPUT_TOKEN_MAX,
         extra_allowed: tuple[str, ...] = (),
+        model: str = "",
     ) -> dict[str, str]:
         """The reference permission fence and output-token ceiling; see run_argv. Without
-        OPENCODE_PERMISSION the session auto-rejects reads of its own working tree."""
+        OPENCODE_PERMISSION the session auto-rejects reads of its own working tree. Keeps the
+        provider key for `model`, or for the configured solver model when it is empty."""
         allow = {"*": "deny", str(workspace): "allow", f"{workspace}/**": "allow"}
         for root in extra_allowed:
             allow[str(root)] = "allow"
             allow[f"{root}/**"] = "allow"
-        env = dict(base_env)
+        env = config.scrub_env(base_env, keep=config.provider_keys(model or config.SOLVER_MODEL_OC))
         env["OPENCODE_PERMISSION"] = json.dumps({"external_directory": allow})
         env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = str(int(output_token_max))
         return env

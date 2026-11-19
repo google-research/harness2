@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parent
@@ -187,3 +188,60 @@ def validate_models(*, judge: bool = False) -> None:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:
         require("HARNESS2_JUDGE_MODEL", needed_by="benchmark judging")
+
+
+SCRUB_ENV = frozenset(
+    {
+        "HARNESS2_JUDGE_API_KEY",
+        "HARNESS2_BRIDGE_KEY",
+        "HARNESS2_CODEX_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_WEBHOOK_URL",
+        "JIRA_API_TOKEN",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    }
+)
+
+
+def scrub_env(
+    base_env: Mapping[str, str] | None = None, *, keep: Iterable[str] = ()
+) -> dict[str, str]:
+    """Return a copy of `base_env` (default `os.environ`) with runner and host secrets removed."""
+    src = os.environ if base_env is None else base_env
+    drop = SCRUB_ENV - set(keep)
+    return {k: v for k, v in src.items() if k not in drop}
+
+
+# The SCRUB_ENV names an OpenCode provider reads for its own credentials (models.dev `env`;
+# AWS_SESSION_TOKEN joins the access keys for temporary AWS credentials, and the AI SDK's
+# Anthropic provider reads ANTHROPIC_BASE_URL for gateway routing).
+_PROVIDER_KEYS = {
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+    "google": ("GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"),
+    "amazon-bedrock": (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    ),
+}
+
+
+def provider_keys(model: str) -> tuple[str, ...]:
+    """The scrubbed credentials an OpenCode `provider/model` needs; () for Vertex and the rest."""
+    return _PROVIDER_KEYS.get(model.split("/", 1)[0], ())

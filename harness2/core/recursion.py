@@ -53,6 +53,7 @@ class Stage:
     attempts: int = 0
     cached: bool = False
     notes: str = ""
+    execution_failed: bool = False
 
 
 @dataclass
@@ -70,7 +71,11 @@ class ModeResult:
 
     @property
     def ok(self) -> bool:
-        return bool(self.finals) and not self.errors
+        return (
+            bool(self.finals)
+            and not self.errors
+            and not any(stage.execution_failed for stage in self.stages)
+        )
 
     @property
     def fell_back(self) -> list[str]:
@@ -91,6 +96,7 @@ class ModeResult:
                     "dim": s.dim,
                     "fell_back": s.fell_back,
                     "kept_base": s.kept_base,
+                    "execution_failed": s.execution_failed,
                     "attempts": s.attempts,
                     "usd": s.usd,
                     "cached": s.cached,
@@ -177,6 +183,7 @@ def _run_stage(
     spent_usd = 0.0
     spent_calls = 0
     all_cached = True
+    execution_failed = False
     for attempt in range(1, STAGE_ATTEMPTS + 1):
         try:
             reply = prop.call(
@@ -194,6 +201,7 @@ def _run_stage(
             )
         except ProposerError as exc:
             err = str(exc)
+            execution_failed = True
             spent_calls += exc.attempts or TRANSPORT_ATTEMPTS
             spent_usd += exc.cost_usd
             all_cached = False
@@ -221,6 +229,8 @@ def _run_stage(
                 f"(e.g. `{surface.skill_dir}/doc_review/SKILL.md`, "
                 f"`scripts/check_totals.py`)."
             )
+            # The retry reads a fresh copy of `context/`, so it must hold this attempt's edits.
+            harness_tree.write_tree(surface, new, tree.root / "harness")
             continue
 
         kept, err = _accept_tree(surface, adapter, new, fallback, label)
@@ -248,6 +258,7 @@ def _run_stage(
         usd=spent_usd,
         attempts=spent_calls,
         cached=all_cached,
+        execution_failed=execution_failed,
     )
 
 

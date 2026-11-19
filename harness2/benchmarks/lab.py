@@ -386,9 +386,26 @@ except Exception as exc:
 """
 
 
-def _lab_env() -> dict[str, str]:
+# The scrubbed credentials LAB's judge client reads, by --judge-model prefix in the order
+# evaluation/judge.py picks its provider; vertex/ models use ADC and keep none.
+_JUDGE_KEYS = (
+    (("vertex/",), ()),
+    (("claude",), ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")),
+    (("gemini",), ("GOOGLE_API_KEY", "GEMINI_API_KEY")),
+    (("gpt", "o1", "o3", "o4", "o5"), ("OPENAI_API_KEY",)),
+)
+
+
+def _judge_keys(model: str) -> tuple[str, ...]:
+    """The scrubbed credentials the LAB judge needs for `model`; () when it needs none."""
+    name = model.lower()
+    return next((keys for prefixes, keys in _JUDGE_KEYS if name.startswith(prefixes)), ())
+
+
+def _lab_env(*, keep: tuple[str, ...] = ()) -> dict[str, str]:
+    """LAB subprocess env; `keep` lists the scrubbed credentials the subprocess still needs."""
     return {
-        **os.environ,
+        **config.scrub_env(keep=keep),
         "PYTHONPATH": str(config.lab_repo()),
         "PATH": f"{config.LAB_PYTHON.parent}:{config.BUN.parent}:{config.CODEX_DIST}/codex-path:"
         + os.environ.get("PATH", ""),
@@ -589,11 +606,13 @@ class LabAdapter:
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
         out = self._run_dir(run_id)
-        if RM.is_complete(out, harness_dir=harness_dir) and self.artifacts_intact(out):
+        inputs = RM.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        reusable = RM.is_complete(out, harness_dir=harness_dir, inputs=inputs)
+        if reusable and self.artifacts_intact(out):
             self._check_tool_gate(out)
             return out
         if out.is_dir() and any(out.iterdir()):
-            reason = RM.why_not(out, harness_dir=harness_dir)
+            reason = RM.why_not(out, harness_dir=harness_dir, inputs=inputs)
             if reason == "reusable":
                 reason = "output fingerprint missing or changed"
             print(
@@ -619,6 +638,7 @@ class LabAdapter:
             out,
             run_id=run_id,
             harness_dir=harness_dir,
+            inputs=inputs,
             extra={"output_fingerprint": self._output_fingerprint(out)},
         )
         return out
@@ -673,7 +693,7 @@ class LabAdapter:
                 run_detached(
                     cmd,
                     cwd=config.lab_repo(),
-                    env=_lab_env(),
+                    env=_lab_env(keep=config.provider_keys(self.model)),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -982,7 +1002,7 @@ class LabAdapter:
                     run_detached(
                         cmd,
                         cwd=config.lab_repo(),
-                        env=_lab_env(),
+                        env=_lab_env(keep=_judge_keys(self.judge_model)),
                         stdin=subprocess.DEVNULL,
                         stdout=out,
                         stderr=subprocess.STDOUT,

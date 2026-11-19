@@ -38,6 +38,13 @@ Shell environment variables take precedence over `.env`.
 `GOOGLE_CLOUD_PROJECT` identifies your project; `GOOGLE_CLOUD_LOCATION` defaults
 to `global`. Your account must have access to each configured model.
 
+The agents and judges Harness² starts do not inherit the judge, bridge,
+provider, cloud and host tokens listed in `SCRUB_ENV` (`harness2/config.py`).
+Each keeps only the key its own model call needs, so a harness tool that needs
+another listed token, such as `GITHUB_TOKEN`, does not receive it. Variables not
+on that list are passed through unchanged. Local helpers, such as the render
+bridge, still receive the full environment.
+
 | Setting | Meaning |
 |---|---|
 | `HARNESS2_SOLVER_MODEL` | Executor model in OpenCode's `provider/model` format |
