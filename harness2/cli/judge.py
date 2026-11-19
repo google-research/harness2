@@ -195,9 +195,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"judging {len(sels)} selection(s) under {ns} ...", flush=True)
     rows = J.judge_selections(adapter, sels, parallel=_PARALLEL)
 
+    import fcntl
+
     out_path = ns_dir / "judged.json"
-    merged = _merge(_load_rows(out_path), rows)
-    J.write(merged, out_path)
+    # Independent mode invocations accumulate into one file. Lock a stable
+    # sidecar since replacing the JSON changes its inode.
+    with out_path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        merged = _merge(_load_rows(out_path), rows)
+        J.write(merged, out_path)
 
     graded = sum(1 for r in merged if r.graded)
     print(
