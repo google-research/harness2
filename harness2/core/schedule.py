@@ -27,6 +27,7 @@ import re
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -657,6 +658,30 @@ def run_task(
     domain = adapter.domain_of(task_id)
     res = TaskResult(task_id=task_id, domain=domain, k=k, seed=seed)
     base_ns = Namespace(bench, sub, "agg", k, seed, tag)
+    task_lock = getattr(adapter, "schedule_task_lock", None)
+    # Lab references remain mutable paths in the recursive contexts and in
+    # selection. Protect their namespace from resume through the last read.
+    with task_lock(base_ns.run_id(task_id, "base1")) if callable(task_lock) else nullcontext():
+        return _run_task_in_namespace(
+            res, base_ns, adapter=adapter, prop=prop, selector=selector, runs_root=runs_root,
+            modes=modes, mode_libs=mode_libs, pool_policy=pool_policy,
+        )
+
+
+def _run_task_in_namespace(
+    res: TaskResult,
+    base_ns: Namespace,
+    *,
+    adapter: BenchmarkAdapter,
+    prop: Proposer,
+    selector: Proposer,
+    runs_root: Path,
+    modes: Sequence[str],
+    mode_libs: dict[str, library_store.Library],
+    pool_policy: str,
+) -> TaskResult:
+    task_id, k, seed, tag = res.task_id, base_ns.k, base_ns.seed, base_ns.tag
+    bench, sub = base_ns.benchmark, base_ns.substrate
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
     summary_path = work / "summary.json"
