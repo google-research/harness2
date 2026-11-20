@@ -1,0 +1,69 @@
+{
+  "config": {
+    "account": {
+      "currency": "MXN",
+      "initial_capital": "100000"
+    },
+    "instruments": {
+      "EURUSD": {
+        "commission_per_lot_per_side": "60",
+        "contract_size": "100000",
+        "lot_step": "0.01",
+        "margin_rate": "0.0333",
+        "max_lot": "5",
+        "min_lot": "0.01",
+        "quote_currency": "USD",
+        "quote_to_account_rate": "17.00",
+        "slippage": "0",
+        "spread": "0.00012",
+        "tick_size": "0.00001"
+      }
+    },
+    "mode": "simulation",
+    "risk": {
+      "daily_loss_limit": "1500",
+      "max_budget_per_trade": "25000",
+      "max_loss_per_trade": "600",
+      "max_open_positions": 2,
+      "profit_target_per_trade": "1200"
+    },
+    "simulation": {
+      "close_open_positions_at_end": false
+    },
+    "strategy": {
+      "atr_period": 14,
+      "fast_period": 10,
+      "lookback_bars": 200,
+      "name": "sma_cross_rsi",
+      "rsi_buy_max": "70",
+      "rsi_period": 14,
+      "rsi_sell_min": "30",
+      "slow_period": 30,
+      "stop_atr_multiple": "2"
+    }
+  },
+  "datasets": [
+    {
+      "first_ts": "2020-01-06T00:00:00+00:00",
+      "instrument": "EURUSD",
+      "last_ts": "2020-01-30T23:00:00+00:00",
+      "notice": "Datos SINTÉTICOS generados por computadora: no son cotizaciones de mercado reales ni actuales.",
+      "provenance": "SYNTHETIC",
+      "provenance_label": "SINTÉTICOS",
+      "rows": 600,
+      "sha256": "0087acfdf52b5a31a738b094d5d0e073a569e506159786bb9c08276a85a41d33",
+      "source": "synthetic_eurusd_h1.csv",
+      "timeframe": "H1"
+    }
+  ],
+  "event_count": 645,
+  "journal_sha256": "3a059569485480021b395d1b846fe50953660995080e8ff562d7a70967189b38",
+  "mode": "SIMULATION",
+  "options": {
+    "close_at_end": false,
+    "stop_after_bars": null
+  },
+  "run_id": "f72861f005ef",
+  "status": "COMPLETED",
+  "version": "0.1.0"
+}

@@ -1,0 +1,43 @@
+{
+  "mode": "simulation",
+  "account": {
+    "currency": "MXN",
+    "initial_capital": "100000"
+  },
+  "risk": {
+    "max_budget_per_trade": "25000",
+    "max_loss_per_trade": "600",
+    "profit_target_per_trade": "1200",
+    "daily_loss_limit": "1500",
+    "max_open_positions": 2
+  },
+  "strategy": {
+    "name": "sma_cross_rsi",
+    "fast_period": 10,
+    "slow_period": 30,
+    "rsi_period": 14,
+    "rsi_buy_max": "70",
+    "rsi_sell_min": "30",
+    "atr_period": 14,
+    "stop_atr_multiple": "2",
+    "lookback_bars": 200
+  },
+  "instruments": {
+    "EURUSD": {
+      "quote_currency": "USD",
+      "quote_to_account_rate": "17.00",
+      "contract_size": "100000",
+      "tick_size": "0.00001",
+      "spread": "0.00012",
+      "commission_per_lot_per_side": "60",
+      "slippage": "0",
+      "min_lot": "0.01",
+      "lot_step": "0.01",
+      "max_lot": "5",
+      "margin_rate": "0.0333"
+    }
+  },
+  "simulation": {
+    "close_open_positions_at_end": false
+  }
+}

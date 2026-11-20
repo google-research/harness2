@@ -1,0 +1,51 @@
+Trade Agent 0.1 | MODO SIMULACIÓN ÚNICAMENTE: ninguna orden se envía a un bróker real.
+
+=== 1. Datos ===
+Instrumento: EURUSD   Archivo: synthetic_eurusd_h1.csv   Barras: 600
+Procedencia: SINTÉTICOS — Datos SINTÉTICOS generados por computadora: no son cotizaciones de mercado reales ni actuales.
+Rango: 2020-01-06T00:00:00+00:00 -> 2020-01-30T23:00:00+00:00
+SHA-256: 0087acfdf52b5a31a738b094d5d0e073a569e506159786bb9c08276a85a41d33
+Al cierre de la última barra (2020-01-30T23:00:00+00:00) — Valores al cierre de la última barra del archivo; NO es una cotización actual.
+  Cierre: 1.14972   Máx. periodo: 1.15004   Mín. periodo: 1.06854   Variación del periodo: 4.52%
+  SMA_10: 1.14812   SMA_30: 1.14638   RSI_14: 83.64   ATR_14: 0.00081
+  Tendencia: ALCISTA  (regla: ALCISTA si SMA10 > SMA30 y la SMA30 subió en las últimas 5 barras; BAJISTA en el caso inverso; si no, LATERAL / MIXTA.)
+
+=== 2. Rechazo de datos inválidos (comprobación) ===
+Datos rechazados (invalid_example.csv): 3 problema(s).
+  - Fila 3, columna 'high': high (1.0) es menor que open, close o low; la barra es incoherente.
+  - Fila 3, columna 'low': low (1.2) es mayor que open, close o high; la barra es incoherente.
+  - Fila 3, columna 'timestamp': 2020-01-01T00:00:00+00:00 no respeta el orden cronológico ascendente (la fila anterior es 2020-01-01T01:00:00+00:00).
+
+=== 3-5. Señal -> validación de riesgo -> operación simulada -> cierre ===
+#125   2020-01-11T02:00:00+00:00 SIGNAL           BUY @ 1.07328 — SMA10 cruzó por encima de SMA30 al cierre (SMA10=1.07122 > SMA30=1.07095; barra previa 1.07088 <= 1.07095) y RSI14=64.03 < 70. Stop propuesto: 2 x ATR14 = 0.00182. Condición técnica observada en datos pasados; no es un pronóstico.
+#126   2020-01-11T02:00:00+00:00 RISK_CHECK       [PRE_TRADE] EURUSD-20200111T020000Z-BUY APROBADA lotes=0.18 pérdida_máx=578.52 margen=10936.51
+#127   2020-01-11T02:00:00+00:00 ORDER_PENDING    EURUSD-20200111T020000Z-BUY PENDIENTE: Mercado, en la apertura de la barra siguiente (simulado).
+#128   2020-01-11T03:00:00+00:00 RISK_CHECK       [AT_FILL] EURUSD-20200111T020000Z-BUY APROBADA lotes=0.18 pérdida_máx=578.52 margen=10936.51
+#129   2020-01-11T03:00:00+00:00 ORDER_FILLED     EURUSD-20200111T020000Z-BUY EJECUTADA (SIMULADA) BUY 0.18 lotes @ 1.07334 stop=1.07152 objetivo=1.07734 comisión=10.80
+#130   2020-01-11T03:00:00+00:00 POSITION_OPENED  P0001 abierta BUY 0.18 @ 1.07334
+#143   2020-01-11T15:00:00+00:00 POSITION_CLOSED  P0001 cerrada por TAKE_PROFIT @ 1.07734: bruto=1224.00 comisiones=21.60 neto=1202.40
+
+Detalle de la validación previa:
+  [OK] COST_INFO_COMPLETE: Spread, comisión, contrato, margen y divisa definidos.
+  [OK] MAX_LOSS_PER_TRADE: pérdida máx 578.52 <= 600 MXN
+  [OK] MAX_BUDGET_PER_TRADE: margen 10936.51 <= 25000 MXN
+  [OK] DAILY_LOSS_LIMIT: pérdida del día 0.00 + riesgo abierto 0.00 + 578.52 <= 1500 MXN
+  [OK] FREE_MARGIN: margen 10936.51 <= margen libre 100000.00
+  [OK] MAX_OPEN_POSITIONS: 1 <= 2 posiciones
+  [OK] NO_DUPLICATE_NO_AVERAGING: orden nueva y sin posición previa en el instrumento
+  Pérdida potencial en MXN: riesgo de precio 556.92 + deslizamiento 0 + comisiones 21.6 = 578.52
+
+=== 6. Informe ===
+Corrida f72861f005ef — COMPLETED — modo SIMULATION
+Resultados de una SIMULACIÓN con órdenes ficticias sobre datos SINTÉTICOS. No son cotizaciones actuales, no constituyen asesoría financiera y no anticipan resultados futuros.
+Señales: BUY=4 SELL=3 NO_TRADE=593
+Órdenes: pendientes creadas=7 ejecutadas (simuladas)=7 rechazadas=0 canceladas=0
+Rechazos por motivo: ninguno
+Posiciones: cerradas=7 (ganadoras=5, perdedoras=2) abiertas=0
+P/L bruto=5003.61 MXN  comisiones=156.00 MXN  P/L neto=4847.61 MXN  (spread incluido en precios: 265.20 MXN)
+P/L no realizado de posiciones abiertas: 0.00 MXN
+Capital inicial=100000.00  balance final=104847.61  equity final=104847.61 MXN  drawdown máx.=941.64 MXN
+
+Archivos de la corrida: demo_out\runs\f72861f005ef
+  journal.jsonl (bitácora), report.md, report.json, positions.json, manifest.json
+  Consulte: trade-agent positions "demo_out\runs\f72861f005ef" | trade-agent history "demo_out\runs\f72861f005ef"

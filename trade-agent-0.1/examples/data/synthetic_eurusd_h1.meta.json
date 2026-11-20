@@ -1,0 +1,12 @@
+{
+  "instrument": "EURUSD",
+  "provenance": "SYNTHETIC",
+  "timeframe": "H1",
+  "generator": {
+    "name": "trade_agent.synthetic.regime_random_walk",
+    "version": 1,
+    "seed": 7,
+    "n_bars": 600
+  },
+  "warning": "Datos SINTÉTICOS generados por computadora: no son cotizaciones de mercado reales ni actuales."
+}

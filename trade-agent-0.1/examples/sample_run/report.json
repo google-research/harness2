@@ -1,0 +1,68 @@
+{
+  "account": {
+    "currency": "MXN",
+    "final_balance": "104847.61",
+    "final_equity": "104847.61",
+    "initial_capital": "100000"
+  },
+  "data": [
+    {
+      "first_ts": "2020-01-06T00:00:00+00:00",
+      "instrument": "EURUSD",
+      "last_ts": "2020-01-30T23:00:00+00:00",
+      "notice": "Datos SINTÉTICOS generados por computadora: no son cotizaciones de mercado reales ni actuales.",
+      "provenance": "SYNTHETIC",
+      "provenance_label": "SINTÉTICOS",
+      "rows": 600,
+      "sha256": "0087acfdf52b5a31a738b094d5d0e073a569e506159786bb9c08276a85a41d33",
+      "source": "synthetic_eurusd_h1.csv"
+    }
+  ],
+  "disclaimer": "Resultados de una SIMULACIÓN con órdenes ficticias sobre datos SINTÉTICOS. No son cotizaciones actuales, no constituyen asesoría financiera y no anticipan resultados futuros.",
+  "mode": "SIMULATION",
+  "open_positions": [],
+  "orders": {
+    "cancelled": 0,
+    "filled_simulated": 7,
+    "pending_created": 7,
+    "rejected": 0,
+    "rejections_by_reason": {}
+  },
+  "positions": {
+    "closed": 7,
+    "exit_reasons": {
+      "STOP_LOSS": 2,
+      "TAKE_PROFIT": 5
+    },
+    "losses": 2,
+    "losses_beyond_plan": 0,
+    "open": 0,
+    "win_rate": "0.7143",
+    "wins": 5
+  },
+  "risk_limits": {
+    "daily_loss_limit": "1500",
+    "max_budget_per_trade": "25000",
+    "max_loss_per_trade": "600",
+    "max_open_positions": 2,
+    "profit_target_per_trade": "1200"
+  },
+  "run_id": "f72861f005ef",
+  "signals": {
+    "BUY": 4,
+    "NO_TRADE": 593,
+    "SELL": 3
+  },
+  "status": "COMPLETED",
+  "synthetic_data": true,
+  "totals": {
+    "commissions": "156",
+    "gross_pnl": "5003.61",
+    "largest_loss": "-588.05",
+    "largest_win": "1202.88",
+    "max_drawdown": "941.64",
+    "net_pnl": "4847.61",
+    "spread_cost": "265.2",
+    "unrealized_pnl_open": "0"
+  }
+}
