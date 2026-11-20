@@ -109,6 +109,23 @@ def _nonempty(path: Path) -> bool:
     return path.is_dir() and any(path.iterdir())
 
 
+def _has_deliverable(output: Path) -> bool:
+    """Require a regular file reachable through non-hidden output directories.
+
+    Empty directories and hidden caches do not count as delivered work. Do not
+    follow symlinks, which can point outside the output tree or form cycles.
+    """
+    if not output.is_dir() or output.is_symlink():
+        return False
+    for directory, subdirs, files in os.walk(output):
+        subdirs[:] = [name for name in subdirs if not name.startswith(".")]
+        for name in files:
+            path = Path(directory) / name
+            if not name.startswith(".") and not path.is_symlink() and path.is_file():
+                return True
+    return False
+
+
 def _log(log_file: Path, line: str) -> None:
     print(line, flush=True)
     with log_file.open("a", encoding="utf-8") as fh:
@@ -305,14 +322,14 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
         _note_exit(
-            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_nonempty(output_dir)
+            traj_file, log_file, code, limit=cfg.timeout_per_task, kept=_has_deliverable(output_dir)
         )
-        if _nonempty(output_dir):
+        if _has_deliverable(output_dir):
             break
         if code in (124, 137):
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")
 
-    delivered = _nonempty(output_dir)
+    delivered = _has_deliverable(output_dir)
     if delivered:
         final_output_dir.mkdir(parents=True, exist_ok=True)
         for item in sorted(output_dir.iterdir()):
