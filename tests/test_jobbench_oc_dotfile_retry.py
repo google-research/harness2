@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from harness2.benchmarks import jb_opencode_runner as R
 
@@ -94,6 +95,68 @@ class DotfileRetryTests(unittest.TestCase):
         finally:
             R._attempt = orig
         self.assertFalse(delivered)
+
+
+    def _retry_after_first_output(self, first_output: str, *, directory_only: bool = False):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            cfg = self._settings(base)
+            calls = []
+
+            def fake_attempt(cfg, workspace, traj_file, log_file, task_name, attempt):
+                calls.append(attempt)
+                output = Path(workspace) / "output"
+                if attempt == 1:
+                    target = output / first_output
+                    if directory_only:
+                        target.mkdir(parents=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text("cache data", encoding="utf-8")
+                else:
+                    (output / "report.txt").write_text("the deliverable", encoding="utf-8")
+                return 0
+
+            with patch.object(R, "TEMP_BASE", base / "workspaces"), patch.object(
+                R, "_attempt", fake_attempt
+            ):
+                delivered = R.run_one(cfg, "proftask")
+            self.assertEqual(calls, [1, 2])
+            self.assertTrue(delivered)
+            final = cfg.tasks_base / "proftask" / "model_output" / "L1"
+            self.assertEqual(sorted(p.name for p in final.iterdir()), ["report.txt"])
+            self.assertEqual((final / "report.txt").read_text(), "the deliverable")
+
+    def test_empty_directory_retries_then_delivers(self):
+        self._retry_after_first_output("results", directory_only=True)
+
+    def test_hidden_nested_file_retries_then_delivers(self):
+        self._retry_after_first_output("results/.cache")
+
+    def test_visible_file_under_hidden_directory_retries_then_delivers(self):
+        self._retry_after_first_output("results/.cache/report.txt")
+
+    def test_nested_visible_file_delivers_without_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            cfg = self._settings(base)
+            calls = []
+
+            def fake_attempt(cfg, workspace, traj_file, log_file, task_name, attempt):
+                calls.append(attempt)
+                target = Path(workspace) / "output" / "results" / "nested" / "report.txt"
+                target.parent.mkdir(parents=True)
+                target.write_text("nested deliverable", encoding="utf-8")
+                return 0
+
+            with patch.object(R, "TEMP_BASE", base / "workspaces"), patch.object(
+                R, "_attempt", fake_attempt
+            ):
+                delivered = R.run_one(cfg, "proftask")
+            self.assertTrue(delivered)
+            self.assertEqual(calls, [1])
+            final = cfg.tasks_base / "proftask" / "model_output" / "L1"
+            self.assertEqual((final / "results/nested/report.txt").read_text(), "nested deliverable")
 
 
 if __name__ == "__main__":

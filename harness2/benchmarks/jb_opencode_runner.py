@@ -110,11 +110,20 @@ def _nonempty(path: Path) -> bool:
 
 
 def _has_deliverable(output: Path) -> bool:
-    """A real deliverable is a non-hidden entry in the rollout's output directory. Hidden
-    files (a stray .DS_Store, a tool's dotfile cache) are skipped when the output is
-    moved to the final directory, so they must not end the retry loop or count as a
-    delivery either -- otherwise a junk-dotfile-only attempt silently cancels the retry."""
-    return output.is_dir() and any(not p.name.startswith(".") for p in output.iterdir())
+    """Require a regular file reachable through non-hidden output directories.
+
+    Empty directories and hidden caches do not count as delivered work. Do not
+    follow symlinks, which can point outside the output tree or form cycles.
+    """
+    if not output.is_dir() or output.is_symlink():
+        return False
+    for directory, subdirs, files in os.walk(output):
+        subdirs[:] = [name for name in subdirs if not name.startswith(".")]
+        for name in files:
+            path = Path(directory) / name
+            if not name.startswith(".") and not path.is_symlink() and path.is_file():
+                return True
+    return False
 
 
 def _log(log_file: Path, line: str) -> None:
