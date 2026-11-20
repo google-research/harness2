@@ -1,0 +1,3 @@
+# Los datos de ejemplo y la bitácora se comparan byte a byte (reproducibilidad):
+# los finales de línea deben ser LF en cualquier sistema operativo.
+* text=auto eol=lf
