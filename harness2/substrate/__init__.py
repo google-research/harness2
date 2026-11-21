@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The two solver substrates behind one interface (substrate/base.py).
+"""Solver substrates behind one interface (substrate/base.py).
 
 `OpencodeSubstrate` carries OPENCODE_SURFACE and three install modes; `CodexSubstrate`
-carries CODEX_SURFACE and one. Benchmark adapters supply the launcher body.
+carries CODEX_SURFACE and one; `HermesSubstrate` carries HERMES_SURFACE and `hermes_home`.
+Benchmark adapters supply the launcher body.
 """
 
 from .base import Install, Launcher, RunRequest, Substrate
 from .codex import CODEX_SURFACE, CodexSubstrate
+from .hermes import HERMES_SURFACE, HermesSubstrate
 from .opencode import OPENCODE_SURFACE, OpencodeSubstrate
 
 __all__ = [
@@ -31,4 +33,6 @@ __all__ = [
     "OPENCODE_SURFACE",
     "CodexSubstrate",
     "CODEX_SURFACE",
+    "HermesSubstrate",
+    "HERMES_SURFACE",
 ]

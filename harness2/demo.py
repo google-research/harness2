@@ -26,6 +26,7 @@ from . import config
 from .core import tree
 from .core.proposer import Proposer, Reply
 from .core.spec import BenchPrompts, BenchSpec, ChannelSpec
+from .substrate.base import Substrate
 from .substrate.opencode import OpencodeSubstrate
 
 BASE_SCRIPT = """import csv
@@ -38,25 +39,28 @@ total = sum((amount for amount in amounts if amount > 0), Decimal(0))
 print(f'Total: {total:.2f}')
 """
 
+_DEMO_INSTALL_MODES = {"oc": "workspace_config", "cx": "codex_root", "hm": "hermes_home"}
+
 
 class DemoAdapter:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, substrate: Substrate | None = None):
         self.root = root
-        self.substrate = OpencodeSubstrate()
+        self.substrate = substrate if substrate is not None else OpencodeSubstrate()
         channel = ChannelSpec("opencode", "local/deterministic")
         self.spec = BenchSpec(
             name="demo",
             runs_root=root / "runs",
-            install_mode="workspace_config",
+            install_mode=_DEMO_INSTALL_MODES.get(self.substrate.name, "workspace_config"),
             prompts=BenchPrompts(work="reconcile signed amounts in a transaction ledger"),
             channels={"proposer": channel, "selector": channel},
             leak_globs=("reference_answer.txt",),
         )
         self.execution_count = 0
-        base = {name: "" for name in self.substrate.surface().always_on}
-        base["systemprompt.md"] = "Reconcile the ledger using python scripts/summarize.py.\n"
+        surface = self.substrate.surface()
+        base = {name: "" for name in surface.always_on}
+        base[surface.always_on[0]] = "Reconcile the ledger using python scripts/summarize.py.\n"
         base["scripts/summarize.py"] = BASE_SCRIPT
-        tree.write_tree(self.substrate.surface(), base, self.base_harness(), stubs=False)
+        tree.write_tree(surface, base, self.base_harness(), stubs=False)
         for task_id, amounts in (
             ("ledger-1", "100.25\n-20.10\n5.00\n"),
             ("ledger-2", "35.50\n-10.25\n-5.00\n"),
