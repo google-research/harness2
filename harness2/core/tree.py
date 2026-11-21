@@ -189,6 +189,57 @@ def always_on_text(surface: SurfaceSpec, tree: Tree) -> str:
     return "\n\n".join(tree.get(a, "") for a in surface.always_on)
 
 
+def extract_frontmatter(src: str) -> str | None:
+    """Return the YAML frontmatter body between opening and closing `---` fences, or None."""
+    text = src.removeprefix("\ufeff")
+    if not text.startswith("---"):
+        return None
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() in ("---", "..."):
+            return "\n".join(lines[1:idx])
+    return None
+
+
+def frontmatter_description(src: str) -> str:
+    """Extract a single-line `description:` summary from YAML frontmatter (inline or block scalar).
+
+    Returns "" when frontmatter is absent, `description:` is missing, or its value is empty.
+    """
+    fm = extract_frontmatter(src)
+    if fm is None:
+        return ""
+    lines = fm.splitlines()
+    for idx, line in enumerate(lines):
+        m = re.match(r"^description:[ \t]*(.*)$", line)
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        if raw in ("", "|", "|-", "|+", ">", ">-", ">+"):
+            collected: list[str] = []
+            base_indent: int | None = None
+            for nxt in lines[idx + 1 :]:
+                if not nxt.strip():
+                    if base_indent is not None:
+                        continue
+                    continue
+                indent = len(nxt) - len(nxt.lstrip(" \t"))
+                if indent == 0:
+                    break
+                if base_indent is None:
+                    base_indent = indent
+                if indent < base_indent:
+                    break
+                collected.append(nxt.strip())
+            return " ".join(collected).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+            raw = raw[1:-1].strip()
+        return raw
+    return ""
+
+
 def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None = None) -> list[str]:
     """Give every skill a trigger line in always-on text; return the names repaired.
 
@@ -200,9 +251,8 @@ def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None =
     for name in skill_names(surface, tree):
         if name in body:
             continue
-        fm = tree.get(f"{surface.skill_dir}/{name}/SKILL.md", "")[:600]
-        m = re.search(r"^description:\s*(.+)$", fm, re.M)
-        desc = m.group(1).strip().rstrip(".") if m else f"the {name} workflow applies"
+        raw_desc = frontmatter_description(tree.get(f"{surface.skill_dir}/{name}/SKILL.md", ""))
+        desc = raw_desc.rstrip(".") if raw_desc else f"the {name} workflow applies"
         line = surface.trigger_line.format(name=name, desc=desc)
         cur = tree.get(surface.autotrigger_file, "")
         if len(always_on_text(surface, tree)) + len(line) + 2 > cap:
@@ -268,13 +318,14 @@ def _check_skills(surface: SurfaceSpec, tree: Tree, body: str, errs: list[str]) 
     """Append every skill-frontmatter and untriggered-skill problem; return the skill names."""
     skills = skill_names(surface, tree)
     for name in skills:
-        fm = tree[f"{surface.skill_dir}/{name}/SKILL.md"][:600]
-        if not re.search(r"^description:\s*\S", fm, re.M):
+        raw_skill = tree[f"{surface.skill_dir}/{name}/SKILL.md"]
+        fm = extract_frontmatter(raw_skill)
+        if not frontmatter_description(raw_skill):
             errs.append(
                 f"{surface.skill_dir}/{name}/SKILL.md needs a `description:` in its "
                 f"frontmatter, or the skill is dropped SILENTLY at load"
             )
-        m_name = re.search(r"^name:\s*(\S+)\s*$", fm, re.M)
+        m_name = re.search(r"^name:[ \t]*(\S+)[ \t]*$", fm or "", re.M)
         if surface.skill_name_rule == "must_match":
             if not (m_name and m_name.group(1) == name):
                 errs.append(
@@ -306,10 +357,13 @@ def _check_subagents(
     if subs and not allow_subagents:
         errs.append(f"sub_agents are not available on this deployment: {subs}")
     for name in subs:
-        fm = tree[f"sub_agents/{name}/AGENT.md"][:600]
-        if surface.subagent_requires_mode and not re.search(r"^mode:\s*subagent\s*$", fm, re.M):
+        raw_sub = tree[f"sub_agents/{name}/AGENT.md"]
+        fm = extract_frontmatter(raw_sub)
+        if surface.subagent_requires_mode and not re.search(
+            r"^mode:[ \t]*subagent[ \t]*$", fm or "", re.M
+        ):
             errs.append(f"sub_agents/{name}/AGENT.md needs frontmatter `mode: subagent`")
-        if not re.search(r"^description:\s*\S", fm, re.M):
+        if not frontmatter_description(raw_sub):
             errs.append(f"sub_agents/{name}/AGENT.md needs a `description:`")
     return subs
 
