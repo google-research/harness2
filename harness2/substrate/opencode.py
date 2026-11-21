@@ -125,8 +125,7 @@ def assert_jinja_safe(composed: str) -> None:
 
 
 def _frontmatter_desc(body: str) -> str:
-    m = re.search(r"^description:\s*(.+)$", body[:600], re.M)
-    return m.group(1).strip() if m else "(no description)"
+    return HT.frontmatter_description(body) or "(no description)"
 
 
 def _component_index(staged: Path, pattern: str) -> str:
