@@ -147,6 +147,17 @@ changing either. `harness2-check` reports stale configuration until then.
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
 
+## Hermes substrate
+
+`harness2.substrate.HermesSubstrate` stages a harness tree for
+[Hermes Agent](https://hermes-agent.nousresearch.com/docs) under the
+`hermes_home` install mode: `SOUL.md` and `skills/<name>/SKILL.md` into an
+isolated `HERMES_HOME`, with `scripts/` and `sub_agents/` staged as a workspace
+overlay (`stage_workspace`). Rollout streams emitted by
+`hermes chat -q "<prompt>" --oneshot --format stream-json` are rendered into the
+shared `[ASSISTANT]` / `[ACTION]` / `[OBSERVATION]` trajectory grammar. Set
+`HARNESS2_HERMES_BIN` when `hermes` is not on `PATH`.
+
 ## Network access during setup
 
 Setup downloads dependencies from the following hosts:

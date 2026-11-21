@@ -292,6 +292,104 @@ Then reply with ONE `<notes>` block and nothing else: for each change, the momen
 trajectory that motivated it. The notes are read by a person, not applied by a machine."""
 
 
+_SURFACE_HERMES = """\
+# WHAT YOU CAN CHANGE
+
+The harness is a tree of components. Each has a different runtime cost and a different reach:
+
+| path | what it is | when it is in context |
+|---|---|---|
+| `SOUL.md` | role, procedure, rules, durable facts | ALWAYS ON -- the ONLY always-on file in `HERMES_HOME`, injected whole into EVERY session; every token competes with the agent's own output budget |
+| `skills/<name>/SKILL.md` | a reusable workflow | name+description advertised; the BODY is loaded ON DEMAND via `skill_view` |
+| `skills/<name>/scripts/*` | a helper carried with its skill | run via terminal/bash |
+| `sub_agents/<name>/AGENT.md` | a delegated subagent brief | spawned in its OWN context via `delegate_task`, returns text |
+| `scripts/<name>.py` | a deterministic helper | run on demand via terminal/bash |
+
+The two on-demand components that are easy to get wrong:
+
+`skills/` -- YAML frontmatter needs `name:` matching the directory and a `description:`, or the
+skill is dropped silently at load. A skill never NAMED in `SOUL.md` as a trigger is never opened,
+so it is pure dead weight. If a skill calls a helper, ship it at `skills/<name>/scripts/<file>.py`.
+
+`sub_agents/` -- frontmatter needs a `description:`. Spawned in a SEPARATE context via
+`delegate_task`, it sees only what its brief and task context state, never the main conversation,
+and returns only its final summary. Worth it when the INPUT is large and the ANSWER is small.
+
+Change only what a trajectory shows needs changing -- but WHERE you change something, the FORM
+matters as much as the content, and the cheap form is not the obvious one.
+
+ALWAYS-ON PROSE IS THE EXPENSIVE OPTION. Every word of `SOUL.md` is in context on every run,
+competing with the agent's own output budget -- and the most costly failure on this work is a run
+that reasons until the budget is gone and produces nothing. An on-demand skill or script costs
+nothing until invoked.
+
+So prefer, in this order:
+  - a SKILL for anything with a recognisable trigger -- a procedure for a document type, a
+    format, a recurring situation. This is the default form for new instruction.
+  - a SCRIPT for a deterministic operation the runs hand-rolled and got wrong, or did slowly.
+  - a SUBAGENT for a bounded investigation whose input is large and whose answer is small.
+  - ALWAYS-ON TEXT in `SOUL.md` last, and only for a short rule that genuinely applies to every
+    run. `SOUL.md` is hard-capped, so if you add always-on text, cut something else to pay for it.
+
+A skill only exists if the agent knows to call it: its literal name must appear in `SOUL.md`
+as a trigger, or it is dead weight.
+
+`SOUL.md` MUST NEVER BE LEFT EMPTY OR DELETED. It is the ONLY always-on file here, so a harness
+without it carries no standing instruction at all and is rejected before any rollout. To pay for
+a new rule, TRIM it -- never empty it.
+
+If a skill calls a helper script, ship it at `skills/<skill-name>/scripts/<file>.py`. A helper
+placed directly in the skill directory is OFF THE EDITABLE SURFACE and silently dropped.
+
+THE DELIVERABLE'S SHAPE BELONGS TO THE REQUEST, NOT TO YOU. A harness changes HOW the agent
+works; it must never change WHAT SHAPE it delivers. Where the task names fields, columns, sheets,
+sections or an order, that shape is part of what was asked for. A component that tells the agent
+to add explanatory columns, restate a derivation inside the artifact, rename a header for
+clarity, or surface intermediate values so a reviewer can check them is CHANGING THE DELIVERABLE
+-- and a downstream reader or importer keys on exact names and positions. Guidance that makes the
+agent's reasoning visible belongs in the harness text or the trajectory, never in the artifact.
+A value the task asks for must be delivered AS A VALUE: a formula, a placeholder or a
+described-but-unperformed calculation leaves the reader to finish the work.
+
+# HOW TO MAKE A CHANGE
+
+The harness is in `context/harness/`, and it is YOURS TO EDIT. Open the files, change them in
+place with your normal tools, and create new ones where a new component is the right lever.
+Your edits on disk ARE the proposal -- there is no separate format to reproduce them in, and
+nothing you write in this reply changes the harness.
+
+- Files you do not touch are inherited unchanged. Do not rewrite a file to keep it the same.
+- Delete a file to remove that component.
+- If the evidence does not argue for any change, leave everything as it is and say KEEP_BASE
+  in your notes. That is a real answer, not a failure: adaptation the evidence does not support
+  costs context and buys nothing.
+
+Then reply with ONE `<notes>` block and nothing else: for each change, the moment in a
+trajectory that motivated it. The notes are read by a person, not applied by a machine."""
+
+
+_TTS_SURFACE_HEAD_HERMES = """\
+# EDITABLE HARNESS SURFACE
+
+You may write ONLY these paths. Anything else is off the editable surface: it is dropped before
+your work is used, however good it is.
+
+| path | component | when it is in context |
+|---|---|---|
+| `SOUL.md` | c1/c2/c3/c4 persona, rules, durable facts, tool prose | ALWAYS ON -- the ONLY always-on file, injected whole into EVERY session |
+| `skills/<name>/SKILL.md` | c6 reusable workflow | name+description advertised; BODY loaded ON DEMAND via `skill_view` |
+| `skills/<name>/scripts/*` | helper carried with its skill | run via terminal/bash |
+| `sub_agents/<name>/AGENT.md` | c5 delegated subagent brief | spawned in its OWN context via `delegate_task`, returns text |
+| `scripts/<name>.py` | c7 deterministic helper | run ON DEMAND via terminal/bash as `python3 scripts/<name>.py` |
+
+Hard rules, each one learned from a previous failure:
+- Prefer an on-demand skill or deterministic script over new always-on prose; `SOUL.md` is
+  hard-capped and NEVER left empty.
+- Every skill needs `name:` matching its directory, a `description:`, and a literal trigger line
+  naming it in `SOUL.md`.
+- `scripts/*.py` filenames must be snake_case and must compile under py_compile."""
+
+
 GENERALIZE = """\
 # GROUND IT IN THIS WORKSPACE, SHAPE IT FOR THE {DOMAIN_WORD_UPPER}
 
@@ -629,6 +727,13 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    hm_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_HERMES,
+            _surface_part(_SURFACE_HERMES, "A skill only exists", "THE DELIVERABLE'S SHAPE"),
+            _surface_part(_SURFACE_HERMES, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
     return {
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
@@ -657,6 +762,19 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "that trigger line in the same edit.",
             ),
             tts_surface=cx_tts,
+        ),
+        "hermes": _SurfaceText(
+            surface_md=_SURFACE_HERMES,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__",
+                "verification script in `scripts/<name>.py` invoked before completion",
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "A skill exists only once its name appears in `SOUL.md` as a trigger: write "
+                "that trigger line in the same edit.",
+            ),
+            tts_surface=hm_tts,
         ),
     }
 
