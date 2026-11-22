@@ -292,6 +292,68 @@ Then reply with ONE `<notes>` block and nothing else: for each change, the momen
 trajectory that motivated it. The notes are read by a person, not applied by a machine."""
 
 
+_SURFACE_ANTIGRAVITY = """\
+# WHAT YOU CAN CHANGE
+
+The harness is a tree of components for Google Antigravity (`agy`). Each has a different runtime
+cost and reach:
+
+| path | what it is | when it is in context |
+|---|---|---|
+| `GEMINI.md` | role, procedure, standing rules, durable facts | ALWAYS ON -- hard-capped at 24,000 bytes (shares a 20,000-token rules budget) |
+| `.agents/skills/<name>/SKILL.md` | a reusable workflow | name+description advertised; BODY loaded ON DEMAND |
+| `.agents/skills/<name>/scripts/*` | a helper carried with its skill | run via shell |
+| `sub_agents/<name>/AGENT.md` | a delegated subagent brief | runs in its OWN context, returns text |
+| `scripts/<name>.py` | a deterministic helper | run on demand via shell |
+| `.agents/hooks.json` | Antigravity lifecycle hooks | fire INSIDE the tool/turn loop, on every matching event |
+
+The three that are easy to get wrong:
+
+`.agents/skills/` -- YAML frontmatter with a `description:` is REQUIRED, or the skill is
+dropped silently at load; a `name:` line is optional and must match the directory. A skill never
+NAMED in `GEMINI.md` as a trigger is never opened, so it is dead weight. Any helper script a
+skill invokes must travel at `.agents/skills/<name>/scripts/<file>.py`.
+
+`sub_agents/` -- frontmatter needs a `description:`. Worth it for a bounded sub-task whose INPUT
+is large and whose ANSWER is small.
+
+`.agents/hooks.json` -- ONE JSON file using Antigravity's named-hook schema: top-level keys are
+hook names mapping to event configs (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`,
+`PostInvocation`, `Stop`). `PreToolUse` and `PostToolUse` take grouped `[{"matcher": "...",
+"hooks": [{"type": "command", "command": "..."}]}]` entries; `SessionStart`, `PreInvocation`,
+`PostInvocation`, and `Stop` take FLAT handler lists `[{"type": "command", "command": "..."}]`.
+A `Stop` hook returning `{"decision": "continue", "reason": "..."}` re-enters the loop with a
+compact diff; returning `{"decision": "allow"}` adds 0 tokens. Always guard `Stop` hooks with
+BOTH `continuationActive` and `executionNum >= 2` to prevent infinite loops.
+
+ALWAYS-ON PROSE IS THE EXPENSIVE OPTION. Prefer, in this order:
+  - a SKILL for anything with a recognisable trigger (default form for new instruction).
+  - a SCRIPT for a deterministic operation the runs got wrong or did slowly.
+  - a SUBAGENT for a bounded investigation with large input and small answer.
+  - a HOOK in `.agents/hooks.json` for a recurring mechanical check (dirty-file verification on
+    `Stop`, safety/domain gating on `PreToolUse`, or 0-token user badges via `PreInvocation`).
+  - ALWAYS-ON TEXT in `GEMINI.md` last, and only for short universal rules. `GEMINI.md` MUST NEVER
+    BE LEFT EMPTY OR DELETED; trim obsolete lines to stay well under the 24,000-byte cap.
+
+THE DELIVERABLE'S SHAPE BELONGS TO THE REQUEST, NOT TO YOU. A harness changes HOW the agent
+works; it must never change WHAT SHAPE it delivers.
+
+# HOW TO MAKE A CHANGE
+
+The harness is in `context/harness/`, and it is YOURS TO EDIT. Open the files, change them in
+place with your normal tools, and create new ones where a new component is the right lever.
+Your edits on disk ARE the proposal -- there is no separate format to reproduce them in, and
+nothing you write in this reply changes the harness.
+
+- Files you do not touch are inherited unchanged. Do not rewrite a file to keep it the same.
+- Delete a file to remove that component.
+- If the evidence does not argue for any change, leave everything as it is and say KEEP_BASE
+  in your notes.
+
+Then reply with ONE `<notes>` block and nothing else: for each change, the moment in a
+trajectory that motivated it. The notes are read by a person, not applied by a machine."""
+
+
 GENERALIZE = """\
 # GROUND IT IN THIS WORKSPACE, SHAPE IT FOR THE {DOMAIN_WORD_UPPER}
 
@@ -513,6 +575,29 @@ Hard rules, each one learned from a previous failure:
   surface."""
 
 
+_TTS_SURFACE_HEAD_ANTIGRAVITY = """\
+# EDITABLE HARNESS SURFACE
+
+You may write ONLY these paths. Anything else is off the editable surface and dropped before use.
+
+| path | component | when it is in context |
+|---|---|---|
+| `GEMINI.md` | c1/c3/c4/c6 persona, rules, durable facts, tool prose | ALWAYS ON -- hard-capped at 24,000 bytes |
+| `.agents/skills/<name>/SKILL.md` | c6 reusable workflow | name+description advertised; BODY read ON DEMAND |
+| `.agents/skills/<name>/scripts/*` | helper carried with its skill | run via shell |
+| `sub_agents/<name>/AGENT.md` | c5 delegated subagent brief | spawned in its OWN context, returns text |
+| `scripts/<name>.py` | c7 deterministic helper | run ON DEMAND via shell |
+| `.agents/hooks.json` | c8 Antigravity lifecycle hooks | fire INSIDE the tool/turn loop |
+
+Hard rules:
+- Prefer on-demand skills and deterministic `Stop`/`PreToolUse` hooks over bulky always-on prose;
+  `GEMINI.md` is capped at 24,000 bytes and must never be emptied.
+- Every skill name must appear verbatim in `GEMINI.md` as a trigger.
+- In `.agents/hooks.json`, `PreToolUse`/`PostToolUse` use `{matcher, hooks}` groups while
+  `SessionStart`/`PreInvocation`/`PostInvocation`/`Stop` use flat handler lists.
+- `scripts/*.py` filenames must be snake_case and compile under py_compile."""
+
+
 _TTS_INV = """\
 # YOUR DIMENSION: INVARIANT -- how the agent works, independent of the subject
 
@@ -629,6 +714,12 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    agy_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_ANTIGRAVITY,
+            _surface_part(_SURFACE_ANTIGRAVITY, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
     return {
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
@@ -657,6 +748,22 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "that trigger line in the same edit.",
             ),
             tts_surface=cx_tts,
+        ),
+        "antigravity": _SurfaceText(
+            surface_md=_SURFACE_ANTIGRAVITY,
+            inv=_INV_TEMPLATE.replace(
+                "__LOOP_LEVER__",
+                "hook in `.agents/hooks.json` -- for example, a `Stop` hook that returns "
+                '`{{"decision":"continue","reason":"..."}}` when a required {deliverable} or '
+                "verification check is missing (guarded by `continuationActive` and "
+                "`executionNum >= 2`)",
+            ),
+            dom=_DOM_TEMPLATE.replace(
+                "__TRIGGER_SENTENCE__",
+                "A skill exists only once its name appears in `GEMINI.md` as a trigger: write "
+                "that trigger line in the same edit.",
+            ),
+            tts_surface=agy_tts,
         ),
     }
 

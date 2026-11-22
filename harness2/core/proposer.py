@@ -93,7 +93,11 @@ class Proposer:
             raise ValueError("Set HARNESS2_IMPROVER_MODEL before starting model sessions")
 
     def env(self) -> dict[str, str]:
-        keep = () if self.spec.kind == "claude_cli" else config.provider_keys(self.spec.model)
+        keep = (
+            ()
+            if self.spec.kind in ("claude_cli", "agy_cli")
+            else config.provider_keys(self.spec.model)
+        )
         e = config.scrub_env(keep=keep)
         if self.spec.kind == "claude_cli":
             e.update(
@@ -104,6 +108,8 @@ class Proposer:
                     "ANTHROPIC_MODEL": self.spec.model,
                 }
             )
+        elif self.spec.kind == "agy_cli":
+            pass
         else:
             e.update(
                 {
@@ -150,9 +156,11 @@ class Proposer:
                 if context_dir and Path(context_dir).is_dir():
                     shutil.copytree(context_dir, tmp / "context", dirs_exist_ok=True)
                 with _SEM if _SEM is not None else contextlib.nullcontext():
-                    text, cost, err = (
-                        self._claude_cli if self.spec.kind == "claude_cli" else self._opencode
-                    )(tmp, mission, system, wall)
+                    runner = {
+                        "claude_cli": self._claude_cli,
+                        "agy_cli": self._agy_cli,
+                    }.get(self.spec.kind, self._opencode)
+                    text, cost, err = runner(tmp, mission, system, wall)
                 spent_usd += cost
                 if not text.strip():
                     last = err or "empty reply"
@@ -240,6 +248,56 @@ class Proposer:
         elif p.returncode != 0 and not text.strip():
             err = f"rc={p.returncode}: {(p.stderr or '')[-300:]}"
         return text, float(payload.get("total_cost_usd") or 0.0), err
+
+    def _agy_cli(
+        self, cwd: Path, mission: str, system: str, wall: int
+    ) -> tuple[str, float, str]:
+        (cwd / "MISSION.md").write_text(
+            (f"{system}\n\n---\n\n" if system else "") + mission, encoding="utf-8"
+        )
+        out = cwd / "output"
+        out.mkdir(exist_ok=True)
+        prompt = (
+            "Read MISSION.md first. Perform the requested edits in place. Reply with the "
+            "requested output as your final message AND save it verbatim to output/answer.md."
+        )
+        cli = shutil.which("agy") or "agy"
+        cmd = [
+            cli,
+            "-p",
+            prompt,
+            "--model",
+            self.spec.model,
+            "--output-format",
+            "stream-json",
+            "--dangerously-skip-permissions",
+            "--disable-slash-commands",
+            "--print-timeout",
+            f"{int(wall)}s",
+        ]
+        if self.spec.effort:
+            cmd += ["--effort", self.spec.effort]
+        p = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=self.env(),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=wall + 30,
+        )
+        text, err = _agy_stdout(p.stdout)
+        if err:
+            return "", 0.0, err
+        ans = out / "answer.md"
+        if ans.is_file() and ans.read_text(encoding="utf-8", errors="replace").strip():
+            return ans.read_text(encoding="utf-8", errors="replace"), 0.0, ""
+        if text.strip():
+            return text, 0.0, ""
+        tail = (p.stderr or "").strip()[-300:]
+        return "", 0.0, f"rc={p.returncode}: {tail or 'empty reply'}"
 
     def _opencode(self, cwd: Path, mission: str, system: str, wall: int) -> tuple[str, float, str]:
         (cwd / "MISSION.md").write_text(
@@ -495,6 +553,43 @@ def _opencode_cost(stdout: str) -> float:
             if isinstance(c, (int, float)):
                 total += float(c)
     return round(total, 6)
+
+
+def _agy_stdout(stdout: str) -> tuple[str, str]:
+    """Fold `agy -p --output-format stream-json` NDJSON into (final text, error text)."""
+    deltas: list[str] = []
+    result_text = ""
+    errors: list[str] = []
+    saw_json = False
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        saw_json = True
+        etype = ev.get("event")
+        if etype == "step_update":
+            su = _obj(ev, "step_update")
+            if su.get("step_type") == "agent_response" and isinstance(su.get("text_delta"), str):
+                deltas.append(su["text_delta"])
+            if su.get("error"):
+                errors.append(str(su["error"]).strip())
+        elif etype == "result":
+            res = _obj(ev, "result")
+            if str(res.get("status") or "").upper() == "ERROR" or res.get("error"):
+                errors.append(str(res.get("error") or res.get("status") or "agy error").strip())
+            elif isinstance(res.get("response"), str) and res["response"].strip():
+                result_text = res["response"]
+    if not saw_json:
+        return (stdout or "").strip(), ""
+    if errors:
+        return "", "; ".join(errors)[-300:]
+    return (result_text or "".join(deltas)).strip(), ""
 
 
 def _call_fingerprint(label: str, mission: str, system: str, context_dir: Path | str | None) -> str:

@@ -18,6 +18,7 @@
 carries CODEX_SURFACE and one. Benchmark adapters supply the launcher body.
 """
 
+from .antigravity import ANTIGRAVITY_SURFACE, AntigravitySubstrate
 from .base import Install, Launcher, RunRequest, Substrate
 from .codex import CODEX_SURFACE, CodexSubstrate
 from .opencode import OPENCODE_SURFACE, OpencodeSubstrate
@@ -31,4 +32,6 @@ __all__ = [
     "OPENCODE_SURFACE",
     "CodexSubstrate",
     "CODEX_SURFACE",
+    "AntigravitySubstrate",
+    "ANTIGRAVITY_SURFACE",
 ]

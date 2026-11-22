@@ -54,6 +54,7 @@ class SurfaceSpec:
     plugin_dir: str | None
     hooks_file: str | None
     hook_events: frozenset[str] = frozenset()
+    hooks_schema: str = "codex"
     compile_skill_scripts: bool = False
     reject_empty_always_on: bool = False
 
@@ -213,6 +214,72 @@ def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None =
     return fixed
 
 
+_AGY_GROUPED_HOOK_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+
+
+def _check_antigravity_hooks(surface: SurfaceSpec, doc: object, errs: list[str]) -> None:
+    """Validate Antigravity's `.agents/hooks.json` named-hook schema."""
+    hf = surface.hooks_file
+    if not isinstance(doc, dict) or not doc:
+        errs.append(f'{hf} needs a non-empty top-level {{"<hook-name>": {{...}}}} object')
+        return
+    for hook_name, spec in doc.items():
+        if not isinstance(spec, dict):
+            errs.append(f"{hf}: {hook_name!r} must map to an object of event configurations")
+            continue
+        event_keys = [k for k in spec if k != "enabled"]
+        if not event_keys:
+            errs.append(f"{hf}: {hook_name!r} defines no lifecycle events")
+            continue
+        if "enabled" in spec and not isinstance(spec["enabled"], bool):
+            errs.append(f"{hf}: {hook_name!r}.enabled must be a boolean")
+        for event in event_keys:
+            if event not in surface.hook_events:
+                errs.append(
+                    f"{hf}: {hook_name!r} has unknown event {event!r}; Antigravity dispatches "
+                    f"{', '.join(sorted(surface.hook_events))} (PascalCase)"
+                )
+                continue
+            entries = spec[event]
+            if not isinstance(entries, list):
+                errs.append(f"{hf}: {hook_name!r}.{event} must map to a LIST")
+                continue
+            if event in _AGY_GROUPED_HOOK_EVENTS:
+                for i, entry in enumerate(entries):
+                    if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                        errs.append(
+                            f"{hf}: {hook_name!r}.{event}[{i}] needs a matcher group with `hooks`"
+                        )
+                        continue
+                    for h in entry["hooks"]:
+                        if not isinstance(h, dict):
+                            errs.append(f"{hf}: {hook_name!r}.{event}[{i}] handler must be object")
+                        elif h.get("type", "command") != "command":
+                            errs.append(
+                                f'{hf}: {hook_name!r}.{event}[{i}] hook type must be "command"'
+                            )
+                        elif not str(h.get("command", "")).strip():
+                            errs.append(
+                                f"{hf}: {hook_name!r}.{event}[{i}] has an empty `command`"
+                            )
+            else:
+                for i, h in enumerate(entries):
+                    if not isinstance(h, dict):
+                        errs.append(f"{hf}: {hook_name!r}.{event}[{i}] handler must be an object")
+                    elif "hooks" in h and "command" not in h:
+                        errs.append(
+                            f"{hf}: {hook_name!r}.{event}[{i}] uses a flat handler list "
+                            "(do not wrap SessionStart/PreInvocation/PostInvocation/Stop in "
+                            "`matcher`/`hooks`)"
+                        )
+                    elif h.get("type", "command") != "command":
+                        errs.append(
+                            f'{hf}: {hook_name!r}.{event}[{i}] hook type must be "command"'
+                        )
+                    elif not str(h.get("command", "")).strip():
+                        errs.append(f"{hf}: {hook_name!r}.{event}[{i}] has an empty `command`")
+
+
 def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
     """Validate the hooks file against the schema the framework dispatches; a malformed one
     never fires rather than erroring, so the shape is enforced where the proposer sees it.
@@ -222,6 +289,9 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
         doc = json.loads(src)
     except json.JSONDecodeError as exc:
         errs.append(f"{hf} is not valid JSON: {exc}")
+        return
+    if surface.hooks_schema == "antigravity":
+        _check_antigravity_hooks(surface, doc, errs)
         return
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
     if not isinstance(hooks, dict) or not hooks:
