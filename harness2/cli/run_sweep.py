@@ -70,6 +70,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the stream order, the namespaces and the split's domains, then "
         "exit — no rollouts, no sessions, nothing written",
     )
+    g.add_argument(
+        "--blind-compose",
+        action="store_true",
+        help="withhold earlier proposers' <notes> from Compose and later sequential Propose "
+        "steps to curb E.6 premise propagation (#199)",
+    )
+    g.add_argument(
+        "--prohibition-replay",
+        action="store_true",
+        help="replay newly added prohibition rules against delivered reference/pool rollouts "
+        "and surface factual match counts to Compose (#199)",
+    )
     return p
 
 
@@ -170,6 +182,8 @@ def _main(args: argparse.Namespace) -> int:
         only_domains=only,
         max_tasks=args.max_tasks,
         pool_policy="finals",
+        blind_compose=args.blind_compose,
+        prohibition_replay=args.prohibition_replay,
     )
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

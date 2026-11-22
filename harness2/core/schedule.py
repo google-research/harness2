@@ -536,6 +536,8 @@ def _run_one_mode(
     surface,
     pool_policy: str,
     res: TaskResult,
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> None:
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
@@ -551,6 +553,8 @@ def _run_one_mode(
         run_id_of=lambda lbl, _n=n: _n.run_id(task_id, lbl),
         base_tree=base_tree,
         library_dir=lib_dir,
+        blind_compose=blind_compose,
+        prohibition_replay=prohibition_replay,
     )
     res.modes[mode] = r.to_dict()
     res.errors.extend(
@@ -630,6 +634,8 @@ def run_task(
     libraries: dict[str, library_store.Library] | None = None,
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> TaskResult:
     """k shared reference executions -> every mode -> blind selection per mode -> summary.json.
 
@@ -710,6 +716,8 @@ def run_task(
                 surface=surface,
                 pool_policy=pool_policy,
                 res=res,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             )
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
@@ -748,6 +756,8 @@ def run_domain(
     tag: str = "",
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> dict:
     """Every task in one domain, in `stream_order()` order, threading the library forward."""
     surface = adapter.substrate.surface()
@@ -780,6 +790,8 @@ def run_domain(
                 libraries=libs,
                 selector_prop=selector_prop,
                 pool_policy=pool_policy,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             )
             if r.status in ("ok", "skipped"):
                 out["done"] += 1
@@ -862,6 +874,8 @@ def run_sweep(
     pool_policy: str = "finals",
     max_tasks: int | None = None,
     only_tasks: Sequence[str] = (),
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> dict:
     """Run domains concurrently, preserving task order after stream filters are applied."""
     ordered_tasks = task_stream(
@@ -893,6 +907,8 @@ def run_sweep(
                 tag=tag,
                 selector_prop=selector,
                 pool_policy=pool_policy,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             ): d
             for d in order
         }
