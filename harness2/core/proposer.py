@@ -260,7 +260,9 @@ class Proposer:
         payload = _parse_json(p.stdout)
         text = str(payload.get("result") or payload.get("text") or "")
         err = ""
-        if payload.get("is_error") or payload.get("subtype") not in (None, "success"):
+        if config.claude_usage_limited(f"{text}\n{p.stderr or ''}", env):
+            err, text = f"usage limit, token skipped: {text[:200]}", ""
+        elif payload.get("is_error") or payload.get("subtype") not in (None, "success"):
             err = f"CLI error: {payload.get('subtype')} {str(text)[:200]}"
             text = ""
         elif p.returncode != 0 and not text.strip():

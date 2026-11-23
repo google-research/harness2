@@ -165,6 +165,11 @@ With `HARNESS2_CLAUDE_AUTH=api_key`, set `ANTHROPIC_API_KEY`. With
 `HARNESS2_CLAUDE_AUTH=oauth`, set `CLAUDE_CODE_OAUTH_TOKEN` to the token printed by
 `claude setup-token`, which uses a Claude subscription; usage then counts against
 that subscription's limits. Only the credential the mode names is passed to a run.
+To spread a sweep over several subscriptions, set `HARNESS2_CLAUDE_OAUTH_TOKENS` to
+a comma-separated list of such tokens instead. Each Claude Code run, executor or
+improver, takes the next token in turn. A token whose run reports a usage limit is
+skipped for the rest of that process, and the retry uses the next one; when every
+token is limited the process stops with a `ConfigError`. Unset, nothing changes.
 With `--substrate cc` and `HARNESS2_PROPOSER_CHANNEL=claude_cli`, no OpenCode model
 is used, so `HARNESS2_SOLVER_MODEL` is not required. Judging still uses the
 configured judge endpoint.

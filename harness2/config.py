@@ -16,9 +16,13 @@
 
 from __future__ import annotations
 
+import itertools
 import os
+import re
 import sys
+import threading
 from pathlib import Path
+from typing import Mapping
 
 PKG = Path(__file__).resolve().parent
 ROOT = PKG.parent if (PKG.parent / "pyproject.toml").is_file() else Path.cwd()
@@ -181,6 +185,27 @@ _CLAUDE_SECRETS = {
     for mode, name in _CLAUDE_AUTH_SECRET.items()
     if mode == "oauth" or mode == CLAUDE_AUTH
 }
+# Optional, oauth mode only: HARNESS2_CLAUDE_OAUTH_TOKENS, comma-separated `claude setup-token`
+# tokens, is used in turn, one token per Claude Code run. A token whose run reports a usage limit
+# is skipped for the rest of the process. Unset, the one CLAUDE_CODE_OAUTH_TOKEN is used as before.
+_CLAUDE_OAUTH_POOL = [
+    t.strip() for t in os.environ.pop("HARNESS2_CLAUDE_OAUTH_TOKENS", "").split(",") if t.strip()
+]
+_CLAUDE_LIMITED: set[str] = set()
+_CLAUDE_TURN = itertools.count()
+_CLAUDE_POOL_LOCK = threading.Lock()
+_CLAUDE_LIMIT_RE = re.compile(r"You've hit your [\w ]*limit")
+
+
+def claude_usage_limited(text: str, run_env: Mapping[str, str]) -> bool:
+    """True when `text` (a run's output) reports a usage limit for a pooled token; that token,
+    the one in `run_env`, is then skipped. Always False without HARNESS2_CLAUDE_OAUTH_TOKENS."""
+    token = run_env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if token not in _CLAUDE_OAUTH_POOL or not _CLAUDE_LIMIT_RE.search(text):
+        return False
+    with _CLAUDE_POOL_LOCK:
+        _CLAUDE_LIMITED.add(token)
+    return True
 
 
 def claude_auth_env() -> dict[str, str]:
@@ -198,6 +223,12 @@ def claude_auth_env() -> dict[str, str]:
             "CLOUD_ML_REGION": VERTEX_REGION,
         }
     name = _CLAUDE_AUTH_SECRET[CLAUDE_AUTH]
+    if CLAUDE_AUTH == "oauth" and _CLAUDE_OAUTH_POOL:
+        with _CLAUDE_POOL_LOCK:
+            live = [t for t in _CLAUDE_OAUTH_POOL if t not in _CLAUDE_LIMITED]
+            if not live:
+                raise ConfigError("Every token in HARNESS2_CLAUDE_OAUTH_TOKENS hit its usage limit")
+            return {name: live[next(_CLAUDE_TURN) % len(live)]}
     if _CLAUDE_SECRETS.get(name):
         return {name: _CLAUDE_SECRETS[name]}
     return {name: require(name, needed_by=f"HARNESS2_CLAUDE_AUTH={CLAUDE_AUTH}")}

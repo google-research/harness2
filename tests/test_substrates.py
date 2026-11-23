@@ -14,6 +14,7 @@
 
 """The Claude Code and Pi substrates: surface, install layout, env isolation, renderers."""
 
+import itertools
 import json
 import os
 import shutil
@@ -43,6 +44,8 @@ SKILL = "---\nname: pdf\ndescription: read a PDF\n---\nUse pdftotext.\n"
 # The body's own `name:` and `---` lines must not be mistaken for frontmatter.
 SUBAGENT = "---\ndescription: summarise a long file\n---\nname: not this\n---\nFive bullets.\n"
 HOOKS = {"PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]}]}
+# What Claude Code returns as the result text when a subscription's usage limit is reached.
+LIMIT_REPLY = "You've hit your session limit · resets 1:20pm"
 
 
 class SubstrateTests(unittest.TestCase):
@@ -185,6 +188,79 @@ class SubstrateTests(unittest.TestCase):
                 "CLAUDE_CODE_OAUTH_TOKEN", PiSubstrate().exec_env({}, config_dir=self.root)
             )
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ)
+
+    def token_pool(self, *tokens):
+        """oauth mode with HARNESS2_CLAUDE_OAUTH_TOKENS set to `tokens`, none limited yet."""
+        for p in (
+            patch.object(config, "CLAUDE_AUTH", "oauth"),
+            patch.object(config, "_CLAUDE_OAUTH_POOL", list(tokens)),
+            patch.object(config, "_CLAUDE_LIMITED", set()),
+            patch.object(config, "_CLAUDE_TURN", itertools.count()),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_oauth_token_pool_takes_turns_and_skips_a_limited_token(self):
+        self.token_pool("oat-a", "oat-b")
+        used = [config.claude_auth_env()["CLAUDE_CODE_OAUTH_TOKEN"] for _ in range(3)]
+        self.assertEqual(used, ["oat-a", "oat-b", "oat-a"])
+        self.assertFalse(config.claude_usage_limited("Done.", {"CLAUDE_CODE_OAUTH_TOKEN": "oat-a"}))
+        self.assertTrue(
+            config.claude_usage_limited(LIMIT_REPLY, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-a"})
+        )
+        used = [config.claude_auth_env()["CLAUDE_CODE_OAUTH_TOKEN"] for _ in range(2)]
+        self.assertEqual(used, ["oat-b", "oat-b"])
+        config.claude_usage_limited(LIMIT_REPLY, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-b"})
+        with self.assertRaises(config.ConfigError):
+            config.claude_auth_env()
+
+    def test_without_a_token_pool_a_limit_reply_changes_nothing(self):
+        with (
+            patch.object(config, "CLAUDE_AUTH", "oauth"),
+            patch.object(config, "_CLAUDE_OAUTH_POOL", []),
+            patch.dict(config._CLAUDE_SECRETS, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-one"}),
+        ):
+            env = config.claude_auth_env()
+            self.assertFalse(config.claude_usage_limited(LIMIT_REPLY, env))
+            self.assertEqual(config.claude_auth_env(), {"CLAUDE_CODE_OAUTH_TOKEN": "oat-one"})
+
+    def test_proposer_retries_a_limited_reply_on_the_next_token(self):
+        self.token_pool("oat-a", "oat-b")
+        replies = iter(
+            [
+                {"type": "result", "subtype": "success", "is_error": True, "result": LIMIT_REPLY},
+                {"type": "result", "subtype": "success", "result": "edited"},
+            ]
+        )
+        seen = []
+
+        def fake_run(cmd, **kw):
+            seen.append(kw["env"]["CLAUDE_CODE_OAUTH_TOKEN"])
+            return SimpleNamespace(returncode=0, stdout=json.dumps(next(replies)), stderr="")
+
+        with (
+            patch("harness2.core.proposer.subprocess.run", fake_run),
+            patch("harness2.core.proposer.time.sleep"),
+        ):
+            reply = Proposer(ChannelSpec("claude_cli", "claude-x")).call("m", None, "l")
+        self.assertEqual(reply.text, "edited")
+        self.assertEqual(seen, ["oat-a", "oat-b"])
+        self.assertEqual(config._CLAUDE_LIMITED, {"oat-a"})
+
+    def test_cli_runner_marks_a_limited_token(self):
+        self.token_pool("oat-a", "oat-b")
+        cfg = SimpleNamespace(substrate=ClaudeSubstrate(), model="m", timeout_per_task="60")
+        (self.root / "ws").mkdir()
+
+        def fake_run(argv, **kw):
+            kw["stdout"].write(json.dumps({"type": "result", "result": LIMIT_REPLY}) + "\n")
+            return SimpleNamespace(returncode=1)
+
+        with patch.object(jb_cli_runner.subprocess, "run", fake_run):
+            jb_cli_runner._attempt(
+                cfg, self.root / "ws", self.root / "t.jsonl", self.root / "log", "t1", 1
+            )
+        self.assertEqual(config._CLAUDE_LIMITED, {"oat-a"})
 
     def render(self, substrate, events: list[dict]) -> str:
         stream = self.root / "stream.jsonl"

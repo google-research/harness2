@@ -98,14 +98,18 @@ def _attempt(
         traj_file.open("w", encoding="utf-8") as out,
         log_file.open("a", encoding="utf-8") as err,
     ):
-        return subprocess.run(
+        env = cfg.substrate.exec_env(os.environ, config_dir=Path(home))
+        rc = subprocess.run(
             argv,
             cwd=workspace,
-            env=cfg.substrate.exec_env(os.environ, config_dir=Path(home)),
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=err,
         ).returncode
+    # A pooled subscription token that hit its usage limit is not used for the retry.
+    config.claude_usage_limited(traj_file.read_text(encoding="utf-8", errors="replace"), env)
+    return rc
 
 
 def main() -> int:
