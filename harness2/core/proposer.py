@@ -252,6 +252,12 @@ class Proposer:
     def _agy_cli(
         self, cwd: Path, mission: str, system: str, wall: int
     ) -> tuple[str, float, str]:
+        """Run a proposer session via Google Antigravity CLI (`agy`).
+
+        Authenticates via the user's local `agy` session (like `claude_cli`) and enables
+        `--sandbox` when `config.AGY_SANDBOX` is set. `agy --output-format stream-json` reports
+        token usage rather than USD pricing, so returned cost_usd is 0.0.
+        """
         (cwd / "MISSION.md").write_text(
             (f"{system}\n\n---\n\n" if system else "") + mission, encoding="utf-8"
         )
@@ -271,10 +277,11 @@ class Proposer:
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",
-            "--disable-slash-commands",
             "--print-timeout",
             f"{int(wall)}s",
         ]
+        if config.AGY_SANDBOX:
+            cmd.append("--sandbox")
         if self.spec.effort:
             cmd += ["--effort", self.spec.effort]
         p = subprocess.run(
@@ -288,7 +295,7 @@ class Proposer:
             stderr=subprocess.PIPE,
             timeout=wall + 30,
         )
-        text, err = _agy_stdout(p.stdout)
+        text, err = _agy_stdout(p.stdout, returncode=p.returncode)
         if err:
             return "", 0.0, err
         ans = out / "answer.md"
@@ -555,12 +562,21 @@ def _opencode_cost(stdout: str) -> float:
     return round(total, 6)
 
 
-def _agy_stdout(stdout: str) -> tuple[str, str]:
-    """Fold `agy -p --output-format stream-json` NDJSON into (final text, error text)."""
-    deltas: list[str] = []
+def _agy_stdout(stdout: str, *, returncode: int = 0) -> tuple[str, str]:
+    """Fold `agy -p --output-format stream-json` NDJSON into (final text, error text).
+
+    Transient intermediate tool errors (`step_update.error`) do not fail a session that
+    subsequently recovered and emitted a terminal `result` with `status == "SUCCESS"`.
+    Non-JSON output with a non-zero exit code is treated as a CLI failure rather than a reply.
+    """
+    last_step_idx: int | None = None
+    step_deltas: dict[int, list[str]] = {}
+    fallback_deltas: list[str] = []
     result_text = ""
-    errors: list[str] = []
+    result_errors: list[str] = []
+    step_errors: list[str] = []
     saw_json = False
+    saw_result_success = False
     for line in (stdout or "").splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -576,20 +592,41 @@ def _agy_stdout(stdout: str) -> tuple[str, str]:
         if etype == "step_update":
             su = _obj(ev, "step_update")
             if su.get("step_type") == "agent_response" and isinstance(su.get("text_delta"), str):
-                deltas.append(su["text_delta"])
+                idx = su.get("step_index")
+                if isinstance(idx, int):
+                    last_step_idx = idx
+                    step_deltas.setdefault(idx, []).append(su["text_delta"])
+                else:
+                    fallback_deltas.append(su["text_delta"])
             if su.get("error"):
-                errors.append(str(su["error"]).strip())
+                step_errors.append(str(su["error"]).strip())
         elif etype == "result":
             res = _obj(ev, "result")
-            if str(res.get("status") or "").upper() == "ERROR" or res.get("error"):
-                errors.append(str(res.get("error") or res.get("status") or "agy error").strip())
-            elif isinstance(res.get("response"), str) and res["response"].strip():
-                result_text = res["response"]
+            status = str(res.get("status") or "").upper()
+            if status == "ERROR" or res.get("error"):
+                result_errors.append(
+                    str(res.get("error") or res.get("status") or "agy error").strip()
+                )
+            else:
+                if status == "SUCCESS":
+                    saw_result_success = True
+                if isinstance(res.get("response"), str) and res["response"].strip():
+                    result_text = res["response"]
     if not saw_json:
-        return (stdout or "").strip(), ""
-    if errors:
-        return "", "; ".join(errors)[-300:]
-    return (result_text or "".join(deltas)).strip(), ""
+        raw = (stdout or "").strip()
+        if returncode != 0:
+            return "", f"rc={returncode}: {raw[-300:] or 'non-JSON CLI error'}"
+        return raw, ""
+    if result_errors:
+        return "", "; ".join(result_errors)[-300:]
+    if not saw_result_success and step_errors:
+        return "", "; ".join(step_errors)[-300:]
+    tail_text = (
+        "".join(step_deltas[last_step_idx])
+        if last_step_idx is not None
+        else "".join(fallback_deltas)
+    )
+    return (result_text or tail_text).strip(), ""
 
 
 def _call_fingerprint(label: str, mission: str, system: str, context_dir: Path | str | None) -> str:

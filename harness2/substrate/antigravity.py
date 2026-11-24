@@ -48,7 +48,7 @@ ANTIGRAVITY_SURFACE = SurfaceSpec(
         "boundaries when exceeded) and shares a 20,000-token aggregate rules budget"
     ),
     skill_dir=".agents/skills",
-    skill_name_rule="overrides_dir",
+    skill_name_rule="must_match",
     trigger_hint=(
         'Fix it by adding a trigger line naming `{name}` to GEMINI.md, e.g. "When '
         "<the situation this skill handles>, read .agents/skills/{name}/SKILL.md "
@@ -60,6 +60,7 @@ ANTIGRAVITY_SURFACE = SurfaceSpec(
     plugin_dir=None,
     hooks_file=".agents/hooks.json",
     hooks_schema="antigravity",
+    always_on_cap_unit="bytes",
     hook_events=frozenset(
         {
             "SessionStart",
@@ -80,8 +81,9 @@ ANTIGRAVITY_SURFACE = SurfaceSpec(
         ),
         (
             "sub_agents/README.md",
-            "<!-- c5: delegated subagent briefs, each invoked in its own context. "
-            "Add one as sub_agents/<name>/AGENT.md with frontmatter `description:`. -->\n",
+            "<!-- c5: optional delegated subagent briefs (harness2 convention; not auto-discovered "
+            "by native `agy` without an explicit trigger in GEMINI.md). Add one as "
+            "sub_agents/<name>/AGENT.md with frontmatter `description:`. -->\n",
         ),
         (
             ".agents/README.md",
@@ -92,14 +94,14 @@ ANTIGRAVITY_SURFACE = SurfaceSpec(
             '"Stop": [{"type": "command", "command": "..."}]}}. '
             "NOTE: PreToolUse/PostToolUse use grouped {matcher, hooks} arrays; "
             "SessionStart/PreInvocation/PostInvocation/Stop use flat handler arrays. "
-            "In Stop hooks, ALWAYS guard against infinite loops with BOTH "
-            "`continuationActive` AND `executionNum >= 2`. -->\n",
+            "In Stop hooks, always re-verify on continuation turns and cap `continue` responses "
+            "at `executionNum >= 2` (respecting `continuationActive`) to prevent infinite loops. -->\n",
         ),
         (
             ".agents/skills/README.md",
             "<!-- c6: reusable workflows. Add one as .agents/skills/<name>/SKILL.md with YAML "
-            "frontmatter: `description:` is REQUIRED; `name:` is optional and must match the "
-            "directory. Name every skill in GEMINI.md so it is triggered on demand. -->\n",
+            "frontmatter: BOTH `name:` (matching the directory) and `description:` are REQUIRED. "
+            "Name every skill in GEMINI.md so it is triggered on demand. -->\n",
         ),
     ),
 )
@@ -118,16 +120,20 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def verify_pinned_policy(staged_dir: Path, expected_sha256: str) -> None:
-    """Fail closed if a staged GEMINI.md lost or altered its pinned immutable policy."""
+    """Fail closed if staged GEMINI.md lacks an unaltered leading pinned immutable policy."""
     if not expected_sha256:
         return
     gemini_md = Path(staged_dir) / "GEMINI.md"
     if not gemini_md.is_file():
         raise ValueError("staged GEMINI.md is missing; pinned policy integrity failed")
     text = gemini_md.read_text(encoding="utf-8", errors="replace")
-    if PINNED_POLICY_BANNER not in text or PINNED_POLICY_END not in text:
-        raise ValueError("pinned policy markers missing from staged GEMINI.md")
-    start = text.index(PINNED_POLICY_BANNER) + len(PINNED_POLICY_BANNER)
+    if not text.startswith(PINNED_POLICY_BANNER):
+        raise ValueError("pinned policy must appear at the very start of staged GEMINI.md")
+    if PINNED_POLICY_END not in text:
+        raise ValueError("pinned policy end marker missing from staged GEMINI.md")
+    if text.count(PINNED_POLICY_BANNER) != 1 or text.count(PINNED_POLICY_END) != 1:
+        raise ValueError("duplicate pinned policy markers detected in staged GEMINI.md")
+    start = len(PINNED_POLICY_BANNER)
     end = text.index(PINNED_POLICY_END, start)
     actual = _sha256_bytes(text[start:end].encode("utf-8"))
     if actual != expected_sha256:
@@ -185,25 +191,32 @@ class AntigravitySubstrate:
                 else:
                     shutil.copy2(src, staged / entry)
 
+            staged_resolved = staged.resolve()
             for key, body in ctx.items():
                 if key.startswith("file:"):
                     rel = HT.normalize_rel(key[len("file:") :])
-                    dest = staged / rel
+                    dest = (staged / rel).resolve()
+                    if not dest.is_relative_to(staged_resolved):
+                        raise ValueError(f"ctx file escapes staging_dir: {rel!r}")
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_text(body, encoding="utf-8")
 
+            gemini_path = staged / "GEMINI.md"
             policy_path = self._pinned_policy
             if policy_path is None and ctx.get("pinned_policy_file"):
                 policy_path = Path(ctx["pinned_policy_file"])
             if policy_path is not None:
                 policy_text = Path(policy_path).read_text(encoding="utf-8").strip()
                 pinned_sha = _sha256_bytes(policy_text.encode("utf-8"))
-                gemini_path = staged / "GEMINI.md"
                 evolved = (
                     gemini_path.read_text(encoding="utf-8", errors="replace")
                     if gemini_path.is_file()
                     else ""
                 )
+                # Strip an existing leading pinned block to avoid double insertion on re-stage.
+                if evolved.startswith(PINNED_POLICY_BANNER) and PINNED_POLICY_END in evolved:
+                    tail_idx = evolved.index(PINNED_POLICY_END) + len(PINNED_POLICY_END)
+                    evolved = evolved[tail_idx:]
                 combined = PINNED_POLICY_BANNER + policy_text + PINNED_POLICY_END + evolved
                 combined_bytes = len(combined.encode("utf-8"))
                 if combined_bytes > AGY_RULE_MAX_BYTES:
@@ -213,6 +226,13 @@ class AntigravitySubstrate:
                     )
                 gemini_path.write_text(combined, encoding="utf-8")
                 verify_pinned_policy(staged, pinned_sha)
+            elif gemini_path.is_file():
+                raw_bytes = len(gemini_path.read_bytes())
+                if raw_bytes > AGY_RULE_MAX_BYTES:
+                    raise ValueError(
+                        f"staged GEMINI.md is {raw_bytes} bytes, exceeding Antigravity's "
+                        f"{AGY_RULE_MAX_BYTES}-byte per-file limit"
+                    )
         except BaseException:
             shutil.rmtree(staged, ignore_errors=True)
             raise
@@ -221,11 +241,13 @@ class AntigravitySubstrate:
             "install_mode": "agy_root",
             **{k: v for k, v in ctx.items() if not k.startswith("file:")},
         }
+        fp = RM.fingerprint(tree_dir)
         if pinned_sha:
             extras["pinned_policy_sha256"] = pinned_sha
+            fp = _sha256_bytes(f"{fp}:{pinned_sha}".encode("utf-8"))[:16]
         return Install(
             staging_dir=staged,
-            fingerprint=RM.fingerprint(tree_dir),
+            fingerprint=fp,
             extras=extras,
         )
 
@@ -239,7 +261,7 @@ class AntigravitySubstrate:
         timeout: int | None = None,
         sandbox: bool | None = None,
         skip_permissions: bool = True,
-        disable_slash_commands: bool = True,
+        disable_slash_commands: bool = False,
         settings: Path | str | None = None,
     ) -> list[str]:
         """Official headless `agy -p` argv with NDJSON stream output and optional sandbox."""
@@ -305,13 +327,15 @@ class AntigravitySubstrate:
         if not binary:
             raise RuntimeError(
                 "Antigravity CLI (`agy`) not found on PATH; install Google Antigravity CLI "
-                "(https://antigravity.google/docs) before using --substrate agy"
+                "(https://antigravity.google/docs) before using AntigravitySubstrate"
             )
         res = subprocess.run(
             [binary, "--help"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if res.returncode != 0:
@@ -411,7 +435,7 @@ def render_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int
         if su.get("tool_name"):
             rec["tool_name"] = str(su["tool_name"])
         if isinstance(su.get("tool_info"), dict):
-            rec["tool_info"] = su["tool_info"]
+            rec["tool_info"] = {**rec["tool_info"], **su["tool_info"]}
         if isinstance(su.get("usage"), dict):
             rec["usage"] = su["usage"]
         if su.get("error"):
@@ -497,8 +521,9 @@ def render_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int
 
 def final_message(path: Path) -> str:
     """Return the final response text from an `agy --output-format stream-json` stream."""
-    last = ""
-    deltas: list[str] = []
+    last_step_idx: int | None = None
+    step_deltas: dict[int, list[str]] = {}
+    fallback_deltas: list[str] = []
     for ev in parse_stream(Path(path)):
         etype = ev.get("event")
         if etype == "result" and isinstance(ev.get("result"), dict):
@@ -508,9 +533,15 @@ def final_message(path: Path) -> str:
         elif etype == "step_update" and isinstance(ev.get("step_update"), dict):
             su = ev["step_update"]
             if su.get("step_type") == "agent_response" and isinstance(su.get("text_delta"), str):
-                deltas.append(su["text_delta"])
-                last = "".join(deltas)
-    return last.strip()
+                idx = su.get("step_index")
+                if isinstance(idx, int):
+                    last_step_idx = idx
+                    step_deltas.setdefault(idx, []).append(su["text_delta"])
+                else:
+                    fallback_deltas.append(su["text_delta"])
+    if last_step_idx is not None:
+        return "".join(step_deltas[last_step_idx]).strip()
+    return "".join(fallback_deltas).strip()
 
 
 def stream_usage(path: Path) -> dict:

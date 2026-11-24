@@ -55,6 +55,7 @@ class SurfaceSpec:
     hooks_file: str | None
     hook_events: frozenset[str] = frozenset()
     hooks_schema: str = "codex"
+    always_on_cap_unit: str = "chars"
     compile_skill_scripts: bool = False
     reject_empty_always_on: bool = False
 
@@ -83,11 +84,14 @@ def _rx(surface: SurfaceSpec) -> dict[str, re.Pattern]:
 def normalize_rel(rel: str) -> str:
     """Normalise a relative path, rejecting escapes before it is joined to a directory."""
     r = str(rel).strip().replace("\\", "/")
-    if r.startswith("/") or ".." in r.split("/"):
+    if r.startswith("/") or re.match(r"^[A-Za-z]:", r) or ".." in r.split("/"):
         raise ValueError(f"path escapes the harness: {rel!r}")
     while r.startswith("./"):
         r = r[2:]
-    return r.strip("/")
+    r = r.strip("/")
+    if not r or r == ".":
+        raise ValueError(f"empty or root-only harness path: {rel!r}")
+    return r
 
 
 def is_allowed(surface: SurfaceSpec, rel: str) -> bool:
@@ -190,6 +194,12 @@ def always_on_text(surface: SurfaceSpec, tree: Tree) -> str:
     return "\n\n".join(tree.get(a, "") for a in surface.always_on)
 
 
+def _always_on_size(surface: SurfaceSpec, text: str) -> int:
+    if surface.always_on_cap_unit == "bytes":
+        return len(text.encode("utf-8"))
+    return len(text)
+
+
 def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None = None) -> list[str]:
     """Give every skill a trigger line in always-on text; return the names repaired.
 
@@ -206,15 +216,34 @@ def autotrigger(surface: SurfaceSpec, tree: Tree, *, always_on_max: int | None =
         desc = m.group(1).strip().rstrip(".") if m else f"the {name} workflow applies"
         line = surface.trigger_line.format(name=name, desc=desc)
         cur = tree.get(surface.autotrigger_file, "")
-        if len(always_on_text(surface, tree)) + len(line) + 2 > cap:
+        candidate_val = (cur.rstrip() + "\n" + line) if cur.strip() else line
+        candidate_tree = {**tree, surface.autotrigger_file: candidate_val}
+        if _always_on_size(surface, always_on_text(surface, candidate_tree)) > cap:
             continue
-        tree[surface.autotrigger_file] = (cur.rstrip() + "\n" + line) if cur.strip() else line
+        tree[surface.autotrigger_file] = candidate_val
         body = always_on_text(surface, tree)
         fixed.append(name)
     return fixed
 
 
 _AGY_GROUPED_HOOK_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+
+
+def _validate_agy_handler(hf: str, loc: str, h: object, errs: list[str]) -> None:
+    if not isinstance(h, dict):
+        errs.append(f"{hf}: {loc} handler must be an object")
+        return
+    if h.get("type", "command") != "command":
+        errs.append(f'{hf}: {loc} hook type must be "command"')
+        return
+    cmd = h.get("command")
+    if not isinstance(cmd, str) or not cmd.strip():
+        errs.append(f"{hf}: {loc} needs a non-empty string `command`")
+        return
+    if "timeout" in h:
+        t = h["timeout"]
+        if isinstance(t, bool) or not isinstance(t, int) or t <= 0:
+            errs.append(f"{hf}: {loc} `timeout` must be a positive integer")
 
 
 def _check_antigravity_hooks(surface: SurfaceSpec, doc: object, errs: list[str]) -> None:
@@ -241,8 +270,8 @@ def _check_antigravity_hooks(surface: SurfaceSpec, doc: object, errs: list[str])
                 )
                 continue
             entries = spec[event]
-            if not isinstance(entries, list):
-                errs.append(f"{hf}: {hook_name!r}.{event} must map to a LIST")
+            if not isinstance(entries, list) or not entries:
+                errs.append(f"{hf}: {hook_name!r}.{event} must map to a non-empty LIST")
                 continue
             if event in _AGY_GROUPED_HOOK_EVENTS:
                 for i, entry in enumerate(entries):
@@ -251,17 +280,27 @@ def _check_antigravity_hooks(surface: SurfaceSpec, doc: object, errs: list[str])
                             f"{hf}: {hook_name!r}.{event}[{i}] needs a matcher group with `hooks`"
                         )
                         continue
+                    matcher = entry.get("matcher")
+                    if not isinstance(matcher, str):
+                        errs.append(
+                            f"{hf}: {hook_name!r}.{event}[{i}] needs a string `matcher` "
+                            "(e.g. 'run_command' or '*')"
+                        )
+                    elif matcher and matcher != "*":
+                        try:
+                            re.compile(matcher)
+                        except re.error as exc:
+                            errs.append(
+                                f"{hf}: {hook_name!r}.{event}[{i}] invalid matcher regex "
+                                f"{matcher!r}: {exc}"
+                            )
+                    if not entry["hooks"]:
+                        errs.append(
+                            f"{hf}: {hook_name!r}.{event}[{i}] `hooks` list must not be empty"
+                        )
+                        continue
                     for h in entry["hooks"]:
-                        if not isinstance(h, dict):
-                            errs.append(f"{hf}: {hook_name!r}.{event}[{i}] handler must be object")
-                        elif h.get("type", "command") != "command":
-                            errs.append(
-                                f'{hf}: {hook_name!r}.{event}[{i}] hook type must be "command"'
-                            )
-                        elif not str(h.get("command", "")).strip():
-                            errs.append(
-                                f"{hf}: {hook_name!r}.{event}[{i}] has an empty `command`"
-                            )
+                        _validate_agy_handler(hf, f"{hook_name!r}.{event}[{i}]", h, errs)
             else:
                 for i, h in enumerate(entries):
                     if not isinstance(h, dict):
@@ -272,12 +311,8 @@ def _check_antigravity_hooks(surface: SurfaceSpec, doc: object, errs: list[str])
                             "(do not wrap SessionStart/PreInvocation/PostInvocation/Stop in "
                             "`matcher`/`hooks`)"
                         )
-                    elif h.get("type", "command") != "command":
-                        errs.append(
-                            f'{hf}: {hook_name!r}.{event}[{i}] hook type must be "command"'
-                        )
-                    elif not str(h.get("command", "")).strip():
-                        errs.append(f"{hf}: {hook_name!r}.{event}[{i}] has an empty `command`")
+                    else:
+                        _validate_agy_handler(hf, f"{hook_name!r}.{event}[{i}]", h, errs)
 
 
 def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
@@ -293,6 +328,8 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
     if surface.hooks_schema == "antigravity":
         _check_antigravity_hooks(surface, doc, errs)
         return
+    if surface.hooks_schema != "codex":
+        raise ValueError(f"unsupported hooks_schema {surface.hooks_schema!r} on {surface.name}")
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
     if not isinstance(hooks, dict) or not hooks:
         errs.append(f'{hf} needs a top-level {{"hooks": {{"<Event>": [...]}}}} object')
@@ -417,9 +454,11 @@ def validate(
     cap = surface.always_on_max if always_on_max is None else always_on_max
     body = always_on_text(surface, tree)
 
-    if len(body) > cap:
+    size = _always_on_size(surface, body)
+    if size > cap:
+        unit = surface.always_on_cap_unit
         errs.append(
-            f"always-on content is {len(body)} chars, over the {cap} cap; "
+            f"always-on content is {size} {unit}, over the {cap} cap; "
             f"{surface.always_on_cap_reason}"
         )
     if surface.reject_empty_always_on and not body.strip():
