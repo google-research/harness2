@@ -166,10 +166,13 @@ class PremisePropagationTests(unittest.TestCase):
             self.assertIn("`base1`", replay_text)
 
     def test_prohibition_hardening_clauses_boundaries_caching_and_sequential(self):
-        # 1. Clause scoping: positive tool before prohibition trigger must NOT be extracted.
+        # 1. Clause scoping & dotted identifiers inside backticks must be preserved intact.
         cand = {
             "guardrails.md": (
                 "- Use `openpyxl`; never call `pandas`.\n"
+                "- Never run `scripts/summarize.py` directly.\n"
+                "- Never call `os.system` or `subprocess.run`.\n"
+                "- Do not use `pandas.read_csv` for Excel.\n"
                 "- Avoid using legacy_api for parsing.\n"
                 "- Stop using old_formatter on reports.\n"
             ),
@@ -179,6 +182,13 @@ class PremisePropagationTests(unittest.TestCase):
         all_targets = [t for r in rules for t in r.targets]
         self.assertIn("pandas", all_targets)
         self.assertNotIn("openpyxl", all_targets)
+        self.assertIn("scripts/summarize.py", all_targets)
+        self.assertIn("os.system", all_targets)
+        self.assertIn("subprocess.run", all_targets)
+        self.assertIn("pandas.read_csv", all_targets)
+        self.assertNotIn("run", all_targets)
+        self.assertNotIn("call", all_targets)
+        self.assertNotIn("use", all_targets)
         self.assertIn("legacy_api", all_targets)
         self.assertNotIn("using", all_targets)
         self.assertIn("old_formatter", all_targets)

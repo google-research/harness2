@@ -46,7 +46,10 @@ _AFTER_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 _ACTION_LINE_RE = re.compile(r"^\s*\[ACTION\]", re.IGNORECASE)
-_CLAUSE_END_RE = re.compile(r"[;.\n]|,\s*(?:instead|use|prefer|always)\b", re.IGNORECASE)
+_CLAUSE_END_RE = re.compile(
+    r"(?:[;\n]|\.(?=\s|$)|,\s*(?:instead|use|prefer|always)\b)",
+    re.IGNORECASE,
+)
 
 _STOP_TARGETS = frozenset(
     {
@@ -92,6 +95,17 @@ _STOP_TARGETS = frozenset(
         "prompt",
         "task",
         "harness",
+        "run",
+        "call",
+        "use",
+        "invoke",
+        "inject",
+        "pass",
+        "add",
+        "write",
+        "include",
+        "enable",
+        "rely",
         "using",
         "calling",
         "running",
