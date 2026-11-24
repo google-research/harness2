@@ -303,9 +303,9 @@ cost and reach:
 | `GEMINI.md` | role, procedure, standing rules, durable facts | ALWAYS ON -- hard-capped at 24,000 bytes (shares a 20,000-token rules budget) |
 | `.agents/skills/<name>/SKILL.md` | a reusable workflow | name+description advertised; BODY loaded ON DEMAND |
 | `.agents/skills/<name>/scripts/*` | a helper carried with its skill | run via shell |
-| `sub_agents/<name>/AGENT.md` | a delegated subagent brief | runs in its OWN context, returns text |
+| `sub_agents/<name>/AGENT.md` | optional delegated subagent brief (harness2 convention) | loaded via explicit trigger in `GEMINI.md` (not auto-discovered by native `agy`) |
 | `scripts/<name>.py` | a deterministic helper | run on demand via shell |
-| `.agents/hooks.json` | Antigravity lifecycle hooks | fire INSIDE the tool/turn loop, on every matching event |
+| `.agents/hooks.json` | Antigravity lifecycle hooks | fire INSIDE the tool/turn loop, on every matching event (`cwd = .agents/`) |
 
 The three that are easy to get wrong:
 
@@ -314,12 +314,15 @@ The three that are easy to get wrong:
 NAMED in `GEMINI.md` as a trigger is never opened, so it is dead weight. Any helper script a
 skill invokes must travel at `.agents/skills/<name>/scripts/<file>.py`.
 
-`sub_agents/` -- frontmatter needs a `description:`. Worth it for a bounded sub-task whose INPUT
-is large and whose ANSWER is small.
+`sub_agents/` -- optional harness2 convention (not auto-discovered by native `agy` without an
+explicit trigger in `GEMINI.md`); frontmatter needs a `description:`. Worth it for a bounded
+sub-task whose INPUT is large and whose ANSWER is small.
 
 `.agents/hooks.json` -- ONE JSON file using Antigravity's named-hook schema: top-level keys are
 hook names mapping to event configs (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`,
-`PostInvocation`, `Stop`). `PreToolUse` and `PostToolUse` take grouped `[{"matcher": "...",
+`PostInvocation`, `Stop`). Hook commands run with `cwd = .agents/` (the directory containing
+`hooks.json`), so invoke workspace scripts as `../scripts/<name>.py` (or `python -m ...`), NOT
+`scripts/<name>.py`. `PreToolUse` and `PostToolUse` take grouped `[{"matcher": "...",
 "hooks": [{"type": "command", "command": "..."}]}]` entries; `SessionStart`, `PreInvocation`,
 `PostInvocation`, and `Stop` take FLAT handler lists `[{"type": "command", "command": "..."}]`.
 A `Stop` hook returning `{"decision": "continue", "reason": "..."}` re-enters the loop with a
@@ -585,16 +588,19 @@ You may write ONLY these paths. Anything else is off the editable surface and dr
 | `GEMINI.md` | c1/c3/c4/c6 persona, rules, durable facts, tool prose | ALWAYS ON -- hard-capped at 24,000 bytes |
 | `.agents/skills/<name>/SKILL.md` | c6 reusable workflow | name+description advertised; BODY read ON DEMAND |
 | `.agents/skills/<name>/scripts/*` | helper carried with its skill | run via shell |
-| `sub_agents/<name>/AGENT.md` | c5 delegated subagent brief | spawned in its OWN context, returns text |
+| `sub_agents/<name>/AGENT.md` | c5 optional subagent brief (harness2 convention) | triggered explicitly in `GEMINI.md` (not auto-discovered by native `agy`) |
 | `scripts/<name>.py` | c7 deterministic helper | run ON DEMAND via shell |
-| `.agents/hooks.json` | c8 Antigravity lifecycle hooks | fire INSIDE the tool/turn loop |
+| `.agents/hooks.json` | c8 Antigravity lifecycle hooks | fire INSIDE the tool/turn loop (`cwd = .agents/`) |
 
 Hard rules:
 - Prefer on-demand skills and deterministic `Stop`/`PreToolUse` hooks over bulky always-on prose;
-  `GEMINI.md` is capped at 24,000 bytes and must never be emptied.
-- Every skill name must appear verbatim in `GEMINI.md` as a trigger.
-- In `.agents/hooks.json`, `PreToolUse`/`PostToolUse` use `{matcher, hooks}` groups while
-  `SessionStart`/`PreInvocation`/`PostInvocation`/`Stop` use flat handler lists.
+  `GEMINI.md` is capped at 24,000 bytes (no `@[label](path)` includes) and must never be emptied.
+- Every `.agents/skills/<name>/SKILL.md` MUST have YAML frontmatter with BOTH `name:` (matching
+  the directory) and `description:`, and its name must appear verbatim in `GEMINI.md` as a trigger.
+- In `.agents/hooks.json`, hook commands run with `cwd = .agents/` (invoke workspace scripts as
+  `../scripts/<name>.py` or `python -m ...`), `PreToolUse`/`PostToolUse` use `{matcher, hooks}`
+  groups while `SessionStart`/`PreInvocation`/`PostInvocation`/`Stop` use flat handler lists, and
+  `Stop` hooks must guard `continue` with BOTH `continuationActive` and `executionNum >= 2`.
 - `scripts/*.py` filenames must be snake_case and compile under py_compile."""
 
 

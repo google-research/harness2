@@ -15,6 +15,7 @@
 """Unit and regression tests for AntigravitySubstrate and the agy_cli proposer channel."""
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -163,10 +164,10 @@ class AntigravitySubstrateTests(unittest.TestCase):
                     "PostToolUse": [
                         {
                             "matcher": "write_file|edit_file",
-                            "hooks": [{"type": "command", "command": "python scripts/gate.py PostToolUse"}],
+                            "hooks": [{"type": "command", "command": "python ../scripts/gate.py PostToolUse"}],
                         }
                     ],
-                    "Stop": [{"type": "command", "command": "python scripts/gate.py Stop"}],
+                    "Stop": [{"type": "command", "command": "python ../scripts/gate.py Stop"}],
                 }
             }
         )
@@ -294,6 +295,7 @@ class AntigravitySubstrateTests(unittest.TestCase):
         sent_argv = run_mock.call_args.args[0]
         self.assertIn("--sandbox", sent_argv)
         self.assertNotIn("--disable-slash-commands", sent_argv)
+        self.assertEqual(run_mock.call_args.kwargs.get("stdin"), subprocess.DEVNULL)
 
     def test_security_and_edge_case_hardening(self):
         # 1. Windows drive-letter (including ./C:/...) & empty/root escapes blocked by normalize_rel.
@@ -438,8 +440,113 @@ class AntigravitySubstrateTests(unittest.TestCase):
 
         # 8. Default agy_cli proposer model never crashes with provider/model slash.
         from harness2 import config
+        from harness2.substrate.antigravity import _reject_symlinks
+        from harness2.substrate.base import Install
 
         self.assertNotIn("/", config.PROPOSER_MODEL_BY_CHANNEL["agy_cli"])
+
+        # 9. `.agents/hooks.json` cwd=.agents/ script path checks (reject bare scripts/ and missing).
+        bare_hook = json.dumps(
+            {"g": {"Stop": [{"type": "command", "command": "python scripts/gate.py Stop"}]}}
+        )
+        with self.assertRaises(ValueError) as ctx_bare:
+            tree.validate(
+                ANTIGRAVITY_SURFACE,
+                {"GEMINI.md": "ok\n", ".agents/hooks.json": bare_hook, "scripts/gate.py": "pass\n"},
+            )
+        self.assertIn("../scripts/gate.py", str(ctx_bare.exception))
+
+        missing_hook = json.dumps(
+            {"g": {"Stop": [{"type": "command", "command": "python ../scripts/missing.py Stop"}]}}
+        )
+        with self.assertRaises(ValueError) as ctx_miss:
+            tree.validate(
+                ANTIGRAVITY_SURFACE,
+                {"GEMINI.md": "ok\n", ".agents/hooks.json": missing_hook},
+            )
+        self.assertIn("scripts/missing.py", str(ctx_miss.exception))
+
+        # 10. `@[label](path)` Antigravity include syntax rejected in validate() and materialise().
+        with self.assertRaises(ValueError):
+            tree.validate(ANTIGRAVITY_SURFACE, {"GEMINI.md": "Read @[ext](/etc/hosts)\n"})
+        inc_dir = self.root / "h_inc"
+        inc_dir.mkdir()
+        (inc_dir / "GEMINI.md").write_text("Include @[big](scripts/big.py)\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            AntigravitySubstrate().materialise(inc_dir, self._spec(), {})
+
+        # 11. Trailing empty `text_delta: ""` must NOT overwrite the previous response step.
+        trailing_empty = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "step_update",
+                        "step_update": {
+                            "step_index": 2,
+                            "step_type": "agent_response",
+                            "text_delta": "Final answer",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "step_update",
+                        "step_update": {
+                            "step_index": 3,
+                            "step_type": "agent_response",
+                            "state": "DONE",
+                            "text_delta": "",
+                        },
+                    }
+                ),
+            ]
+        )
+        te_path = self.root / "trailing_empty.jsonl"
+        te_path.write_text(trailing_empty, encoding="utf-8")
+        self.assertEqual(final_message(te_path), "Final answer")
+        self.assertEqual(_agy_stdout(trailing_empty, returncode=0), ("Final answer", ""))
+
+        # 12. Lowercase `result.status == "error"` rendered as [ERROR]; rc!=0 fails even after SUCCESS.
+        lc_err_path = self.root / "lc_err.jsonl"
+        lc_err_path.write_text(
+            json.dumps({"event": "result", "result": {"status": "error"}}), encoding="utf-8"
+        )
+        self.assertIn("[ERROR]", render_events(lc_err_path, obs_trunc=500, max_chars=2000))
+        rc_fail_text, rc_fail_err = _agy_stdout(recovered, returncode=2)
+        self.assertEqual(rc_fail_text, "")
+        self.assertIn("rc=2", rc_fail_err)
+
+        # 13. Fail-closed verify_pinned_policy(""), empty pinned_policy file, and execute() missing sha.
+        with self.assertRaises(ValueError):
+            verify_pinned_policy(self.root, "")
+        empty_pol = self.root / "empty_pol.md"
+        empty_pol.write_text("   \n\t\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            AntigravitySubstrate(pinned_policy=empty_pol).materialise(tree_dir, self._spec(), {})
+        sub_pinned = AntigravitySubstrate(pinned_policy=p1, launcher=lambda _r, _i: [])
+        with self.assertRaises(ValueError):
+            sub_pinned.execute("t1", Install(staging_dir=inst1.staging_dir, fingerprint="x", extras={}), ["b1"], 30)
+
+        # 14. Symlink rejection in _reject_symlinks / materialise (tested via mock & real symlink if OS allows).
+        fake_link = Mock(spec=Path)
+        fake_link.is_symlink.return_value = True
+        with self.assertRaises(ValueError):
+            _reject_symlinks(fake_link)
+
+        # 15. config.AGY_EFFORT wired as exec_argv default, and tts prompt includes required rules.
+        argv_def = AntigravitySubstrate(cli_bin="agy").exec_argv("Hi", self.root, "gemini-3.8-flash")
+        if config.AGY_EFFORT:
+            self.assertIn("--effort", argv_def)
+        argv_no_eff = AntigravitySubstrate(cli_bin="agy").exec_argv(
+            "Hi", self.root, "gemini-3.8-flash", effort=""
+        )
+        self.assertNotIn("--effort", argv_no_eff)
+        p_tts = prompts.propose(
+            BenchPrompts(work="reconcile code", prompt_pack="tts"), "INV", ANTIGRAVITY_SURFACE
+        )
+        self.assertIn("continuationActive", p_tts)
+        self.assertIn("../scripts/", p_tts)
+        self.assertIn("name:", p_tts)
 
 
 if __name__ == "__main__":

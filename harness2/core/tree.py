@@ -421,6 +421,38 @@ def _check_subagents(
     return subs
 
 
+_AGY_INCLUDE_RE = re.compile(r"@\[[^\]\n]+\]\([^)\n]+\)")
+_AGY_HOOK_BARE_SCRIPT_RE = re.compile(r"(?<![A-Za-z0-9_./\\-])scripts/[a-zA-Z0-9_./-]+\.py\b")
+_AGY_HOOK_PARENT_SCRIPT_RE = re.compile(r"\.\./(scripts/[a-zA-Z0-9_./-]+\.py)\b")
+
+
+def _iter_agy_hook_commands(src: str) -> list[str]:
+    try:
+        doc = json.loads(src)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(doc, dict):
+        return []
+    cmds: list[str] = []
+    for spec in doc.values():
+        if not isinstance(spec, dict):
+            continue
+        for event, entries in spec.items():
+            if event == "enabled" or not isinstance(entries, list):
+                continue
+            if event in _AGY_GROUPED_HOOK_EVENTS:
+                for entry in entries:
+                    if isinstance(entry, dict) and isinstance(entry.get("hooks"), list):
+                        for h in entry["hooks"]:
+                            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                                cmds.append(h["command"])
+            else:
+                for h in entries:
+                    if isinstance(h, dict) and isinstance(h.get("command"), str):
+                        cmds.append(h["command"])
+    return cmds
+
+
 def _check_script_refs(
     surface: SurfaceSpec,
     tree: Tree,
@@ -438,6 +470,23 @@ def _check_script_refs(
                 continue
             if ref not in have:
                 errs.append(f"{rel} invokes `{ref}` but that file is not in the harness")
+    if (
+        surface.hooks_schema == "antigravity"
+        and surface.hooks_file is not None
+        and surface.hooks_file in tree
+    ):
+        hf = surface.hooks_file
+        for cmd in _iter_agy_hook_commands(tree[hf]):
+            for bare in _AGY_HOOK_BARE_SCRIPT_RE.findall(cmd):
+                errs.append(
+                    f"{hf} runs with cwd=.agents/; invoke `{bare}` as `../{bare}` "
+                    f"(or `python -m ...`), not `{bare}`"
+                )
+            for ref in _AGY_HOOK_PARENT_SCRIPT_RE.findall(cmd):
+                if ref.rsplit("/", 1)[-1] in reserved_scripts:
+                    continue
+                if ref not in have:
+                    errs.append(f"{hf} invokes `../{ref}` but `{ref}` is not in the harness")
 
 
 def validate(
@@ -465,6 +514,11 @@ def validate(
         errs.append(
             f"{surface.always_on[0]} is empty — it is the only always-on file on "
             f"this framework, so an empty one is a harness that does not exist"
+        )
+    if surface.hooks_schema == "antigravity" and _AGY_INCLUDE_RE.search(body):
+        errs.append(
+            f"{surface.always_on[0]} uses `@[label](path)` include syntax, which expands "
+            f"before Antigravity's {cap}-byte cap and can pull off-surface files into context"
         )
 
     skills = _check_skills(surface, tree, body, errs)

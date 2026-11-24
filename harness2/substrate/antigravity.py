@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -90,12 +92,15 @@ ANTIGRAVITY_SURFACE = SurfaceSpec(
             "<!-- c8: Antigravity lifecycle hooks -- the only lever that acts INSIDE the "
             "tool/turn loop so the model cannot skip it. Add ONE file, .agents/hooks.json, "
             'named-hook schema: {"<hook-name>": {"PostToolUse": [{"matcher": '
-            '"write_file|edit_file", "hooks": [{"type": "command", "command": "..."}]}], '
-            '"Stop": [{"type": "command", "command": "..."}]}}. '
-            "NOTE: PreToolUse/PostToolUse use grouped {matcher, hooks} arrays; "
-            "SessionStart/PreInvocation/PostInvocation/Stop use flat handler arrays. "
-            "In Stop hooks, always re-verify on continuation turns and cap `continue` responses "
-            "at `executionNum >= 2` (respecting `continuationActive`) to prevent infinite loops. -->\n",
+            '"write_file|edit_file", "hooks": [{"type": "command", "command": '
+            '"python ../scripts/gate.py PostToolUse"}]}], '
+            '"Stop": [{"type": "command", "command": "python ../scripts/gate.py Stop"}]}}. '
+            "NOTE: Hook commands run with cwd=.agents/ (so invoke workspace scripts as "
+            "`../scripts/<name>.py` or `python -m ...`). PreToolUse/PostToolUse use grouped "
+            "{matcher, hooks} arrays; SessionStart/PreInvocation/PostInvocation/Stop use flat "
+            "handler arrays. In Stop hooks, always re-verify on continuation turns and cap "
+            "`continue` responses at `executionNum >= 2` (respecting `continuationActive`) "
+            "to prevent infinite loops. -->\n",
         ),
         (
             ".agents/skills/README.md",
@@ -115,14 +120,30 @@ PINNED_POLICY_END = (
 )
 
 
+_AGY_INCLUDE_RE = re.compile(r"@\[[^\]\n]+\]\([^)\n]+\)")
+
+
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _reject_symlinks(path: Path) -> None:
+    """Fail closed if `path` or any nested entry inside it is a symbolic link."""
+    if path.is_symlink():
+        raise ValueError(f"symbolic link not allowed in harness tree: {path}")
+    if path.is_dir():
+        for root, dirs, files in os.walk(path, followlinks=False):
+            root_p = Path(root)
+            for name in (*dirs, *files):
+                cand = root_p / name
+                if cand.is_symlink():
+                    raise ValueError(f"symbolic link not allowed in harness tree: {cand}")
+
+
 def verify_pinned_policy(staged_dir: Path, expected_sha256: str) -> None:
     """Fail closed if staged GEMINI.md lacks an unaltered leading pinned immutable policy."""
-    if not expected_sha256:
-        return
+    if not isinstance(expected_sha256, str) or not expected_sha256.strip():
+        raise ValueError("expected_sha256 must be a non-empty SHA-256 hex digest")
     gemini_md = Path(staged_dir) / "GEMINI.md"
     if not gemini_md.is_file():
         raise ValueError("staged GEMINI.md is missing; pinned policy integrity failed")
@@ -184,12 +205,15 @@ class AntigravitySubstrate:
         try:
             for entry in AGY_ROOT_ENTRIES:
                 src = tree_dir / entry
+                if src.is_symlink():
+                    raise ValueError(f"symbolic link not allowed in harness tree: {src}")
                 if not src.exists():
                     continue
+                _reject_symlinks(src)
                 if src.is_dir():
-                    shutil.copytree(src, staged / entry)
+                    shutil.copytree(src, staged / entry, symlinks=False)
                 else:
-                    shutil.copy2(src, staged / entry)
+                    shutil.copy2(src, staged / entry, follow_symlinks=False)
 
             staged_resolved = staged.resolve()
             for key, body in ctx.items():
@@ -207,6 +231,8 @@ class AntigravitySubstrate:
                 policy_path = Path(ctx["pinned_policy_file"])
             if policy_path is not None:
                 policy_text = Path(policy_path).read_text(encoding="utf-8").strip()
+                if not policy_text:
+                    raise ValueError(f"pinned_policy file is empty: {policy_path}")
                 pinned_sha = _sha256_bytes(policy_text.encode("utf-8"))
                 evolved = (
                     gemini_path.read_text(encoding="utf-8", errors="replace")
@@ -217,6 +243,11 @@ class AntigravitySubstrate:
                 if evolved.startswith(PINNED_POLICY_BANNER) and PINNED_POLICY_END in evolved:
                     tail_idx = evolved.index(PINNED_POLICY_END) + len(PINNED_POLICY_END)
                     evolved = evolved[tail_idx:]
+                if _AGY_INCLUDE_RE.search(evolved):
+                    raise ValueError(
+                        "evolved GEMINI.md uses `@[label](path)` include syntax, which can "
+                        "bypass the 24,000-byte cap or pull off-surface files into context"
+                    )
                 combined = PINNED_POLICY_BANNER + policy_text + PINNED_POLICY_END + evolved
                 combined = combined.replace("\r\n", "\n")
                 combined_bytes = len(combined.encode("utf-8"))
@@ -229,6 +260,12 @@ class AntigravitySubstrate:
                     fh.write(combined)
                 verify_pinned_policy(staged, pinned_sha)
             elif gemini_path.is_file():
+                raw_text = gemini_path.read_text(encoding="utf-8", errors="replace")
+                if _AGY_INCLUDE_RE.search(raw_text):
+                    raise ValueError(
+                        "staged GEMINI.md uses `@[label](path)` include syntax, which can "
+                        "bypass the 24,000-byte cap or pull off-surface files into context"
+                    )
                 raw_bytes = len(gemini_path.read_bytes())
                 if raw_bytes > AGY_RULE_MAX_BYTES:
                     raise ValueError(
@@ -259,7 +296,7 @@ class AntigravitySubstrate:
         workspace: Path,
         model: str,
         *,
-        effort: str = "",
+        effort: str | None = None,
         timeout: int | None = None,
         sandbox: bool | None = None,
         skip_permissions: bool = True,
@@ -268,6 +305,7 @@ class AntigravitySubstrate:
     ) -> list[str]:
         """Official headless `agy -p` argv with NDJSON stream output and optional sandbox."""
         use_sandbox = self._sandbox if sandbox is None else bool(sandbox)
+        use_effort = config.AGY_EFFORT if effort is None else effort
         argv = [
             self._resolve_cli(),
             "-p",
@@ -279,8 +317,8 @@ class AntigravitySubstrate:
             "--add-dir",
             str(workspace),
         ]
-        if effort:
-            argv += ["--effort", effort]
+        if use_effort:
+            argv += ["--effort", use_effort]
         if use_sandbox:
             argv.append("--sandbox")
         if skip_permissions:
@@ -305,8 +343,14 @@ class AntigravitySubstrate:
     def execute(
         self, task_ref: str, install: Install, run_ids: list[str], timeout: int
     ) -> list[Path]:
-        if install.extras.get("pinned_policy_sha256"):
-            verify_pinned_policy(install.staging_dir, install.extras["pinned_policy_sha256"])
+        expected_sha = install.extras.get("pinned_policy_sha256", "")
+        if self._pinned_policy is not None and not expected_sha:
+            raise ValueError(
+                "AntigravitySubstrate has pinned_policy configured, but Install.extras "
+                "lacks `pinned_policy_sha256` (fail-closed)"
+            )
+        if expected_sha:
+            verify_pinned_policy(install.staging_dir, expected_sha)
         if self._launcher is None:
             raise RuntimeError(
                 "AntigravitySubstrate was constructed without a launcher body; the benchmark "
@@ -494,7 +538,7 @@ def render_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int
             lines.append(f"[ERROR] {_clip(rec['error'], 1000)}")
 
     if result_obj:
-        status = str(result_obj.get("status") or "")
+        status = str(result_obj.get("status") or "").upper()
         if status == "ERROR" or result_obj.get("error"):
             lines.append(f"[ERROR] {_clip(result_obj.get('error') or status, 1000)}")
         else:
@@ -523,24 +567,30 @@ def render_events(path: Path, *, obs_trunc: int, max_chars: int, args_trunc: int
 
 def final_message(path: Path) -> str:
     """Return the final response text from an `agy --output-format stream-json` stream."""
+    last_result_response = ""
     last_step_idx: int | None = None
     step_deltas: dict[int, list[str]] = {}
     fallback_deltas: list[str] = []
     for ev in parse_stream(Path(path)):
         etype = ev.get("event")
         if etype == "result" and isinstance(ev.get("result"), dict):
-            resp = ev["result"].get("response")
-            if isinstance(resp, str) and resp.strip():
-                return resp
+            res = ev["result"]
+            status = str(res.get("status") or "").upper()
+            resp = res.get("response")
+            if status != "ERROR" and not res.get("error") and isinstance(resp, str) and resp.strip():
+                last_result_response = resp
         elif etype == "step_update" and isinstance(ev.get("step_update"), dict):
             su = ev["step_update"]
-            if su.get("step_type") == "agent_response" and isinstance(su.get("text_delta"), str):
+            delta = su.get("text_delta")
+            if su.get("step_type") == "agent_response" and isinstance(delta, str) and delta:
                 idx = su.get("step_index")
                 if isinstance(idx, int):
                     last_step_idx = idx
-                    step_deltas.setdefault(idx, []).append(su["text_delta"])
+                    step_deltas.setdefault(idx, []).append(delta)
                 else:
-                    fallback_deltas.append(su["text_delta"])
+                    fallback_deltas.append(delta)
+    if last_result_response:
+        return last_result_response
     if last_step_idx is not None:
         return "".join(step_deltas[last_step_idx]).strip()
     return "".join(fallback_deltas).strip()

@@ -288,6 +288,7 @@ class Proposer:
             cmd,
             cwd=cwd,
             env=self.env(),
+            stdin=subprocess.DEVNULL,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -591,13 +592,14 @@ def _agy_stdout(stdout: str, *, returncode: int = 0) -> tuple[str, str]:
         etype = ev.get("event")
         if etype == "step_update":
             su = _obj(ev, "step_update")
-            if su.get("step_type") == "agent_response" and isinstance(su.get("text_delta"), str):
+            delta = su.get("text_delta")
+            if su.get("step_type") == "agent_response" and isinstance(delta, str) and delta:
                 idx = su.get("step_index")
                 if isinstance(idx, int):
                     last_step_idx = idx
-                    step_deltas.setdefault(idx, []).append(su["text_delta"])
+                    step_deltas.setdefault(idx, []).append(delta)
                 else:
-                    fallback_deltas.append(su["text_delta"])
+                    fallback_deltas.append(delta)
             if su.get("error"):
                 step_errors.append(str(su["error"]).strip())
         elif etype == "result":
@@ -621,8 +623,8 @@ def _agy_stdout(stdout: str, *, returncode: int = 0) -> tuple[str, str]:
         return "", "; ".join(result_errors)[-300:]
     if not saw_result_success and step_errors:
         return "", "; ".join(step_errors)[-300:]
-    if returncode != 0 and not saw_result_success:
-        return "", f"rc={returncode}: agy exited non-zero without a SUCCESS result event"
+    if returncode != 0:
+        return "", f"rc={returncode}: agy exited non-zero"
     tail_text = (
         "".join(step_deltas[last_step_idx])
         if last_step_idx is not None
