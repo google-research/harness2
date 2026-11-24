@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from . import ledger as ledger_store
 from . import library as library_store
 from . import recursion, runmark, selection
 from . import tree as harness_tree
@@ -79,6 +80,29 @@ def _modes_of(record: Mapping) -> dict:
     if "modes" in record:
         return dict(record.get("modes") or {})
     return dict(record.get("arms") or {})
+
+
+def budget_violations(
+    summary: Mapping, modes: Sequence[str], *, k: int | None = None
+) -> dict[str, str]:
+    """Return `{mode: violation}` for requested modes whose persisted ledger broke `R=4k`/`P=3k`.
+
+    Modes without a recorded `ledger` (legacy summaries or unstarted modes) report no violation.
+    """
+    if not isinstance(summary, Mapping):
+        return {}
+    raw_k = k if k is not None else summary.get("k")
+    scale = raw_k if isinstance(raw_k, int) and not isinstance(raw_k, bool) else None
+    records = _modes_of(summary)
+    out: dict[str, str] = {}
+    for mode in modes:
+        rec = records.get(mode)
+        if not isinstance(rec, Mapping) or "ledger" not in rec:
+            continue
+        violation = ledger_store.persisted_violation(rec.get("ledger"), k=scale)
+        if violation:
+            out[mode] = violation
+    return out
 
 
 @dataclass(frozen=True)
@@ -432,10 +456,15 @@ def _resume(
         return False
     for mode in modes:
         sel = cached_sels[mode]
+        rec = cached_modes.get(mode)
         namespace = Namespace(adapter.spec.name, adapter.substrate.name, mode, k, seed, tag)
         harness_dir = namespace.task_dir(runs_root, task_id) / "harnesses" / sel["chosen_label"]
         run_dir = Path(sel.get("chosen_run_dir") or "")
         try:
+            if isinstance(rec, Mapping) and "ledger" in rec:
+                violation = ledger_store.persisted_violation(rec.get("ledger"), k=k)
+                if violation:
+                    raise ValueError(f"budget identity violated ({violation})")
             if not sel.get("chosen_run_dir") or not run_dir.is_dir():
                 raise ValueError("adopted run directory is missing")
             if sel.get("evidence") == "trajectory" and adapter.spec.state_deliverable:

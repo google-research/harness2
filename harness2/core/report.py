@@ -42,6 +42,7 @@ class Summary:
     fell_back: int = 0
     usd: float = 0.0
     metrics: tuple[str, ...] = ()
+    budget_violations: tuple[str, ...] = ()
 
     @property
     def name(self) -> str:
@@ -82,6 +83,7 @@ def summarise(
     *,
     fell_back: dict[tuple[str, int], int] | None = None,
     usd: dict[tuple[str, int], float] | None = None,
+    budget_violations: dict[tuple[str, int], Sequence[str]] | None = None,
 ) -> list[Summary]:
     """One Summary per (mode, k). Ungraded rows are counted, then excluded."""
     keys = sorted({(r.mode, r.k) for r in rows})
@@ -103,6 +105,7 @@ def summarise(
             fell_back=(fell_back or {}).get((mode, k), 0),
             usd=round((usd or {}).get((mode, k), 0.0), 2),
             metrics=units,
+            budget_violations=tuple((budget_violations or {}).get((mode, k), ())),
         )
         if good:
             s.score = round(100 * st.mean(r.frac for r in good), 2)
@@ -161,5 +164,17 @@ def render(summaries: Sequence[Summary], *, title: str = "", bench: str = "") ->
                 f"unweighted criteria counts (about 20 pt apart on JobBench); re-judge "
                 f"the fallback rows before comparing this line with any published "
                 f"number.",
+            ]
+    for s in summaries:
+        if s.budget_violations:
+            shown = "; ".join(s.budget_violations[:4])
+            more = (
+                f" (+{len(s.budget_violations) - 4} more)" if len(s.budget_violations) > 4 else ""
+            )
+            lines += [
+                "",
+                f"  WARNING  {s.name}: {len(s.budget_violations)} task summary(ies) violated "
+                f"the R=4k / P=3k budget identity ({shown}{more}). Re-run before trusting "
+                f"these figures.",
             ]
     return "\n".join(lines)

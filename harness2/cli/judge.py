@@ -39,6 +39,7 @@ from pathlib import Path
 
 from .. import config
 from ..core import judge as J
+from ..core import schedule as SCHED
 from . import _common as C
 
 _DERIVED = ("frac", "graded")
@@ -80,7 +81,7 @@ def _merge(old: list[J.Scored], new: list[J.Scored]) -> list[J.Scored]:
             and prev.selected_at == r.selected_at
             and prev.graded
             and not r.graded
-            and not r.error.startswith("selection")
+            and not r.error.startswith(("selection", "budget identity"))
         ):
             continue
         by_key[key] = r
@@ -104,10 +105,22 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
+        violations = SCHED.budget_violations(summary, modes)
+        task_id = str(summary.get("task_id") or summary_path.parent.name)
         for mode in modes:
             sel = (summary.get("selections") or {}).get(mode)
             if sel:
-                out.append(_selection_record(sel))
+                rec = _selection_record(sel)
+                if mode in violations:
+                    print(
+                        f"  ! refusing to judge {task_id} [{mode}]: "
+                        f"budget identity violated ({violations[mode]})",
+                        flush=True,
+                    )
+                    rec = dict(rec)
+                    rec["ok"] = False
+                    rec["budget_error"] = f"budget identity violated ({violations[mode]})"
+                out.append(rec)
     return out
 
 

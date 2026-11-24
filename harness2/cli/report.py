@@ -55,6 +55,22 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
     return fell_back, usd
 
 
+def _budget_violations(
+    ns_dir: Path, modes: tuple[str, ...], k: int
+) -> dict[tuple[str, int], list[str]]:
+    """Persisted ledger budget violations keyed by (mode token, k)."""
+    found: dict[tuple[str, int], list[str]] = {}
+    for summary_path in sorted(ns_dir.glob("*/summary.json")):
+        try:
+            summary = json.loads(summary_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        task_id = str(summary.get("task_id") or summary_path.parent.name)
+        for mode, detail in SCHED.budget_violations(summary, modes, k=k).items():
+            found.setdefault((mode, k), []).append(f"{task_id}: {detail}")
+    return found
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="harness2.cli.report", description=__doc__, formatter_class=C.HelpFormatter
@@ -79,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--k named no scale")
 
     adapter = C.make_adapter(args.bench, args.subset, args.substrate)
-    rows, fell_back, usd = [], {}, {}
+    rows, fell_back, usd, violations = [], {}, {}, {}
     for k in ks:
         ns_dir = C.runs_root_for(adapter) / C.summary_namespace(adapter, k, seed=args.seed)
         judged = ns_dir / "judged.json"
@@ -91,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         fb, sp = _spend_and_fallbacks(ns_dir, modes, k)
         fell_back.update(fb)
         usd.update(sp)
+        violations.update(_budget_violations(ns_dir, modes, k))
     if not rows:
         raise SystemExit("nothing to report")
 
@@ -99,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         + (f" seed={args.seed}" if args.seed is not None else "")
         + f" modes={','.join(C.mode_label(m) for m in modes)}"
     )
-    summaries = R.summarise(rows, fell_back=fell_back, usd=usd)
+    summaries = R.summarise(rows, fell_back=fell_back, usd=usd, budget_violations=violations)
     print(R.render(summaries, title=title, bench=adapter.spec.name))
     spend = sum(s.usd for s in summaries)
     if spend:
