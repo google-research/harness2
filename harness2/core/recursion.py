@@ -359,15 +359,17 @@ def _compose_decisions(
     base_tree: harness_tree.Tree,
     rollouts: Sequence[RunView],
     adapter: BenchmarkAdapter,
+    replay_stages: Sequence[Stage] | None = None,
 ) -> dict[str, str] | None:
     """Build `decisions` for Compose, supporting blind-compose and prohibition-replay ablations."""
     decisions: dict[str, str] = (
         {} if blind_compose else {stage.label: stage.notes or stage.error for stage in stages}
     )
     if prohibition_replay:
+        targets = stages if replay_stages is None else replay_stages
         findings = prohibition.check_pool_prohibitions(
             base_tree,
-            [(stage.label, stage.tree) for stage in stages],
+            [(stage.label, stage.tree) for stage in targets],
             rollouts,
             lambda rv: adapter.trajectory(rv.run_dir, obs_trunc=adapter.spec.obs_trunc),
         )
@@ -598,6 +600,7 @@ def run_sequential(
             base_tree=current_harness,
             rollouts=list(result.rollouts.values()),
             adapter=adapter,
+            replay_stages=stages,
         )
         comp = _run_stage(
             label=ck,

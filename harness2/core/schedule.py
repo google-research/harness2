@@ -588,7 +588,11 @@ def _run_one_mode(
                 adapter=adapter,
                 prop=selector,
                 work_dir=work_dir,
-                decisions={stage.label: stage.notes or stage.error for stage in r.stages},
+                decisions=(
+                    None
+                    if blind_compose
+                    else {stage.label: stage.notes or stage.error for stage in r.stages}
+                ),
             )
         finally:
             res.selections[mode] = sel.to_dict()
