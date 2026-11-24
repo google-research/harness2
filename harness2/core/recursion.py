@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .. import config
-from . import context, prompts
+from . import context, prohibition, prompts
 from . import tree as harness_tree
 from .ledger import Ledger
 from .proposer import Proposer, ProposerError
@@ -351,6 +351,34 @@ def _roll_many(
     return out
 
 
+def _compose_decisions(
+    stages: Sequence[Stage],
+    *,
+    blind_compose: bool,
+    prohibition_replay: bool,
+    base_tree: harness_tree.Tree,
+    rollouts: Sequence[RunView],
+    adapter: BenchmarkAdapter,
+    replay_stages: Sequence[Stage] | None = None,
+) -> dict[str, str] | None:
+    """Build `decisions` for Compose, supporting blind-compose and prohibition-replay ablations."""
+    decisions: dict[str, str] = (
+        {} if blind_compose else {stage.label: stage.notes or stage.error for stage in stages}
+    )
+    if prohibition_replay:
+        targets = stages if replay_stages is None else replay_stages
+        findings = prohibition.check_pool_prohibitions(
+            base_tree,
+            [(stage.label, stage.tree) for stage in targets],
+            rollouts,
+            lambda rv: adapter.trajectory(rv.run_dir, obs_trunc=adapter.spec.obs_trunc),
+        )
+        report = prohibition.format_replay_report(findings)
+        if report:
+            decisions["prohibition_replay"] = report
+    return decisions or None
+
+
 def run_parallel(
     task_id: str,
     k: int,
@@ -364,6 +392,8 @@ def run_parallel(
     library_dir: Path | None = None,
     propose_workers: int = PHASE_WIDTH,
     rollout_workers: int = PHASE_WIDTH,
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> ModeResult:
     """WIDTH: 2k iid candidates from shared evidence, then k INDEPENDENT compositions."""
     surface = adapter.substrate.surface()
@@ -416,6 +446,14 @@ def run_parallel(
         (stage.label, work_dir / "harnesses" / stage.label, result.rollouts.get(stage.label))
         for stage in stages
     ]
+    agg_decisions = _compose_decisions(
+        stages,
+        blind_compose=blind_compose,
+        prohibition_replay=prohibition_replay,
+        base_tree=base_tree,
+        rollouts=list(result.rollouts.values()),
+        adapter=adapter,
+    )
     agg_specs = [f"agg{i}" for i in range(1, k + 1)]
     with ThreadPoolExecutor(max_workers=min(len(agg_specs), propose_workers)) as pool_x:
         aggs = list(
@@ -433,7 +471,7 @@ def run_parallel(
                     harness_dir=base_dir,
                     library_dir=library_dir,
                     pool=pool_ev,
-                    decisions={stage.label: stage.notes or stage.error for stage in stages},
+                    decisions=agg_decisions,
                 ),
                 agg_specs,
             )
@@ -473,6 +511,8 @@ def run_sequential(
     library_dir: Path | None = None,
     propose_workers: int = 2,
     rollout_workers: int = PHASE_WIDTH,
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> ModeResult:
     """DEPTH: k nested passes over the same shared base evidence."""
     surface = adapter.substrate.surface()
@@ -515,9 +555,13 @@ def run_sequential(
                         harness_dir=current_dir,
                         library_dir=library_dir,
                         pool=list(history),
-                        decisions={
-                            stage.label: stage.notes or stage.error for stage in result.stages
-                        },
+                        decisions=(
+                            None
+                            if blind_compose
+                            else {
+                                stage.label: stage.notes or stage.error for stage in result.stages
+                            }
+                        ),
                     ),
                     specs,
                 )
@@ -549,6 +593,15 @@ def run_sequential(
             if k == 1
             else prompts.compose_round(benchmark_prompts, surface, t=t, k=k)
         )
+        comp_decisions = _compose_decisions(
+            result.stages,
+            blind_compose=blind_compose,
+            prohibition_replay=prohibition_replay,
+            base_tree=current_harness,
+            rollouts=list(result.rollouts.values()),
+            adapter=adapter,
+            replay_stages=stages,
+        )
         comp = _run_stage(
             label=ck,
             dim="COMPOSE",
@@ -562,7 +615,7 @@ def run_sequential(
             harness_dir=current_dir,
             library_dir=library_dir,
             pool=round_pool,
-            decisions={stage.label: stage.notes or stage.error for stage in result.stages},
+            decisions=comp_decisions,
         )
         _record_sessions(ledger, [comp])
         result.stages.append(comp)

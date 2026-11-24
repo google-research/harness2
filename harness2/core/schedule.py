@@ -248,9 +248,11 @@ class TaskResult:
     selections: dict = field(default_factory=dict)
     base: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    blind_compose: bool = False
+    prohibition_replay: bool = False
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "task_id": self.task_id,
             "domain": self.domain,
             "k": self.k,
@@ -262,6 +264,11 @@ class TaskResult:
             "selections": self.selections,
             "errors": self.errors,
         }
+        if self.blind_compose:
+            out["blind_compose"] = True
+        if self.prohibition_replay:
+            out["prohibition_replay"] = True
+        return out
 
 
 def _task_inputs(adapter: BenchmarkAdapter, task_id: str) -> str | None:
@@ -318,9 +325,13 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             if summary_path.is_file():
                 old = _load_old(summary_path)
                 inputs_changed = (
-                    res.inputs is not None
-                    and old.get("inputs") is not None
-                    and old.get("inputs") != res.inputs
+                    (
+                        res.inputs is not None
+                        and old.get("inputs") is not None
+                        and old.get("inputs") != res.inputs
+                    )
+                    or bool(old.get("blind_compose", False)) != bool(res.blind_compose)
+                    or bool(old.get("prohibition_replay", False)) != bool(res.prohibition_replay)
                 )
                 if not inputs_changed:
                     for key in ("modes", "selections"):
@@ -410,6 +421,15 @@ def _resume(
         print(
             f"  [{task_id}] task inputs {recorded_inputs} != {res.inputs} -- the task prompt "
             f"or its source files changed since this summary was written; re-running",
+            flush=True,
+        )
+        return False
+    if bool(got.get("blind_compose", False)) != bool(res.blind_compose) or bool(
+        got.get("prohibition_replay", False)
+    ) != bool(res.prohibition_replay):
+        print(
+            f"  [{task_id}] ablation flags changed (cached blind={bool(got.get('blind_compose', False))}, "
+            f"replay={bool(got.get('prohibition_replay', False))}); re-running",
             flush=True,
         )
         return False
@@ -536,6 +556,8 @@ def _run_one_mode(
     surface,
     pool_policy: str,
     res: TaskResult,
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> None:
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
@@ -551,6 +573,8 @@ def _run_one_mode(
         run_id_of=lambda lbl, _n=n: _n.run_id(task_id, lbl),
         base_tree=base_tree,
         library_dir=lib_dir,
+        blind_compose=blind_compose,
+        prohibition_replay=prohibition_replay,
     )
     res.modes[mode] = r.to_dict()
     res.errors.extend(
@@ -584,7 +608,11 @@ def _run_one_mode(
                 adapter=adapter,
                 prop=selector,
                 work_dir=work_dir,
-                decisions={stage.label: stage.notes or stage.error for stage in r.stages},
+                decisions=(
+                    None
+                    if blind_compose
+                    else {stage.label: stage.notes or stage.error for stage in r.stages}
+                ),
             )
         finally:
             res.selections[mode] = sel.to_dict()
@@ -630,6 +658,8 @@ def run_task(
     libraries: dict[str, library_store.Library] | None = None,
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> TaskResult:
     """k shared reference executions -> every mode -> blind selection per mode -> summary.json.
 
@@ -655,7 +685,14 @@ def run_task(
     bench, sub = adapter.spec.name, adapter.substrate.name
 
     domain = adapter.domain_of(task_id)
-    res = TaskResult(task_id=task_id, domain=domain, k=k, seed=seed)
+    res = TaskResult(
+        task_id=task_id,
+        domain=domain,
+        k=k,
+        seed=seed,
+        blind_compose=blind_compose,
+        prohibition_replay=prohibition_replay,
+    )
     base_ns = Namespace(bench, sub, "agg", k, seed, tag)
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
@@ -710,6 +747,8 @@ def run_task(
                 surface=surface,
                 pool_policy=pool_policy,
                 res=res,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             )
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
@@ -748,6 +787,8 @@ def run_domain(
     tag: str = "",
     selector_prop: Proposer | None = None,
     pool_policy: str = "finals",
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> dict:
     """Every task in one domain, in `stream_order()` order, threading the library forward."""
     surface = adapter.substrate.surface()
@@ -780,6 +821,8 @@ def run_domain(
                 libraries=libs,
                 selector_prop=selector_prop,
                 pool_policy=pool_policy,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             )
             if r.status in ("ok", "skipped"):
                 out["done"] += 1
@@ -862,6 +905,8 @@ def run_sweep(
     pool_policy: str = "finals",
     max_tasks: int | None = None,
     only_tasks: Sequence[str] = (),
+    blind_compose: bool = False,
+    prohibition_replay: bool = False,
 ) -> dict:
     """Run domains concurrently, preserving task order after stream filters are applied."""
     ordered_tasks = task_stream(
@@ -893,6 +938,8 @@ def run_sweep(
                 tag=tag,
                 selector_prop=selector,
                 pool_policy=pool_policy,
+                blind_compose=blind_compose,
+                prohibition_replay=prohibition_replay,
             ): d
             for d in order
         }
