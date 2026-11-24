@@ -393,6 +393,7 @@ _JUDGE_KEYS = (
     (("claude",), ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")),
     (("gemini",), ("GOOGLE_API_KEY", "GEMINI_API_KEY")),
     (("gpt", "o1", "o3", "o4", "o5"), ("OPENAI_API_KEY",)),
+    (("mistral",), ("MISTRAL_API_KEY",)),
 )
 
 

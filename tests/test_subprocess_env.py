@@ -47,6 +47,15 @@ class SubprocessEnvTests(unittest.TestCase):
             "ANTHROPIC_API_KEY": "sk-ant",
             "ANTHROPIC_AUTH_TOKEN": "tok-ant",
             "ANTHROPIC_BASE_URL": "https://proxy.example/v1",
+            "MISTRAL_API_KEY": "sk-mistral",
+            "OPENROUTER_API_KEY": "sk-openrouter",
+            "GROQ_API_KEY": "gsk-groq",
+            "TOGETHER_API_KEY": "tgp-together",
+            "TOGETHER_AI_API_KEY": "tgp-together-ai",
+            "DEEPSEEK_API_KEY": "sk-deepseek",
+            "HF_TOKEN": "hf_secret",
+            "HUGGING_FACE_HUB_TOKEN": "hf_hub_secret",
+            "AZURE_CLIENT_SECRET": "azure-secret",
             "GITHUB_TOKEN": "ghp_secret",
             "AWS_ACCESS_KEY_ID": "AKIA_TEST",
             "AWS_SECRET_ACCESS_KEY": "aws_secret",
@@ -56,6 +65,7 @@ class SubprocessEnvTests(unittest.TestCase):
             "GOOGLE_GENERATIVE_AI_API_KEY": "g-genai-key",
             "GOOGLE_APPLICATION_CREDENTIALS": "/adc.json",
         }
+        scrubbed_keys = tuple(k for k in host if k != "GOOGLE_APPLICATION_CREDENTIALS")
         # A Vertex solver keeps no provider key, whatever the developer's .env configures.
         with (
             patch.dict("os.environ", host),
@@ -70,22 +80,7 @@ class SubprocessEnvTests(unittest.TestCase):
             }
             for name, env_map in launchers.items():
                 with self.subTest(launcher=name):
-                    for key in (
-                        "HARNESS2_JUDGE_API_KEY",
-                        "HARNESS2_BRIDGE_KEY",
-                        "HARNESS2_CODEX_API_KEY",
-                        "OPENAI_API_KEY",
-                        "ANTHROPIC_API_KEY",
-                        "ANTHROPIC_AUTH_TOKEN",
-                        "ANTHROPIC_BASE_URL",
-                        "GITHUB_TOKEN",
-                        "AWS_ACCESS_KEY_ID",
-                        "AWS_SECRET_ACCESS_KEY",
-                        "AWS_SESSION_TOKEN",
-                        "AWS_BEARER_TOKEN_BEDROCK",
-                        "GOOGLE_API_KEY",
-                        "GOOGLE_GENERATIVE_AI_API_KEY",
-                    ):
+                    for key in scrubbed_keys:
                         self.assertNotIn(key, set(env_map))
                     self.assertEqual(env_map["GOOGLE_APPLICATION_CREDENTIALS"], "/adc.json")
             # The LAB judge keeps only the keys its --judge-model's client reads.
@@ -95,7 +90,8 @@ class SubprocessEnvTests(unittest.TestCase):
                 "claude-test": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"},
                 "gemini-test": {"GOOGLE_API_KEY"},
                 "gpt-test": {"OPENAI_API_KEY"},
-                "mistral-test": set(),
+                "mistral-test": {"MISTRAL_API_KEY"},
+                "unknown-judge": set(),
             }
             for model, kept in judge_cases.items():
                 with self.subTest(judge=model):
@@ -191,6 +187,9 @@ class SubprocessEnvTests(unittest.TestCase):
             "OPENAI_API_KEY": "sk-openai",
             "ANTHROPIC_API_KEY": "sk-ant",
             "ANTHROPIC_BASE_URL": "https://proxy.example/v1",
+            "MISTRAL_API_KEY": "sk-mistral",
+            "DEEPSEEK_API_KEY": "sk-deepseek",
+            "HF_TOKEN": "hf_secret",
             "HARNESS2_CODEX_API_KEY": "secret-codex",
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
             "GITHUB_TOKEN": "ghp_secret",
@@ -209,10 +208,16 @@ class SubprocessEnvTests(unittest.TestCase):
                 "anthropic/claude-test",
                 {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"},
             ),
+            "oc mistral/mistral-large-test": (
+                "_launch_oc",
+                "mistral/mistral-large-test",
+                {"MISTRAL_API_KEY"},
+            ),
             "oc google-vertex/gemini-test": ("_launch_oc", "google-vertex/gemini-test", set()),
             "cx": ("_launch_cx", "gpt-test", set()),
             "judge vertex/claude-test": ("score", "vertex/claude-test", set()),
             "judge gpt-test": ("score", "gpt-test", {"OPENAI_API_KEY"}),
+            "judge mistral-test": ("score", "mistral-test", {"MISTRAL_API_KEY"}),
         }
         with (
             patch.dict("os.environ", host),
@@ -260,9 +265,18 @@ class SubprocessEnvTests(unittest.TestCase):
             "GEMINI_API_KEY": "gm-key",
             "GOOGLE_API_KEY": "g-key",
             "GOOGLE_GENERATIVE_AI_API_KEY": "g-genai-key",
+            "MISTRAL_API_KEY": "sk-mistral",
+            "OPENROUTER_API_KEY": "sk-openrouter",
+            "GROQ_API_KEY": "gsk-groq",
+            "TOGETHER_API_KEY": "tgp-together",
+            "TOGETHER_AI_API_KEY": "tgp-together-ai",
+            "DEEPSEEK_API_KEY": "sk-deepseek",
             "AWS_ACCESS_KEY_ID": "AKIA_TEST",
             "AWS_SECRET_ACCESS_KEY": "aws_secret",
             "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
+            "HF_TOKEN": "hf_secret",
+            "HUGGING_FACE_HUB_TOKEN": "hf_hub_secret",
+            "AZURE_CLIENT_SECRET": "azure-secret",
             "GITHUB_TOKEN": "ghp_secret",
             "HARNESS2_JUDGE_API_KEY": "secret-judge",
         }
@@ -274,6 +288,12 @@ class SubprocessEnvTests(unittest.TestCase):
                 "GOOGLE_GENERATIVE_AI_API_KEY",
                 "GEMINI_API_KEY",
             },
+            "mistral/mistral-large-test": {"MISTRAL_API_KEY"},
+            "openrouter/deepseek-r1": {"OPENROUTER_API_KEY"},
+            "groq/llama-test": {"GROQ_API_KEY"},
+            "together/qwen-test": {"TOGETHER_API_KEY", "TOGETHER_AI_API_KEY"},
+            "togetherai/qwen-test": {"TOGETHER_API_KEY", "TOGETHER_AI_API_KEY"},
+            "deepseek/deepseek-chat": {"DEEPSEEK_API_KEY"},
             "amazon-bedrock/claude-test": {
                 "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY",
