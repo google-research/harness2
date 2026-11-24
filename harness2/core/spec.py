@@ -30,7 +30,7 @@ from .tree import SurfaceSpec
 
 ModelId = str
 
-CHANNELS = ("claude_cli", "opencode")
+CHANNELS = ("claude_cli", "opencode", "agy_cli")
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,11 @@ def resolve_channel_model(
             f"claude_cli channel takes a bare Anthropic id "
             f"(e.g. {config.PROPOSER_MODEL_BY_CHANNEL['claude_cli']!r}), got {model!r}"
         )
+    if kind == "agy_cli" and "/" in model:
+        raise ValueError(
+            f"agy_cli channel takes a bare Antigravity model id "
+            f"(e.g. 'gemini-3.8-flash' or 'gemini-4-argon'), got {model!r}"
+        )
     return ChannelSpec(kind, model, effort=effort, steps=steps, timeout=timeout)
 
 
@@ -126,7 +131,13 @@ class BenchPrompts:
                     )
 
 
-INSTALL_MODES = ("workspace_agents_md", "home_dir_jinja", "workspace_config", "codex_root")
+INSTALL_MODES = (
+    "workspace_agents_md",
+    "home_dir_jinja",
+    "workspace_config",
+    "codex_root",
+    "agy_root",
+)
 
 
 @dataclass(frozen=True)
