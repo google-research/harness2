@@ -121,7 +121,9 @@ def judge_selections(
                         run_id=sel.get("chosen_run_id", ""),
                         chosen_is_base=bool(sel.get("chosen_is_base")),
                         selected_at=sel.get("selected_at", ""),
-                        error="selection did not complete successfully",
+                        error=str(
+                            sel.get("budget_error") or "selection did not complete successfully"
+                        ),
                     )
                 )
                 continue

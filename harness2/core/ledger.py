@@ -20,6 +20,7 @@ selection and reflection are recorded outside this ledger.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 
@@ -31,6 +32,45 @@ def expected_rollouts(k: int) -> int:
 def expected_sessions(k: int) -> int:
     """P = 3k: k INV + k DOM + k compositions (parallel: agg1..aggk; sequential: c1..ck)."""
     return 3 * int(k)
+
+
+def persisted_violation(ledger: Mapping | None, *, k: int | None = None) -> str:
+    """Check a persisted `Ledger.to_dict()` mapping; "" when valid or absent (legacy summary)."""
+    if ledger is None:
+        return ""
+    if not isinstance(ledger, Mapping):
+        return f"invalid ledger record ({type(ledger).__name__})"
+    raw_k = k if k is not None else ledger.get("k")
+    scale = raw_k if isinstance(raw_k, int) and not isinstance(raw_k, bool) and raw_k > 0 else None
+    want_r = ledger.get("expected_R", expected_rollouts(scale) if scale is not None else None)
+    want_p = ledger.get("expected_P", expected_sessions(scale) if scale is not None else None)
+    got_r = ledger.get("R")
+    got_p = ledger.get("P")
+    if not all(
+        isinstance(v, int) and not isinstance(v, bool) for v in (got_r, got_p, want_r, want_p)
+    ):
+        return f"R={got_r}/{want_r}, P={got_p}/{want_p}"
+
+    problems: list[str] = []
+    if got_r != want_r or got_p != want_p:
+        problems.append(f"R={got_r}/{want_r}, P={got_p}/{want_p}")
+
+    rl = ledger.get("rollouts")
+    sl = ledger.get("sessions")
+    if rl is not None and (not isinstance(rl, list) or len(rl) != got_r):
+        n_rl = len(rl) if isinstance(rl, list) else type(rl).__name__
+        problems.append(f"rollouts list ({n_rl}) != R={got_r}")
+    if sl is not None and (not isinstance(sl, list) or len(sl) != got_p):
+        n_sl = len(sl) if isinstance(sl, list) else type(sl).__name__
+        problems.append(f"sessions list ({n_sl}) != P={got_p}")
+
+    dupes = sorted(
+        ({str(x) for x in rl if rl.count(x) > 1} if isinstance(rl, list) else set())
+        | ({str(x) for x in sl if sl.count(x) > 1} if isinstance(sl, list) else set())
+    )
+    if dupes:
+        problems.append(f"duplicate labels {dupes}")
+    return "; ".join(problems)
 
 
 class BudgetError(AssertionError):
