@@ -296,8 +296,8 @@ class AntigravitySubstrateTests(unittest.TestCase):
         self.assertNotIn("--disable-slash-commands", sent_argv)
 
     def test_security_and_edge_case_hardening(self):
-        # 1. Windows drive-letter & empty/root escapes blocked by normalize_rel.
-        for bad in ("C:/evil.py", "D:\\evil.py", "C:rel.py", "", ".", "./"):
+        # 1. Windows drive-letter (including ./C:/...) & empty/root escapes blocked by normalize_rel.
+        for bad in ("C:/evil.py", "D:\\evil.py", "./C:/evil.py", ".\\D:\\evil.py", "C:rel.py", "", ".", "./"):
             with self.assertRaises(ValueError, msg=f"expected rejection for {bad!r}"):
                 tree.normalize_rel(bad)
 
@@ -425,6 +425,16 @@ class AntigravitySubstrateTests(unittest.TestCase):
         crash_text, crash_err = _agy_stdout("Fatal: auth expired", returncode=1)
         self.assertEqual(crash_text, "")
         self.assertIn("rc=1", crash_err)
+
+        mid_crash = json.dumps(
+            {
+                "event": "step_update",
+                "step_update": {"step_index": 1, "step_type": "agent_response", "text_delta": "Halfway..."},
+            }
+        )
+        mc_text, mc_err = _agy_stdout(mid_crash, returncode=1)
+        self.assertEqual(mc_text, "")
+        self.assertIn("rc=1", mc_err)
 
         # 8. Default agy_cli proposer model never crashes with provider/model slash.
         from harness2 import config

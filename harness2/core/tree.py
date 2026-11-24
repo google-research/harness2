@@ -84,10 +84,10 @@ def _rx(surface: SurfaceSpec) -> dict[str, re.Pattern]:
 def normalize_rel(rel: str) -> str:
     """Normalise a relative path, rejecting escapes before it is joined to a directory."""
     r = str(rel).strip().replace("\\", "/")
-    if r.startswith("/") or re.match(r"^[A-Za-z]:", r) or ".." in r.split("/"):
-        raise ValueError(f"path escapes the harness: {rel!r}")
     while r.startswith("./"):
         r = r[2:]
+    if r.startswith("/") or re.match(r"^[A-Za-z]:", r) or ".." in r.split("/"):
+        raise ValueError(f"path escapes the harness: {rel!r}")
     r = r.strip("/")
     if not r or r == ".":
         raise ValueError(f"empty or root-only harness path: {rel!r}")

@@ -621,6 +621,8 @@ def _agy_stdout(stdout: str, *, returncode: int = 0) -> tuple[str, str]:
         return "", "; ".join(result_errors)[-300:]
     if not saw_result_success and step_errors:
         return "", "; ".join(step_errors)[-300:]
+    if returncode != 0 and not saw_result_success:
+        return "", f"rc={returncode}: agy exited non-zero without a SUCCESS result event"
     tail_text = (
         "".join(step_deltas[last_step_idx])
         if last_step_idx is not None

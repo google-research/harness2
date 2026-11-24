@@ -218,13 +218,15 @@ class AntigravitySubstrate:
                     tail_idx = evolved.index(PINNED_POLICY_END) + len(PINNED_POLICY_END)
                     evolved = evolved[tail_idx:]
                 combined = PINNED_POLICY_BANNER + policy_text + PINNED_POLICY_END + evolved
+                combined = combined.replace("\r\n", "\n")
                 combined_bytes = len(combined.encode("utf-8"))
                 if combined_bytes > AGY_RULE_MAX_BYTES:
                     raise ValueError(
                         f"combined pinned policy + evolved GEMINI.md is {combined_bytes} bytes, "
                         f"exceeding Antigravity's {AGY_RULE_MAX_BYTES}-byte per-file limit"
                     )
-                gemini_path.write_text(combined, encoding="utf-8")
+                with gemini_path.open("w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(combined)
                 verify_pinned_policy(staged, pinned_sha)
             elif gemini_path.is_file():
                 raw_bytes = len(gemini_path.read_bytes())

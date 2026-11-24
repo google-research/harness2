@@ -309,8 +309,8 @@ cost and reach:
 
 The three that are easy to get wrong:
 
-`.agents/skills/` -- YAML frontmatter with a `description:` is REQUIRED, or the skill is
-dropped silently at load; a `name:` line is optional and must match the directory. A skill never
+`.agents/skills/` -- YAML frontmatter with BOTH `name:` (matching the directory) and
+`description:` is REQUIRED, or the skill is dropped silently at load. A skill never
 NAMED in `GEMINI.md` as a trigger is never opened, so it is dead weight. Any helper script a
 skill invokes must travel at `.agents/skills/<name>/scripts/<file>.py`.
 
