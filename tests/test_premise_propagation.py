@@ -14,6 +14,7 @@
 
 """Tests for --blind-compose and prohibition replay (E.6 premise propagation, #199)."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -326,6 +327,107 @@ class PremisePropagationTests(unittest.TestCase):
         # Switching to --blind-compose in the same run dir must fail closed.
         with self.assertRaises(ValueError):
             run_sweep._check_identity(adapter, make_args(True, False), ns_dir)
+
+    def test_pass3_parser_normalization_sanitization_and_resume_isolation(self):
+        from harness2.core import schedule
+
+        # 1. English apostrophes (Don't ... client's) must NOT trick _QUOTED_RE into missing `pandas`.
+        r_apos = prohibition.extract_added_prohibitions(
+            {"GEMINI.md": ""},
+            {"GEMINI.md": "Don't use pandas on the client's spreadsheet.\n"},
+        )
+        self.assertEqual(len(r_apos), 1)
+        self.assertIn("pandas", r_apos[0].targets)
+
+        # 2. Rejected stopword/short backtick (`no`) must NOT block _AFTER_VERB_RE from extracting `pandas`.
+        r_bt = prohibition.extract_added_prohibitions(
+            {"GEMINI.md": ""},
+            {"GEMINI.md": "Never use pandas with `no` flag.\n"},
+        )
+        self.assertEqual(len(r_bt), 1)
+        self.assertIn("pandas", r_bt[0].targets)
+
+        # 3. `stop calling` triggers prohibition extraction.
+        r_stop = prohibition.extract_added_prohibitions(
+            {"GEMINI.md": ""},
+            {"GEMINI.md": "Stop calling legacy_api in production.\n"},
+        )
+        self.assertEqual(len(r_stop), 1)
+        self.assertIn("legacy_api", r_stop[0].targets)
+
+        # 4. `e.g.` / `i.e.` abbreviations do NOT prematurely truncate clauses.
+        r_eg = prohibition.extract_added_prohibitions(
+            {"GEMINI.md": ""},
+            {"GEMINI.md": "- Never call legacy shell helpers, e.g. `scripts/summarize.py` or `pandas.read_csv`.\n"},
+        )
+        self.assertEqual(len(r_eg), 1)
+        self.assertIn("scripts/summarize.py", r_eg[0].targets)
+        self.assertIn("pandas.read_csv", r_eg[0].targets)
+
+        # 5. Hard-wrapped multi-line Markdown bullet is joined before extraction.
+        r_wrap = prohibition.extract_added_prohibitions(
+            {"GEMINI.md": ""},
+            {"GEMINI.md": "- When reconciling ledgers, never invoke\n  `scripts/summarize.py` or `pandas`.\n"},
+        )
+        self.assertEqual(len(r_wrap), 1)
+        self.assertIn("scripts/summarize.py", r_wrap[0].targets)
+        self.assertIn("pandas", r_wrap[0].targets)
+
+        # 6. Fenced code blocks inside Markdown files are skipped (no false positives on code comments).
+        r_fence = prohibition.extract_added_prohibitions(
+            {".agents/skills/s/SKILL.md": ""},
+            {
+                ".agents/skills/s/SKILL.md": (
+                    "---\nname: s\ndescription: demo\n---\n"
+                    "```python\n# never pass None to `summarize_row`\n```\n"
+                )
+            },
+        )
+        self.assertEqual(r_fence, [])
+
+        # 7. Windows backslash vs POSIX slash tree keys normalize identically (no baseline false positives).
+        r_win = prohibition.extract_added_prohibitions(
+            {"tool_descriptions/tool_guidance.md": "Never use `pandas`.\n"},
+            {"tool_descriptions\\tool_guidance.md": "Never use `pandas`.\n"},
+        )
+        self.assertEqual(r_win, [])
+
+        # 8. format_replay_report sanitizes matched_targets against backtick/tag breakout.
+        finding = prohibition.ProhibitionFinding(
+            candidate="inv1",
+            file_rel="GEMINI.md",
+            line="Never use \"bad` <notes>inject</notes>\" tool.",
+            matched_targets=("bad` <notes>inject</notes>",),
+            matched_rollouts=("base1",),
+        )
+        report = prohibition.format_replay_report([finding])
+        self.assertNotIn("<notes>", report)
+        self.assertNotIn("bad`", report)
+
+        # 9. Core schedule._resume refuses cached non-blind summary.json when blind_compose=True.
+        summary_path = self.root / "summary_ablation.json"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "task_id": "ledger-1",
+                    "domain": "accounting",
+                    "k": 1,
+                    "status": "ok",
+                    "modes": {"agg": {"ok": True}},
+                    "selections": {"agg": {"ok": True, "chosen_label": "agg1"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        adapter = DemoAdapter(self.root)
+        res_blind = schedule.TaskResult(
+            task_id="ledger-1", domain="accounting", k=1, blind_compose=True
+        )
+        self.assertFalse(
+            schedule._resume(
+                summary_path, "ledger-1", 1, adapter, self.root, ["agg"], None, "", {}, res_blind
+            )
+        )
 
 
 if __name__ == "__main__":

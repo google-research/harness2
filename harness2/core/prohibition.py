@@ -31,11 +31,11 @@ from .spec import RunView
 
 _PROHIBITION_RE = re.compile(
     r"\b(?:never|do\s+not|don't|must\s+not|mustn't|forbid(?:den)?|prohibit(?:ed)?|"
-    r"disallow(?:ed)?|ban(?:ned)?|avoid\s+using|stop\s+using|avoid)\b",
+    r"disallow(?:ed)?|ban(?:ned)?|avoid\s+using|stop\s+(?:using|calling|running|invoking)|avoid)\b",
     re.IGNORECASE,
 )
 _BACKTICK_RE = re.compile(r"`([^`\n]{2,80})`")
-_QUOTED_RE = re.compile(r"""["']([^"'\n]{3,60})["']""")
+_QUOTED_RE = re.compile(r"""(?<!\w)(["'])([^"'\n]{3,60})\1(?!\w)""")
 _AFTER_VERB_RE = re.compile(
     r"\b(?:never|do\s+not|don't|must\s+not|mustn't|forbid(?:den)?|prohibit(?:ed)?|"
     r"disallow(?:ed)?|ban(?:ned)?|avoid|stop)\s+"
@@ -47,8 +47,12 @@ _AFTER_VERB_RE = re.compile(
 )
 _ACTION_LINE_RE = re.compile(r"^\s*\[ACTION\]", re.IGNORECASE)
 _CLAUSE_END_RE = re.compile(
-    r"(?:[;\n]|\.(?=\s|$)|,\s*(?:instead|use|prefer|always)\b)",
+    r"(?:[;\n]|(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\betc)\.(?=\s|$)|,\s*(?:instead|use|prefer|always)\b)",
     re.IGNORECASE,
+)
+_FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+_STRUCTURAL_LINE_RE = re.compile(
+    r"^\s*(?:[#|>]|\d+\.\s+|[-*+]\s+|(?:---+|___+|\*\*\*+)\s*$)"
 )
 
 _STOP_TARGETS = frozenset(
@@ -155,22 +159,23 @@ def _extract_targets(line: str) -> tuple[str, ...]:
     found: list[str] = []
     seen: set[str] = set()
 
-    def _add(tok: str) -> None:
+    def _add(tok: str) -> bool:
         cleaned = tok.strip().strip(".,:;()[]{}")
         low = cleaned.lower()
         if len(cleaned) < 3 or low in _STOP_TARGETS or low in seen:
-            return
+            return False
         seen.add(low)
         found.append(cleaned)
+        return True
 
     for clause in _prohibition_clauses(line):
         clause_found = False
         for m in _BACKTICK_RE.finditer(clause):
-            _add(m.group(1))
-            clause_found = True
+            if _add(m.group(1)):
+                clause_found = True
         for m in _QUOTED_RE.finditer(clause):
-            _add(m.group(1))
-            clause_found = True
+            if _add(m.group(2)):
+                clause_found = True
         if not clause_found:
             for m in _AFTER_VERB_RE.finditer(clause):
                 _add(m.group(1))
@@ -183,19 +188,51 @@ def _is_prose_file(rel: str) -> bool:
     return low.endswith((".md", ".txt"))
 
 
+def _logical_prose_lines(body: str) -> list[str]:
+    """Return prose units outside fenced code blocks, joining soft-wrapped Markdown continuations."""
+    units: list[str] = []
+    buf: list[str] = []
+    in_fence = False
+
+    def _flush() -> None:
+        if buf:
+            units.append(" ".join(buf))
+            buf.clear()
+
+    for raw in (body or "").splitlines():
+        if _FENCE_RE.match(raw):
+            _flush()
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        stripped = raw.strip()
+        if not stripped:
+            _flush()
+            continue
+        if _STRUCTURAL_LINE_RE.match(raw):
+            _flush()
+            buf.append(stripped)
+        elif buf:
+            buf.append(stripped)
+        else:
+            buf.append(stripped)
+    _flush()
+    return units
+
+
 def extract_added_prohibitions(
     base_tree: Mapping[str, str], candidate_tree: Mapping[str, str]
 ) -> list[ProhibitionRule]:
     """Return prohibition rules added in `candidate_tree` that were absent from `base_tree`."""
+    norm_base = {k.replace("\\", "/"): v for k, v in base_tree.items()}
+    norm_cand = {k.replace("\\", "/"): v for k, v in candidate_tree.items()}
     rules: list[ProhibitionRule] = []
-    for rel in sorted(candidate_tree):
+    for rel in sorted(norm_cand):
         if not _is_prose_file(rel):
             continue
-        base_lines = {
-            ln.strip() for ln in (base_tree.get(rel, "") or "").splitlines() if ln.strip()
-        }
-        for raw_ln in (candidate_tree.get(rel, "") or "").splitlines():
-            ln = raw_ln.strip()
+        base_lines = set(_logical_prose_lines(norm_base.get(rel, "") or ""))
+        for ln in _logical_prose_lines(norm_cand.get(rel, "") or ""):
             if not ln or ln in base_lines:
                 continue
             if not _PROHIBITION_RE.search(ln):
@@ -324,11 +361,13 @@ def format_replay_report(findings: Sequence[ProhibitionFinding]) -> str:
         "",
     ]
     for f in findings:
-        targets = ", ".join(f"`{t}`" for t in f.matched_targets)
-        runs = ", ".join(f"`{r}`" for r in f.matched_rollouts)
+        targets = ", ".join(f"`{_sanitize_snippet(t, limit=60)}`" for t in f.matched_targets)
+        runs = ", ".join(f"`{_sanitize_snippet(r, limit=40)}`" for r in f.matched_rollouts)
+        cand = _sanitize_snippet(f.candidate, limit=40)
+        frel = _sanitize_snippet(f.file_rel, limit=80)
         snippet = _sanitize_snippet(f.line)
         lines.append(
-            f"- **[{f.status}]** `{f.candidate}` (`{f.file_rel}`): matched {targets} in "
+            f"- **[{f.status}]** `{cand}` (`{frel}`): matched {targets} in "
             f"{len(f.matched_rollouts)} delivered rollout(s) ({runs}); excerpt: `{snippet}`"
         )
     return "\n".join(lines) + "\n"

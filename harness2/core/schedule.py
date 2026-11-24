@@ -248,9 +248,11 @@ class TaskResult:
     selections: dict = field(default_factory=dict)
     base: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    blind_compose: bool = False
+    prohibition_replay: bool = False
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "task_id": self.task_id,
             "domain": self.domain,
             "k": self.k,
@@ -262,6 +264,11 @@ class TaskResult:
             "selections": self.selections,
             "errors": self.errors,
         }
+        if self.blind_compose:
+            out["blind_compose"] = True
+        if self.prohibition_replay:
+            out["prohibition_replay"] = True
+        return out
 
 
 def _task_inputs(adapter: BenchmarkAdapter, task_id: str) -> str | None:
@@ -318,9 +325,13 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             if summary_path.is_file():
                 old = _load_old(summary_path)
                 inputs_changed = (
-                    res.inputs is not None
-                    and old.get("inputs") is not None
-                    and old.get("inputs") != res.inputs
+                    (
+                        res.inputs is not None
+                        and old.get("inputs") is not None
+                        and old.get("inputs") != res.inputs
+                    )
+                    or bool(old.get("blind_compose", False)) != bool(res.blind_compose)
+                    or bool(old.get("prohibition_replay", False)) != bool(res.prohibition_replay)
                 )
                 if not inputs_changed:
                     for key in ("modes", "selections"):
@@ -410,6 +421,15 @@ def _resume(
         print(
             f"  [{task_id}] task inputs {recorded_inputs} != {res.inputs} -- the task prompt "
             f"or its source files changed since this summary was written; re-running",
+            flush=True,
+        )
+        return False
+    if bool(got.get("blind_compose", False)) != bool(res.blind_compose) or bool(
+        got.get("prohibition_replay", False)
+    ) != bool(res.prohibition_replay):
+        print(
+            f"  [{task_id}] ablation flags changed (cached blind={bool(got.get('blind_compose', False))}, "
+            f"replay={bool(got.get('prohibition_replay', False))}); re-running",
             flush=True,
         )
         return False
@@ -665,7 +685,14 @@ def run_task(
     bench, sub = adapter.spec.name, adapter.substrate.name
 
     domain = adapter.domain_of(task_id)
-    res = TaskResult(task_id=task_id, domain=domain, k=k, seed=seed)
+    res = TaskResult(
+        task_id=task_id,
+        domain=domain,
+        k=k,
+        seed=seed,
+        blind_compose=blind_compose,
+        prohibition_replay=prohibition_replay,
+    )
     base_ns = Namespace(bench, sub, "agg", k, seed, tag)
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
