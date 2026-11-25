@@ -1,8 +1,8 @@
 # Setup guide
 
 Start with the [quick start](../README.md#install). This guide covers benchmark
-dependencies, model credentials, and the optional Codex executor. For individual
-benchmarks, see the [benchmark guides](BENCHMARKS.md).
+dependencies, model credentials, the optional Codex executor, and the pi
+substrate. For individual benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
 
@@ -146,6 +146,26 @@ changing either. `harness2-check` reports stale configuration until then.
 
 Codex runs with its sandbox disabled. Review the
 [executor network restrictions](EXPERIMENTS.md#web-access) before evaluation.
+
+## pi substrate
+
+`harness2.substrate.PiSubstrate` stages a harness tree as a project-local pi
+overlay with the `pi_project` install mode: `.pi/APPEND_SYSTEM.md`, skills under
+`.pi/skills/`, extensions under `.pi/extensions/`, subagent prompt templates
+under `.pi/prompts/`, and helper scripts under `scripts/`. It is not selected
+with `--substrate`; use it directly from code, as the end-to-end test does.
+
+The substrate's model defaults to the upstream reference route
+(`zai/glm-5.3`). Set `PI_SUBSTRATE_MODEL` in `.env` or the shell to use another
+pi `provider/model` route (for example, a local LiteLLM gateway). The end-to-end
+check runs a real pi agent and needs a working pi installation plus credentials
+for that model:
+
+```bash
+. .venv/bin/activate
+python tests/test_pi_substrate_unit.py              # deterministic interface checks
+PI_SUBSTRATE_MODEL=... python tests/test_pi_substrate.py  # real-agent e2e
+```
 
 ## Network access during setup
 

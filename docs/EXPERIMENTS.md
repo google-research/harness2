@@ -27,6 +27,11 @@ separated by benchmark, executor, mode, budget, and seed.
 | `--substrate cx` | Use Codex instead of the default OpenCode executor |
 | `--seed N` | Shuffle the task stream reproducibly; does not control model sampling |
 
+The substrate option notes cover the CLI selectors only. `--substrate` accepts
+`oc` (OpenCode, the default) or `cx` (Codex) — `SUBSTRATES` in
+`harness2/cli/_common.py`, also declared by `harness2-setup` and `harness2-check`.
+The pi substrate (below) is selected in code, not on the command line.
+
 Use the same benchmark, executor, subset, `k`, mode, and seed for refinement,
 judging, and reporting. For example:
 
@@ -60,6 +65,42 @@ bash scripts/run_lab.sh --only-domains antitrust-competition --max-tasks 1
 SUBSTRATE=cx K=3 MODE=sequential bash scripts/run_jobbench.sh --max-tasks 1
 SUBSET=web bash scripts/run_workbuddy.sh --max-tasks 1
 ```
+
+## pi substrate
+
+`harness2.substrate.PiSubstrate` (`harness2/substrate/pi.py`) implements the
+`Substrate` interface and carries `PI_SURFACE`, whose single install mode
+`pi_project` stages a harness tree as a project-local pi overlay (structure in
+[setup](SETUP.md#pi-substrate)). `run_argv` builds the reference launcher, a
+`pi --print --mode json -a` process run with `cwd` at the staged workspace;
+`read_trajectory` renders the pi event stream for improver and judge.
+
+It is programmatic: `--substrate` does not accept it. `harness2`,
+`harness2-judge`, `harness2-report` (`SUBSTRATES` in `harness2/cli/_common.py`)
+and `harness2-setup`/`harness2-check` take `oc` or `cx` only, so the pi substrate
+cannot be selected for a refinement, judging, or reporting run. Where declared:
+
+| Name | Where | Value |
+|---|---|---|
+| `SUBSTRATES` | `harness2/cli/_common.py` | `("oc", "cx")` — the only accepted `--substrate` values |
+| `--substrate` | `harness2/cli/setup.py`, `check.py`, `_common.py` | `choices=("oc", "cx")`, default `oc` |
+| `PI_SUBSTRATE_MODEL` | `harness2/config.py` | pi `provider/model`; default `zai/glm-5.3` |
+
+The default route is the direct provider `zai/glm-5.3`; set `PI_SUBSTRATE_MODEL`
+in `.env` or the shell for another route, such as a local LiteLLM gateway.
+
+Two standalone scripts cover the substrate (no other test runner is configured):
+
+```bash
+. .venv/bin/activate
+python tests/test_pi_substrate_unit.py              # deterministic, no model calls
+PI_SUBSTRATE_MODEL=<provider/model> python tests/test_pi_substrate.py  # real pi agent
+```
+
+`tests/test_pi_substrate.py` builds a harness tree, materialises it, runs a real
+pi agent in the staged workspace, and asserts the harness governed the run (the
+persona suffix and the correct answer) and that pi exited zero; it needs a pi
+installation and credentials for that route.
 
 ## Reproducibility
 

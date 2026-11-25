@@ -21,6 +21,7 @@ carries CODEX_SURFACE and one. Benchmark adapters supply the launcher body.
 from .base import Install, Launcher, RunRequest, Substrate
 from .codex import CODEX_SURFACE, CodexSubstrate
 from .opencode import OPENCODE_SURFACE, OpencodeSubstrate
+from .pi import PI_SURFACE, PiSubstrate
 
 __all__ = [
     "Install",
@@ -31,4 +32,6 @@ __all__ = [
     "OPENCODE_SURFACE",
     "CodexSubstrate",
     "CODEX_SURFACE",
+    "PiSubstrate",
+    "PI_SURFACE",
 ]

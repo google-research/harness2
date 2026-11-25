@@ -45,7 +45,9 @@ JobBench, and 11.8 percentage points on LAB's partial pass rate. Increasing the
 task-level recursion budget brings further gains.
 
 The release supports **parallel and sequential recursion**, **OpenCode and
-Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
+Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**. It also includes
+a **pi (pi.dev) substrate** for programmatic use; the `--substrate` option
+still selects `oc` or `cx`.
 
 ## Video overview
 
@@ -104,7 +106,8 @@ gcloud auth application-default login
 ```
 
 See the [setup guide](docs/SETUP.md) for model settings, authentication
-alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
+alternatives, the [Codex executor](docs/SETUP.md#codex-executor), and the
+[pi substrate](docs/SETUP.md#pi-substrate).
 
 ## Run a benchmark
 
