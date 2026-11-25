@@ -237,8 +237,9 @@ class Proposer:
         if payload.get("is_error") or payload.get("subtype") not in (None, "success"):
             err = f"CLI error: {payload.get('subtype')} {str(text)[:200]}"
             text = ""
-        elif p.returncode != 0 and not text.strip():
+        elif p.returncode != 0:
             err = f"rc={p.returncode}: {(p.stderr or '')[-300:]}"
+            text = ""
         return text, float(payload.get("total_cost_usd") or 0.0), err
 
     def _opencode(self, cwd: Path, mission: str, system: str, wall: int) -> tuple[str, float, str]:
@@ -293,6 +294,8 @@ class Proposer:
         )
         cost = _opencode_cost(p.stdout)
         text, err = _opencode_stdout(p.stdout)
+        if p.returncode != 0:
+            return "", cost, err or f"rc={p.returncode}: {(p.stderr or '')[-300:]}"
         if err:
             return "", cost, err
         ans = out / "answer.md"
