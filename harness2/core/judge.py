@@ -21,10 +21,13 @@ excluded from the denominator.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
+from uuid import uuid4
 
 from .spec import BenchmarkAdapter
 
@@ -162,10 +165,23 @@ def judge_selections(
 def write(rows: Sequence[Scored], path: Path | str) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            [r.__dict__ | {"frac": r.frac, "graded": r.graded} for r in rows], indent=2, default=str
-        ),
-        encoding="utf-8",
+    payload = json.dumps(
+        [r.__dict__ | {"frac": r.frac, "graded": r.graded} for r in rows], indent=2, default=str
     )
+    try:
+        existing_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    fd = os.open(
+        tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666 if existing_mode is None else existing_mode
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            if existing_mode is not None:
+                os.fchmod(stream.fileno(), existing_mode)
+            stream.write(payload)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return path

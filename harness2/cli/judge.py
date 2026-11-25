@@ -20,6 +20,8 @@ adapters serve cached judge details and a failed re-judge never replaces the exi
 graded row of the same selection. A task that was re-run (a partial task on resume, say)
 has a fresh selection record under the same run id, and a failed judge of its new rollout
 leaves it ungraded rather than keeping the replaced rollout's score.
+If overlapping judges scored different selections for one task, only the current
+selection can replace the cached row.
 
     python3 -m harness2.cli.judge --bench jb --substrate oc --k 2 --modes parallel
 
@@ -111,6 +113,34 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
     return out
 
 
+def _current_replacements(
+    old: list[J.Scored], new: list[J.Scored], ns_dir: Path, modes: tuple[str, ...]
+) -> list[J.Scored]:
+    """Resolve conflicting score publications against the task summaries under the cache lock."""
+    published = {(row.task_id, row.mode, row.k): (row.run_id, row.selected_at) for row in old}
+    conflicts = set()
+    for row in new:
+        key = (row.task_id, row.mode, row.k)
+        if key in published and published[key] != (row.run_id, row.selected_at):
+            conflicts.add(key)
+    if not conflicts:
+        return new
+
+    current = {
+        (sel.get("task_id", ""), sel.get("mode", ""), sel.get("k", 0)): (
+            sel.get("chosen_run_id", ""),
+            sel.get("selected_at", ""),
+        )
+        for sel in collect_selections(ns_dir, modes)
+    }
+    return [
+        row
+        for row in new
+        if (row.task_id, row.mode, row.k) not in conflicts
+        or current.get((row.task_id, row.mode, row.k)) == (row.run_id, row.selected_at)
+    ]
+
+
 def judge_bases(adapter, ns_dir: Path) -> int:
     """Score every reference execution recorded in this namespace's task summaries."""
     rows, legacy = [], 0
@@ -195,17 +225,30 @@ def main(argv: list[str] | None = None) -> int:
     print(f"judging {len(sels)} selection(s) under {ns} ...", flush=True)
     rows = J.judge_selections(adapter, sels, parallel=_PARALLEL)
 
-    out_path = ns_dir / "judged.json"
-    merged = _merge(_load_rows(out_path), rows)
-    J.write(merged, out_path)
+    import fcntl
 
+    out_path = ns_dir / "judged.json"
+    # Independent mode invocations accumulate into one file. Lock a stable
+    # sidecar since replacing the JSON changes its inode.
+    with out_path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = _load_rows(out_path)
+        current = _current_replacements(previous, rows, ns_dir, modes)
+        merged = _merge(previous, current)
+        if current:
+            J.write(merged, out_path)
+
+    skipped = len(rows) - len(current)
+    if skipped:
+        print(f"skipped {skipped} result(s) that could not be matched to the current selection")
     graded = sum(1 for r in merged if r.graded)
     print(
         f"judged.json: {len(merged)} row(s), {graded} graded, "
         f"{len(merged) - graded} ungraded (judge failure or no pick — NOT zeros)"
     )
-    print(f"wrote {out_path}")
-    return 0 if rows and all(r.graded for r in rows) else 2
+    if current:
+        print(f"wrote {out_path}")
+    return 0 if rows and not skipped and all(r.graded for r in rows) else 2
 
 
 if __name__ == "__main__":
