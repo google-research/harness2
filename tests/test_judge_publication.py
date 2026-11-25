@@ -72,6 +72,24 @@ def run_mode(root, mode, first_entered, second_entered, first_published):
         raise SystemExit(judge.main(["--bench", "lab", "--k", "1", "--mode", mode]))
 
 
+def run_paused_judge(root, scored, release):
+    judge_selections = core_judge.judge_selections
+
+    def pause_after_scoring(*args, **kwargs):
+        rows = judge_selections(*args, **kwargs)
+        scored.set()
+        if not release.wait(5):
+            raise TimeoutError("older judge was not released")
+        return rows
+
+    with (
+        patch.object(judge.config, "validate_models"),
+        patch.object(judge.C, "make_adapter", return_value=LocalScores(root)),
+        patch.object(core_judge, "judge_selections", side_effect=pause_after_scoring),
+    ):
+        raise SystemExit(judge.main(["--bench", "lab", "--k", "1", "--mode", "parallel"]))
+
+
 def selection(root, mode, points):
     run_dir = root / f"rollout-{mode}"
     run_dir.mkdir()
@@ -94,9 +112,9 @@ class JudgePublication(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         ns_dir = self.root / "adapt" / "lab-oc-agg1"
-        summary = ns_dir / "one" / "summary.json"
-        summary.parent.mkdir(parents=True)
-        summary.write_text(
+        self.summary = ns_dir / "one" / "summary.json"
+        self.summary.parent.mkdir(parents=True)
+        self.summary.write_text(
             json.dumps(
                 {
                     "task_id": "one",
@@ -139,6 +157,64 @@ class JudgePublication(unittest.TestCase):
                 self.assertEqual(judge.main(["--bench", "lab", "--k", "1", "--mode", mode]), 0)
         rows = json.loads(self.judged.read_text(encoding="utf-8"))
         self.assertEqual({row["mode"]: row["n_passed"] for row in rows}, {"agg": 1, "seq": 2})
+
+    def test_late_judge_cannot_replace_a_grade_for_the_current_selection(self):
+        ctx = multiprocessing.get_context("fork")
+        scored, release = ctx.Event(), ctx.Event()
+        older = ctx.Process(target=run_paused_judge, args=(self.root, scored, release))
+        older.start()
+        try:
+            self.assertTrue(scored.wait(5), "older judge did not finish scoring")
+            summary = json.loads(self.summary.read_text(encoding="utf-8"))
+            newer = summary["selections"]["agg"]
+            # The selection stamp identifies the generation even if the system clock moved back.
+            newer["selected_at"] = "2026-10-31T00:59:00Z"
+            rollout = Path(newer["chosen_run_dir"])
+            (rollout / "score.json").write_text(
+                json.dumps({"n_passed": 0, "n_criteria": 2}), encoding="utf-8"
+            )
+            staged = self.summary.with_suffix(".tmp")
+            staged.write_text(json.dumps(summary), encoding="utf-8")
+            staged.replace(self.summary)
+            with (
+                patch.object(judge.config, "validate_models"),
+                patch.object(judge.C, "make_adapter", return_value=LocalScores(self.root)),
+            ):
+                self.assertEqual(
+                    judge.main(["--bench", "lab", "--k", "1", "--mode", "parallel"]), 0
+                )
+
+            published = self.judged.read_bytes()
+            (row,) = json.loads(published)
+            self.assertEqual(row["run_id"], newer["chosen_run_id"])
+            self.assertEqual(row["selected_at"], newer["selected_at"])
+            self.assertEqual(row["n_passed"], 0)
+            release.set()
+            older.join(10)
+            self.assertEqual(self.judged.read_bytes(), published)
+            self.assertEqual(older.exitcode, 2)
+        finally:
+            release.set()
+            if older.is_alive():
+                older.terminate()
+                older.join(5)
+
+    def test_current_failed_selection_replaces_a_grade(self):
+        args = ["--bench", "lab", "--k", "1", "--mode", "parallel"]
+        with (
+            patch.object(judge.config, "validate_models"),
+            patch.object(judge.C, "make_adapter", return_value=LocalScores(self.root)),
+        ):
+            self.assertEqual(judge.main(args), 0)
+            summary = json.loads(self.summary.read_text(encoding="utf-8"))
+            summary["selections"]["agg"] = {"task_id": "one", "arm": "agg", "k": 1, "ok": False}
+            self.summary.write_text(json.dumps(summary), encoding="utf-8")
+            self.assertEqual(judge.main(args), 2)
+
+        (row,) = json.loads(self.judged.read_bytes())
+        self.assertEqual(row["mode"], "agg")
+        self.assertFalse(row["graded"])
+        self.assertTrue(row["error"].startswith("selection did not complete"))
 
     def test_failed_publication_keeps_cache_and_releases_lock(self):
         args = ["--bench", "lab", "--k", "1", "--mode"]
