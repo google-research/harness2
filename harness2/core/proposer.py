@@ -23,8 +23,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -46,6 +48,24 @@ def _obj(d: dict, key: str) -> dict:
     """`d[key]` when it is a dict, else {}."""
     v = d.get(key)
     return v if isinstance(v, dict) else {}
+
+
+def _run_session(cmd: list[str], *, timeout: int, input: str | None = None, **kwargs):
+    if os.name != "posix":
+        return subprocess.run(cmd, input=input, timeout=timeout, **kwargs)
+    if input is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    with subprocess.Popen(cmd, start_new_session=True, **kwargs) as proc:
+        try:
+            stdout, stderr = proc.communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 class ProposerError(RuntimeError):
@@ -221,7 +241,7 @@ class Proposer:
                 ]
             else:
                 cmd += ["--append-system-prompt", system]
-        p = subprocess.run(
+        p = _run_session(
             cmd,
             input=stdin,
             cwd=cwd,
@@ -282,7 +302,7 @@ class Proposer:
         ]
         if self.spec.effort:
             cmd += ["--variant", self.spec.effort]
-        p = subprocess.run(
+        p = _run_session(
             cmd,
             cwd=cwd,
             env=env,
