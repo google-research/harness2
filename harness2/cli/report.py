@@ -17,6 +17,7 @@
 The figure each benchmark reports per (mode, k) — partial credit and all-criteria pass on LAB,
 one score elsewhere — with pick provenance, the k=1 noise-floor note and the sanity warnings;
 fell-back counts and improver spend come from the task summaries.
+When a task summary is available, grades must match its current selection.
 
     python3 -m harness2.cli.report --bench jb --substrate oc --k 1,2
 """
@@ -34,8 +35,9 @@ from . import _common as C
 from .judge import _load_rows
 
 
-def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[dict, dict]:
-    """(fell_back, usd) keyed (mode token, k), from the summaries the sweep checkpointed."""
+def _summary_metadata(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[dict, dict, dict]:
+    """Current selection identities, fallback counts, and improver spend from task summaries."""
+    selections: dict[str, dict[str, tuple[str, str]]] = {}
     fell_back: dict[tuple[str, int], int] = {}
     usd: dict[tuple[str, int], float] = {}
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
@@ -45,14 +47,20 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
         records = SCHED._modes_of(summary)
+        current = summary.get("selections") or {}
+        current_ids = {}
         for mode in modes:
             key = (mode, k)
             rec = (records or {}).get(mode) or {}
             fell_back[key] = fell_back.get(key, 0) + len(rec.get("fell_back") or [])
             spend = sum(float(s.get("usd") or 0.0) for s in rec.get("stages") or [])
-            sel = (summary.get("selections") or {}).get(mode) or {}
+            sel = current.get(mode) or {}
+            if sel:
+                current_ids[mode] = (sel.get("chosen_run_id", ""), sel.get("selected_at", ""))
             usd[key] = usd.get(key, 0.0) + spend + float(sel.get("usd") or 0.0)
-    return fell_back, usd
+        if task_id := summary.get("task_id"):
+            selections[task_id] = current_ids
+    return selections, fell_back, usd
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,8 +95,21 @@ def main(argv: list[str] | None = None) -> int:
         if not got:
             print(f"  ! no judged rows at {judged} — run cli.judge for k={k} first", flush=True)
             continue
-        rows.extend(r for r in got if r.mode in modes)
-        fb, sp = _spend_and_fallbacks(ns_dir, modes, k)
+        mode_rows = [r for r in got if r.mode in modes]
+        selections, fb, sp = _summary_metadata(ns_dir, modes, k)
+        # Preserve reports made from judged-only snapshots; a present summary is authoritative.
+        current = [
+            r
+            for r in mode_rows
+            if r.task_id not in selections
+            or selections[r.task_id].get(r.mode) == (r.run_id, r.selected_at)
+        ]
+        if len(current) != len(mode_rows):
+            print(
+                f"  ! skipped {len(mode_rows) - len(current)} stale judged row(s) for k={k}",
+                flush=True,
+            )
+        rows.extend(current)
         fell_back.update(fb)
         usd.update(sp)
     if not rows:
