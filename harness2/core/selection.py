@@ -332,10 +332,12 @@ def run_selection(
     try:
         reply = prop.call(mission, root, f"select.{mode}{k}")
         sel.usd += reply.cost_usd
-        m = _CHOICE.search(reply.text)
-        if not m:
+        choices = _CHOICE.findall(reply.text)
+        if not choices:
             raise ValueError("no ```choice block in the reply")
-        anon = m.group(1).strip()
+        if len(set(choices)) > 1:
+            raise ValueError("conflicting ```choice blocks in the reply")
+        anon = choices[0]
         if anon not in sel.id_map:
             raise ValueError(f"chose {anon!r}, which is not one of {ids}")
         w = _WHY.search(reply.text)
