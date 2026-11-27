@@ -421,11 +421,11 @@ def _json_or_none(p: Path) -> dict | None:
 
 
 def run_detached(cmd: list[str], *, timeout: int, **kw) -> None:
-    """Run `cmd` in its own process group and kill the group on a wall timeout."""
+    """Run `cmd` in its own process group; stop it on timeout or interruption."""
     proc = subprocess.Popen(cmd, start_new_session=True, **kw)
     try:
         proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
